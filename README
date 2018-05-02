@@ -1,0 +1,24 @@
+Compilation:
+	*you will need to install NETCDF on your system and note the directories where the 
+	library and module reside. 
+	*in the Makefile change the variables NETCDF_FOR, NETCDF_C and NETCDF_LIB to suit 
+	 your system. Sometimes when compiling NETCDF you may have to install both the 
+	 fortran and c versions. If you do not need to do this, set NETCDF_FOR and NETCDF_C
+	 equal to the same value. 
+	*If you install both c and fortran versions, set NETCDF_LIB to -lnetcdff
+	*If you only need to install one version, set NETCDF_LIB to lnetcdf
+	*Finally, once netcdf is installed and the make file is edited, type "make" to compile
+	 the code
+	*Note, these variables are commented out in the Makefile. You may set them as environment 
+	 variables in your .bashrc, or .bash_profile and the Makefile will pick them up.
+Doxygen pages:
+	*self generating documentation (from the source code) can be created by typing
+	 "doxygen fortran.dxg" at the command line.
+	*you can then view the html pages by opening the file at "doxygen/html/index.html"
+Running code:
+	*run the code by typing the following:
+	* single processor: ./main.exe namelist.run
+Contributing development:
+	* at the moment the code is under private repo with no development branches. Contact 
+		the code owner to contribute ideas. 
+	
