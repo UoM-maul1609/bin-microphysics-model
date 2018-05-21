@@ -109,9 +109,10 @@
 
         character (len=200) :: outputfile='output'
 
-	private 
-	public :: read_in_bmm_namelist, initialise_bmm_arrays, bmm_driver, io1
-
+	!private 
+	!public :: read_in_bmm_namelist, initialise_bmm_arrays, bmm_driver, io1
+    public
+    private :: outputfile
 	contains	
 	
 		
@@ -1016,7 +1017,40 @@
     
     
     
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! calculate the wet diameter                                				   !
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>calculates the wet diameter of a particle
+	!>@param[in] t: temperature
+	!>@param[in] mwat: mass of water
+	!>@param[in] mbin: mass of aerosol components in each bin
+	!>@param[in] rhobin: density of each component
+	!>@param[in] sz: length of array
+	!>@param[inout] dw: wet diameter
+    subroutine wetdiam(mwat,mbin,rhobin,sz,dw) 
+      use nrtype
+      implicit none
+      real(sp), dimension(:), intent(in) :: mwat
+      real(sp), dimension(:,:), intent(in) :: mbin,rhobin
+      integer(i4b), intent(in) :: sz
+      real(sp), dimension(:),intent(inout) :: dw
+      
+      real(sp), dimension(sz) :: rhoat
+
+      ! calculate the diameter and radius
+      rhoat(:)=mwat(:)/rhow+sum(mbin(:,1:n_comps)/rhobin(:,:),2)
+      rhoat(:)=(mwat(:)+sum(mbin(:,1:n_comps),2))/rhoat(:);
+  
+      ! wet diameter:
+      dw(:)=((mwat(:)+sum(mbin(:,1:n_comps),2))*6._sp/(pi*rhoat(:)))**(1._sp/3._sp)
+      
+    end subroutine wetdiam
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
+        
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! calculate the equilibrium humidity over a particle        				   !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -1763,13 +1797,27 @@
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
 	!>calculates one time-step of bin-microphysics
-    subroutine bin_microphysics()
+    subroutine bin_microphysics(func)
     use nrtype
     use nr, only : zbrent
     implicit none
     real(sp) :: mass1, mass2, deltam, vapour_mass, liquid_mass, x1,x2 , cpm, &
         var, dummy
     integer(i4b) :: iloc
+    
+    interface
+        subroutine func(neq, tt, y, ydot, rpar, ipar)
+            use nrtype
+            use nr, only : dfridr,locate
+
+            implicit none
+            real(sp), intent(inout) :: tt
+            real(sp), intent(inout), dimension(neq) :: y, ydot
+            integer(i4b), intent(inout) :: neq
+            real(sp), intent(inout) :: rpar
+            integer(i4b), intent(inout) :: ipar
+        end subroutine func
+    end interface
     
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! mass balance                                                         !
@@ -1794,7 +1842,7 @@
     parcel1%tout=parcel1%tt+parcel1%dt
     parcel1%istate=1
     do while (parcel1%tt .lt. parcel1%tout)
-        call dvode(fparcelwarm,parcel1%neq,parcel1%y,parcel1%tt,parcel1%tout,&
+        call dvode(func,parcel1%neq,parcel1%y,parcel1%tt,parcel1%tout,&
                    parcel1%itol,parcel1%rtol,parcel1%atol,&
                    parcel1%itask,parcel1%istate,parcel1%iopt,&
                    parcel1%rwork,parcel1%lrw,&
@@ -1931,13 +1979,14 @@
 	!>@brief
 	!>output 1 time-step of model
 	!>@param[inout] new_file
-    subroutine output(new_file)
+    subroutine output(new_file,outputfile)
 
     use nrtype
     use netcdf
 
     implicit none
     logical, intent(inout) :: new_file
+    character (len=*),intent(in) :: outputfile
     ! output to netcdf file
     if(new_file) then
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -2158,16 +2207,16 @@
     nt=ceiling(runtime / real(dt,kind=sp))
     do i=1,nt
         ! output to file
-        call output(io1%new_file)
+        call output(io1%new_file,outputfile)
         
         ! one time-step of model
-        call bin_microphysics()
+        call bin_microphysics(fparcelwarm)
              
         ! break-out if flag has been set 
         if(parcel1%break_flag) exit
     enddo
     ! output to file
-    call output(io1%new_file)
+    call output(io1%new_file,outputfile)
     
     
     
