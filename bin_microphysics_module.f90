@@ -616,7 +616,7 @@
     parcel1%tt=0._sp
     parcel1%tout=parcel1%tt+parcel1%dt
     parcel1%itol=2
-    parcel1%rtol=1.e-8_sp
+    parcel1%rtol=1.e-4_sp
     allocate( parcel1%y(parcel1%neq), stat = allocatestatus)
     if (allocatestatus /= 0) stop "*** not enough memory ***"
     allocate( parcel1%yold(parcel1%neq), stat = allocatestatus)
@@ -653,7 +653,7 @@
     if (allocatestatus /= 0) stop "*** not enough memory ***"
     
     ! extra input variables:
-    parcel1%iwork(6) = 1000000 ! max steps
+    parcel1%iwork(6) = 100 ! max steps
     parcel1%iwork(7) = 10 ! max message printed per problem
     parcel1%iwork(5) = 5 ! order
     parcel1%rwork(5) = 0._sp ! initial time-step
@@ -669,7 +669,7 @@
     parcel1%y(parcel1%iz) =parcel1%z
     parcel1%y(parcel1%iw) =parcel1%w
     ! do not print messages
-    !call xsetf(0)
+    call xsetf(0)
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
@@ -741,7 +741,7 @@
         parcel1%ttice=0._sp
         parcel1%toutice=parcel1%tout
         parcel1%itolice=2
-        parcel1%rtolice=1.e-8_sp
+        parcel1%rtolice=1.e-3_sp
         allocate( parcel1%yice(parcel1%neqice), stat = allocatestatus)
         if (allocatestatus /= 0) stop "*** not enough memory ***"
         allocate( parcel1%yoldice(parcel1%neqice), stat = allocatestatus)
@@ -775,7 +775,7 @@
         if (allocatestatus /= 0) stop "*** not enough memory ***"
     
         ! extra input variables:
-        parcel1%iworkice(6) = 1000000 ! max steps
+        parcel1%iworkice(6) = 100 ! max steps
         parcel1%iworkice(7) = 10 ! max message printed per problem
         parcel1%iworkice(5) = 5 ! order
         parcel1%rworkice(5) = 0._sp ! initial time-step
@@ -2134,7 +2134,7 @@
 
 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! derivatives for a warm parcel model                                          !
+    ! derivatives for a cold parcel model                                          !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
@@ -2423,6 +2423,10 @@
                    parcel1%rwork,parcel1%lrw,&
                    parcel1%iwork,parcel1%liw,jparcelwarm, &
                    parcel1%mf,parcel1%rpar,parcel1%ipar)
+        ! check there are no negative values
+        where(parcel1%y(1:parcel1%n_bin_mode).le.0.e1_sp)
+            parcel1%y(1:parcel1%n_bin_mode)=1.e-22_sp
+        end where
     enddo
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
@@ -2470,6 +2474,10 @@
                            parcel1%rworkice,parcel1%lrwice,&
                            parcel1%iworkice,parcel1%liwice,jparcelwarm, &
                            parcel1%mfice,parcel1%rparice,parcel1%iparice)
+            ! check there are no negative values
+            where(parcel1%yice(1:parcel1%n_bin_mode).le.0.e1_sp)
+                parcel1%yice(1:parcel1%n_bin_mode)=1.e-22_sp
+            end where
         enddo
         parcel1%y(parcel1%ipr)=parcel1%yice(parcel1%ipri)
         parcel1%y(parcel1%ite)=parcel1%yice(parcel1%itei)
