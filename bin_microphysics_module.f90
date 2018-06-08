@@ -2356,7 +2356,7 @@
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
 	!>calculates one time-step of bin-microphysics
-    subroutine bin_microphysics(func1,func2)
+    subroutine bin_microphysics(func1,func2,func3)
     use nrtype
     use nr, only : zbrent
     implicit none
@@ -2389,6 +2389,22 @@
             real(sp), intent(inout) :: rpar
             integer(i4b), intent(inout) :: ipar
         end subroutine func2
+    end interface
+    interface
+        subroutine func3(npart, npartice, mwat,mbin2,mbin2_ice, &
+                         rhobin,nubin,kappabin,molwbin,t,p,sz,sz2,yice,rh,dt) 
+            use nrtype
+            implicit none
+            real(sp), intent(inout) :: t
+            real(sp), intent(in) :: p,rh,dt
+            real(sp), dimension(sz2), intent(inout) :: npart,npartice
+            real(sp), dimension(:), intent(in) :: mwat
+            real(sp), dimension(:,:), intent(in) :: mbin2, &
+                                                  rhobin,nubin,kappabin,molwbin
+            integer(i4b), intent(in) :: sz,sz2
+            real(sp), dimension(sz2,sz), intent(inout) :: mbin2_ice
+            real(sp), intent(inout), dimension(sz2) :: yice
+        end subroutine func3
     end interface
     
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -2442,7 +2458,7 @@
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         ! Ice nucleation                                                   !
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        call icenucleation(parcel1%npart(1:parcel1%n_bin_mode), &
+        call func3(parcel1%npart(1:parcel1%n_bin_mode), &
                 parcel1%npartice(1:parcel1%n_bin_mode), &
                 parcel1%y(1:parcel1%n_bin_mode), &
                 parcel1%mbin(:,1:n_comps), &
@@ -2898,7 +2914,7 @@
         
         
         ! one time-step of model
-        call bin_microphysics(fparcelwarm, fparcelcold)
+        call bin_microphysics(fparcelwarm, fparcelcold, icenucleation)
         
         
              
