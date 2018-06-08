@@ -656,9 +656,9 @@
     parcel1%iwork(6) = 100 ! max steps
     parcel1%iwork(7) = 10 ! max message printed per problem
     parcel1%iwork(5) = 5 ! order
-    parcel1%rwork(5) = 0._sp ! initial time-step
+    parcel1%rwork(5) = 1.e-3_sp ! initial time-step
     parcel1%rwork(6) = dt ! max time-step
-    parcel1%rwork(7) = 0._sp ! min time-step allowed
+    parcel1%rwork(7) = 1.e-9_sp ! min time-step allowed
     parcel1%rwork(14) = 2._sp ! tolerance scale factor
     
     ! put water in solution vector and set p, t, rh, z, w
@@ -778,9 +778,9 @@
         parcel1%iworkice(6) = 100 ! max steps
         parcel1%iworkice(7) = 10 ! max message printed per problem
         parcel1%iworkice(5) = 5 ! order
-        parcel1%rworkice(5) = 0._sp ! initial time-step
+        parcel1%rworkice(5) = 1.e-3_sp ! initial time-step
         parcel1%rworkice(6) = dt ! max time-step
-        parcel1%rworkice(7) = 0._sp ! min time-step allowed
+        parcel1%rworkice(7) = 1.e-9_sp ! min time-step allowed
         parcel1%rworkice(14) = 2._sp ! tolerance scale factor
     
         ! put water in solution vector and set p, t, rh, z, w
@@ -1845,8 +1845,8 @@
       ! thermal conductivity of air
       k1=ka(t)
       ! ventilation coefficient
-      fv=1.d0
-      fh=1.d0
+      fv=1._sp
+      fh=1._sp
       if(vent_flag.eq.1) then
         call ventilation02(mwat, t, p,phi, &
              rhoi,nump, rime,fv, fh,sz)
@@ -2417,6 +2417,7 @@
     parcel1%tout=parcel1%tt+parcel1%dt
     do while (parcel1%tt .lt. parcel1%tout)
         parcel1%istate=1
+        
         call dvode(func1,parcel1%neq,parcel1%y,parcel1%tt,parcel1%tout,&
                    parcel1%itol,parcel1%rtol,parcel1%atol,&
                    parcel1%itask,parcel1%istate,parcel1%iopt,&
