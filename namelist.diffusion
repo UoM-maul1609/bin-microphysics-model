@@ -1,14 +1,14 @@
  &run_vars
-	outputfile = '/tmp/output2.nc',
+	outputfile = '/tmp/output3.nc',
 	runtime=3000.,
 	dt=10.,
-	zinit=300.,
+	zinit=16000.,
 	tpert=0.0,
 	use_prof_for_tprh=.false.,
 	winit=.6,
-	tinit=244,
-	pinit=90000,
-	rhinit=0.95,
+	tinit=195,
+	pinit=10000,
+	rhinit=0.70,
 	microphysics_flag=1, ! flag for microphysics: 0 (no micro); 
 	                     ! 1 (microphysics on)
 	ice_flag=1,          ! flag for ice-microphysics: 0 (no ice);
@@ -19,7 +19,7 @@
 	updraft_type=1,
  	adiabatic_prof=.true.,
     vert_ent=.true., ! entrain in vertical (.true.); or laterally (.false.)
-    z_ctop=1200., ! height of cloud-top for vertical entrainment
+    z_ctop=18000., ! height of cloud-top for vertical entrainment
  	ent_rate=1.e-3, 
  	n_levels_s = 151,
  	alpha_therm=1.0,
