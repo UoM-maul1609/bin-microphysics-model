@@ -2767,7 +2767,7 @@
                    
         ! define variable: mwat
         call check( nf90_def_var(io1%ncid, "mwat", NF90_DOUBLE, &
-                    (/io1%bin_dimid,io1%x_dimid/), io1%varid) )
+                    (/io1%bin_dimid,io1%mode_dimid, io1%x_dimid/), io1%varid) )
         ! get id to a_dimid
         call check( nf90_inq_varid(io1%ncid, "mwat", io1%a_dimid) )
         ! units
@@ -2874,7 +2874,7 @@
 
     call check( nf90_inq_varid(io1%ncid, "mwat", io1%varid ) )
     call check( nf90_put_var(io1%ncid, io1%varid, &
-        parcel1%y(1:parcel1%n_bin_mode), start = (/1,io1%icur/)))
+        reshape(parcel1%y(1:parcel1%n_bin_mode),(/n_bins,n_mode/)), start = (/1,1,io1%icur/)))
 
     if(ice_flag .eq. 1) then
         ! write variable: qi
