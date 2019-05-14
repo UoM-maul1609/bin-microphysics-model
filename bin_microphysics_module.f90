@@ -656,9 +656,9 @@
     parcel1%iwork(6) = 100 ! max steps
     parcel1%iwork(7) = 10 ! max message printed per problem
     parcel1%iwork(5) = 5 ! order
-    parcel1%rwork(5) = 1.e-3_sp ! initial time-step
+    parcel1%rwork(5) = 0._sp !1.e-3_sp ! initial time-step
     parcel1%rwork(6) = dt ! max time-step
-    parcel1%rwork(7) = 1.e-9_sp ! min time-step allowed
+    parcel1%rwork(7) = 0._sp !1.e-9_sp ! min time-step allowed
     parcel1%rwork(14) = 2._sp ! tolerance scale factor
     
     ! put water in solution vector and set p, t, rh, z, w
@@ -778,9 +778,9 @@
         parcel1%iworkice(6) = 100 ! max steps
         parcel1%iworkice(7) = 10 ! max message printed per problem
         parcel1%iworkice(5) = 5 ! order
-        parcel1%rworkice(5) = 1.e-3_sp ! initial time-step
+        parcel1%rworkice(5) = 0._sp !1.e-3_sp ! initial time-step
         parcel1%rworkice(6) = dt ! max time-step
-        parcel1%rworkice(7) = 1.e-9_sp ! min time-step allowed
+        parcel1%rworkice(7) = 0._sp !1.e-9_sp ! min time-step allowed
         parcel1%rworkice(14) = 2._sp ! tolerance scale factor
     
         ! put water in solution vector and set p, t, rh, z, w
