@@ -2441,9 +2441,9 @@
                    parcel1%iwork,parcel1%liw,jparcelwarm, &
                    parcel1%mf,parcel1%rpar,parcel1%ipar)
         ! check there are no negative values
-        where(parcel1%y(1:parcel1%n_bin_mode).le.0.e1_sp)
-            parcel1%y(1:parcel1%n_bin_mode)=1.e-22_sp
-        end where
+!         where(parcel1%y(1:parcel1%n_bin_mode).lt.0._sp)
+!             parcel1%y(1:parcel1%n_bin_mode)=1.e-22_sp
+!         end where
     enddo
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
