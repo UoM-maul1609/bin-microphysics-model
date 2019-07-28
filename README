@@ -1,0 +1,13 @@
+Compilation:
+	*type 'make'
+Doxygen pages:
+	*self generating documentation (from the source code) can be created by typing
+	 "doxygen fortran.dxg" at the command line.
+	*you can then view the html pages by opening the file at "doxygen/html/index.html"
+Running code:
+	*run the code by typing the following:
+	* single processor: ./main.exe 
+Contributing development:
+    * see main.f90 for examples of how to call various routines
+	* Contact the code owner to contribute ideas. 
+	
