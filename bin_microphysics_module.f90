@@ -3,8 +3,8 @@
 	!>@brief
 	!>code to allocate arrays, and call activation 
 	module bmm
-    use nrtype
-    use nr, only : locate, polint
+    use numerics_type
+    use numerics, only : find_pos, poly_int
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
@@ -13,53 +13,54 @@
     implicit none
         ! constants for the bin microphysics model
 
-        real(sp), parameter :: r_gas=8.314_sp, molw_a=29.e-3_sp,molw_water=18.e-3_sp, &
-                                cp=1005.0_sp, cpv=1870._sp, cpw=4.27e3_sp, cpi=2104.6_sp, &
-                                grav=9.81_sp, &
-        						lv=2.5e6_sp, ls=2.837e6_sp, lf=ls-lv, ttr=273.15_sp, &
-        						joules_in_an_erg=1.0e-7_sp,joules_in_a_cal=4.187e0_sp, &
-        						rhow=1000._sp, ra=r_gas/molw_a,rv=r_gas/molw_water , &
-        						eps1=ra/rv, rhoice=910._sp
+        real(wp), parameter :: r_gas=8.314_wp, molw_a=29.e-3_wp,molw_water=18.e-3_wp, &
+                                cp=1005.0_wp, cpv=1870._wp, cpw=4.27e3_wp, cpi=2104.6_wp, &
+                                grav=9.81_wp, &
+        						lv=2.5e6_wp, ls=2.837e6_wp, lf=ls-lv, ttr=273.15_wp, &
+        						joules_in_an_erg=1.0e-7_wp,joules_in_a_cal=4.187e0_wp, &
+        						rhow=1000._wp, ra=r_gas/molw_a,rv=r_gas/molw_water , &
+        						eps1=ra/rv, rhoice=910._wp
         						
 
         type parcel
             ! variables for bin model
             integer(i4b) :: n_bins1,n_modes,n_comps, n_bin_mode, n_bin_mode1, &
                             n_sound, ice_flag
-            real(sp) :: dt
-            real(sp), dimension(:,:), allocatable :: q_sound
-            real(sp), dimension(:), allocatable :: t_sound, z_sound, rh_sound, &
+            real(wp) :: dt
+            real(wp), dimension(:,:), allocatable :: q_sound
+            real(wp), dimension(:), allocatable :: t_sound, z_sound, rh_sound, &
                                                     p_sound, theta_q_sound
-            real(sp) :: z,p,t,w,rh, qinit, t_cbase, q_cbase, p_cbase, z_cbase, &
+            real(wp) :: z,p,t,w,rh, qinit, t_cbase, q_cbase, p_cbase, z_cbase, &
                         t_ctop, q_ctop, p_ctop, z_ctop, theta_q_cbase, theta_q_ctop, &
                         x_ent, theta_q
                         
                         
             ! liquid water
-            real(sp), dimension(:), allocatable :: d, maer, npart, rho_core, &
+            real(wp), dimension(:), allocatable :: d, maer, npart, rho_core, &
                             rh_eq, rhoat, dw, da_dt, ndrop
-            real(sp), dimension(:,:), allocatable :: mbin, rhobin, &
+            real(wp), dimension(:,:), allocatable :: mbin, rhobin, &
                                         nubin,molwbin,kappabin ! all bins x all comps                                
             ! variables for ODE:                    
             integer(i4b) :: neq, itol, ipr, ite, iz, iw, irh, &
                             itask, istate, iopt, mf, lrw, liw
             integer(i4b), dimension(:), allocatable :: iwork, ipar
-            real(sp) :: rtol, tt, tout
-            real(sp), dimension(:), allocatable :: y, yold, atol, rwork, rpar
-            
+            real(wp) :: tt, tout
+            real(wp), dimension(:), allocatable :: y, yold, atol, rwork, rpar
+            real(wp), dimension(1) :: rtol
             
             ! ice water
-            real(sp), dimension(:), allocatable :: dice, maerice, npartice, rho_coreice, &
+            real(wp), dimension(:), allocatable :: dice, maerice, npartice, rho_coreice, &
                             rh_eqice, rhoatice, dwice, da_dtice, nice, &
                             phi, rhoi, nump, rime
-            real(sp), dimension(:,:), allocatable :: mbinice, rhobinice, &
+            real(wp), dimension(:,:), allocatable :: mbinice, rhobinice, &
                                         nubinice,molwbinice,kappabinice ! all bins x all comps                                
             ! variables for ODE:                    
             integer(i4b) :: neqice, itolice, ipri, itei, izi, iwi, irhi, &
                             itaskice, istateice, ioptice, mfice, lrwice, liwice
             integer(i4b), dimension(:), allocatable :: iworkice, iparice
-            real(sp) :: rtolice, ttice, toutice
-            real(sp), dimension(:), allocatable :: yice, yoldice, atolice, rworkice, rparice
+            real(wp) :: ttice, toutice
+            real(wp), dimension(1) :: rtolice
+            real(wp), dimension(:), allocatable :: yice, yoldice, atolice, rworkice, rparice
             
             
             logical :: break_flag=.false.
@@ -69,8 +70,8 @@
         type sounding
             ! variables for grid
             integer(i4b) :: n_levels
-            real(sp), dimension(:,:), allocatable :: q
-            real(sp), dimension(:), allocatable :: theta, p, z, rh
+            real(wp), dimension(:,:), allocatable :: q
+            real(wp), dimension(:), allocatable :: theta, p, z, rh
         end type sounding
 
 
@@ -94,35 +95,35 @@
 
         ! some namelist variables
         logical :: micro_init=.true., adiabatic_prof=.false., vert_ent=.false.
-        real(sp) :: ent_rate, dmina,dmaxa
-        real(sp) :: zinit,tpert,winit,tinit,pinit,rhinit,z_ctop, alpha_therm, alpha_cond, &
+        real(wp) :: ent_rate, dmina,dmaxa
+        real(wp) :: zinit,tpert,winit,tinit,pinit,rhinit,z_ctop, alpha_therm, alpha_cond, &
                     alpha_therm_ice, alpha_dep
         integer(i4b) :: microphysics_flag=0, kappa_flag,updraft_type, vent_flag, &
                         ice_flag=0, bin_scheme_flag=1
         logical :: use_prof_for_tprh
-        real(sp) :: dz,dt, runtime
+        real(wp) :: dz,dt, runtime
         ! sounding spec
-        real(sp) :: psurf, tsurf
+        real(wp) :: psurf, tsurf
         integer(i4b), parameter :: nlevels_r=1000
         integer(i4b), parameter :: nq=3
         integer(i4b) :: n_levels_s, idum, n_sel
-        real(sp) :: mult, rh_act
-        real(sp), allocatable, dimension(:,:) :: q_read !nq x nlevels_r
-        real(sp), allocatable, dimension(:) :: theta_read,rh_read,  z_read
+        real(wp) :: mult, rh_act
+        real(wp), allocatable, dimension(:,:) :: q_read !nq x nlevels_r
+        real(wp), allocatable, dimension(:) :: theta_read,rh_read,  z_read
         ! aerosol setup
         integer(i4b) :: n_intern, n_mode,n_sv,sv_flag,n_bins,n_comps
         ! aerosol_spec
-        real(sp), allocatable, dimension(:,:) :: n_aer1,d_aer1,sig_aer1, mass_frac_aer1
-        real(sp), allocatable, dimension(:) ::  molw_core1,density_core1,nu_core1, &
+        real(wp), allocatable, dimension(:,:) :: n_aer1,d_aer1,sig_aer1, mass_frac_aer1
+        real(wp), allocatable, dimension(:) ::  molw_core1,density_core1,nu_core1, &
                                         kappa_core1
-        real(sp), allocatable, dimension(:) :: org_content1, molw_org1, kappa_org1, &
+        real(wp), allocatable, dimension(:) :: org_content1, molw_org1, kappa_org1, &
                                     density_org1, delta_h_vap1,nu_org1,log_c_star1
         
         
 
         ! variables for model
-        real(sp) :: theta_surf,theta_init, &
-            theta_q_sat,t1old, p111, w_cb, n_dummy, d_dummy, x2old=1.0_sp
+        real(wp) :: theta_surf,theta_init, &
+            theta_q_sat,t1old, p111, w_cb, n_dummy, d_dummy, x2old=1.0_wp
         logical :: set_theta_q_cb_flag=.true.
 
 
@@ -169,16 +170,16 @@
 		                    density_core1, nu_core1, kappa_core1, &
 		                    org_content1,molw_org1,kappa_org1,density_org1, &
 		                    delta_h_vap1,nu_org1,log_c_star1)
-		use nrtype
+		use numerics_type
 		implicit none
 		integer(i4b), intent(in) :: n_intern, n_mode, n_sv, n_bins,n_comps, nq, &
 		                            n_levels_s
-		real(sp), dimension(:), allocatable, intent(inout) :: theta_read,rh_read,z_read, &
+		real(wp), dimension(:), allocatable, intent(inout) :: theta_read,rh_read,z_read, &
 		                        org_content1,molw_org1,kappa_org1, &
 		                        density_org1,delta_h_vap1,nu_org1,log_c_star1
-		real(sp), dimension(:,:), allocatable, intent(inout) :: q_read, &
+		real(wp), dimension(:,:), allocatable, intent(inout) :: q_read, &
 		                        n_aer1,d_aer1,sig_aer1,mass_frac_aer1
-		real(sp), dimension(:), allocatable, intent(inout) :: molw_core1,density_core1, &
+		real(wp), dimension(:), allocatable, intent(inout) :: molw_core1,density_core1, &
 		                        nu_core1,kappa_core1
 		
 		integer(i4b) :: AllocateStatus
@@ -300,14 +301,14 @@
 	!>@brief
 	!>interpolates the sounding to the grid
     subroutine initialise_bmm_arrays()
-    use nrtype
-    use nr, only : locate, polint, rkqs, odeint, zbrent, brent
+    use numerics_type
+    use numerics, only : find_pos, poly_int, zeroin, fmin,vode_integrate
 
     implicit none
-    real(sp) :: num, ntot, number_per_bin, test, var1, &
+    real(wp) :: num, ntot, number_per_bin, test, var1, &
                 eps2, z1, z2, htry, hmin, var, dummy
-    real(sp), dimension(1) :: p1, z11
-    real(sp) :: p11, p22, rm, cpm
+    real(wp), dimension(1) :: p1, z11
+    real(wp) :: p11, p22, rm, cpm
     integer(i4b) :: i,j,k, AllocateStatus, iloc
 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -375,7 +376,7 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     do i=1,n_mode
         var1=sum(mass_frac_aer1(i,:)/ density_core1)
-        parcel1%rho_core(i) = 1._sp/var1
+        parcel1%rho_core(i) = 1._wp/var1
     enddo
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
@@ -394,14 +395,14 @@
         !print *,num
         ! set up variables for parcel model
         ntot=num
-        number_per_bin=ntot/real(n_bins,sp)
+        number_per_bin=ntot/real(n_bins,wp)
         parcel1%npart(1+(k-1)*n_bins:(k)*n_bins)=number_per_bin
         parcel1%d(1+(k-1)*(n_bins+1))=dmina
         do i=1,n_bins
             d_dummy=parcel1%d(i+(k-1)*(n_bins+1))
-            n_dummy=number_per_bin*(1._sp-1.e-15_sp)
-            parcel1%d(i+1+(k-1)*(n_bins+1))= zbrent(find_upper_diameter, &
-                        d_dummy*0.9_sp,dmaxa*2._sp,1.e-30_sp)
+            n_dummy=number_per_bin*(1._wp-1.e-15_wp)
+            parcel1%d(i+1+(k-1)*(n_bins+1))= zeroin(&
+                        d_dummy*0.9_wp,dmaxa*2._wp,find_upper_diameter, 1.e-30_wp)
         enddo
         parcel1%d((k)*(n_bins+1))=dmaxa ! nail it to end point - round off
     enddo
@@ -417,7 +418,7 @@
         do j=1,parcel1%n_bins1
             i=j+(k-1)*(n_bins+1)
             parcel1%maer(j+(k-1)*(n_bins))= &
-                pi/6._sp*(0.5_sp*(parcel1%d(i+1)+parcel1%d(i)))**3 * &
+                pi/6._wp*(0.5_wp*(parcel1%d(i+1)+parcel1%d(i)))**3 * &
                 parcel1%rho_core(k)
         enddo
     enddo
@@ -453,18 +454,18 @@
     ! dp/dz=-p/(ra*theta*(p/100000.)**0.287)
     parcel1%q_sound=q_read    
     parcel1%z_sound=z_read  
-    parcel1%t_sound(1)=theta_read(1)*(psurf/1.e5_sp)**(ra/cp) 
+    parcel1%t_sound(1)=theta_read(1)*(psurf/1.e5_wp)**(ra/cp) 
     parcel1%p_sound(1)=psurf
     
-    eps2=1.e-5_sp
-    htry=10._sp
-    hmin=1.e-2_sp
+    eps2=1.e-5_wp
+    htry=10._wp
+    hmin=1.e-2_wp
     p1=psurf
 
     ! integrate hydrostatic equation
     do i=2,n_levels_s
-        call odeint(p1,z_read(i-1),z_read(i),eps2,htry,hmin,hydrostatic1b,rkqs)
-        parcel1%t_sound(i)=theta_read(i)*(p1(1)/1.e5_sp)**(ra/cp)  
+        call vode_integrate(p1,z_read(i-1),z_read(i),eps2,htry,hmin,hydrostatic1b)
+        parcel1%t_sound(i)=theta_read(i)*(p1(1)/1.e5_wp)**(ra/cp)  
         parcel1%p_sound(i)=p1(1)      
     enddo
     
@@ -484,19 +485,19 @@
     ! interpolate to find parcel conditions
     if (use_prof_for_tprh) then
         ! interpolate to find theta
-        iloc=locate(parcel1%z_sound(1:n_levels_s),parcel1%z)
+        iloc=find_pos(parcel1%z_sound(1:n_levels_s),parcel1%z)
         iloc=min(n_levels_s-1,iloc)
         iloc=max(1,iloc)
         ! linear interp t
-        call polint(parcel1%z_sound(iloc:iloc+1), parcel1%t_sound(iloc:iloc+1), &
+        call poly_int(parcel1%z_sound(iloc:iloc+1), parcel1%t_sound(iloc:iloc+1), &
                     min(parcel1%z,parcel1%z_sound(n_levels_s)), var,dummy)        
         parcel1%t=var +tpert
         ! linear interp rh
-        call polint(parcel1%z_sound(iloc:iloc+1), parcel1%p_sound(iloc:iloc+1), &
+        call poly_int(parcel1%z_sound(iloc:iloc+1), parcel1%p_sound(iloc:iloc+1), &
                     min(parcel1%z,parcel1%z_sound(n_levels_s)), var,dummy)        
         parcel1%p=var 
         ! linear interp rh
-        call polint(parcel1%z_sound(iloc:iloc+1), parcel1%rh_sound(iloc:iloc+1), &
+        call poly_int(parcel1%z_sound(iloc:iloc+1), parcel1%rh_sound(iloc:iloc+1), &
                     min(parcel1%z,parcel1%z_sound(n_levels_s)), var,dummy)        
         parcel1%rh=var 
         print *,'t,p,rh from sounding: ', parcel1%t, parcel1%p, parcel1%rh
@@ -513,12 +514,12 @@
 	    ! cloud base qv
 	    parcel1%q_cbase=parcel1%qinit
 		! calculate the dry adiabat:
-		theta_init=parcel1%t*(1.e5_sp/parcel1%p)**(ra/cp)
+		theta_init=parcel1%t*(1.e5_wp/parcel1%p)**(ra/cp)
 		! calculate p required so that qs(t,p) = q init
-		parcel1%p_cbase=zbrent(cloud_base,parcel1%p, 100._sp, 1.e-30_sp)
+		parcel1%p_cbase=zeroin(parcel1%p, 100._wp,cloud_base, 1.e-30_wp)
 		rm=ra+parcel1%qinit*rv
 		cpm=cp+parcel1%qinit*cpv
-		parcel1%t_cbase=theta_init*(parcel1%p_cbase/1.e5_sp)**(rm/cpm)
+		parcel1%t_cbase=theta_init*(parcel1%p_cbase/1.e5_wp)**(rm/cpm)
 		parcel1%theta_q_cbase= &
 		    calc_theta_q3(parcel1%t_cbase,parcel1%p_cbase,parcel1%q_cbase)
 		print *,'Cloud-base t, p: ',parcel1%t_cbase,parcel1%p_cbase
@@ -526,31 +527,30 @@
 		
 		
 		! now, find the height of cloud-base along dry adiabat:
-		theta_surf=tsurf*(1.e5_sp/psurf)**(ra/cp)
+		theta_surf=tsurf*(1.e5_wp/psurf)**(ra/cp)
 		p11=parcel1%p
 		z11(1)=parcel1%z
 		p22=parcel1%p_cbase
 		htry=p22-p11
-		eps2=1.e-5_sp
-		call odeint(z11,p11,p22,eps2,htry,hmin,hydrostatic1,rkqs)
+		eps2=1.e-5_wp
+		call vode_integrate(z11,p11,p22,eps2,htry,hmin,hydrostatic1)
 		parcel1%z_cbase=z11(1)
-
         ! cloud-top properties from sounding:
         parcel1%z_ctop=z_ctop
         ! interpolate to find t
-        iloc=locate(parcel1%z_sound(1:n_levels_s),parcel1%z_ctop)
+        iloc=find_pos(parcel1%z_sound(1:n_levels_s),parcel1%z_ctop)
         iloc=min(n_levels_s-1,iloc)
         iloc=max(1,iloc)
         ! linear interp t
-        call polint(parcel1%z_sound(iloc:iloc+1), parcel1%t_sound(iloc:iloc+1), &
+        call poly_int(parcel1%z_sound(iloc:iloc+1), parcel1%t_sound(iloc:iloc+1), &
                     min(parcel1%z_ctop,parcel1%z_sound(n_levels_s)), var,dummy)        
         parcel1%t_ctop=var
         ! linear interp p
-        call polint(parcel1%z_sound(iloc:iloc+1), parcel1%p_sound(iloc:iloc+1), &
+        call poly_int(parcel1%z_sound(iloc:iloc+1), parcel1%p_sound(iloc:iloc+1), &
                     min(parcel1%z_ctop,parcel1%z_sound(n_levels_s)), var,dummy)        
         parcel1%p_ctop=var
         ! linear interp q
-        call polint(parcel1%z_sound(iloc:iloc+1), parcel1%rh_sound(iloc:iloc+1), &
+        call poly_int(parcel1%z_sound(iloc:iloc+1), parcel1%rh_sound(iloc:iloc+1), &
                     min(parcel1%z_ctop,parcel1%z_sound(n_levels_s)), var,dummy)        
         parcel1%q_ctop=var*eps1*svp_liq(parcel1%t_ctop) / &
             (parcel1%p_ctop-svp_liq(parcel1%t_ctop))
@@ -568,13 +568,13 @@
         case(0)
             do i=1,parcel1%n_bin_mode
                 n_sel=i
-                rh_act=0._sp !min(parcel1%rh,0.999_sp)
-                mult=-1._sp
+                rh_act=0._wp !min(parcel1%rh,0.999_wp)
+                mult=-1._wp
                 ! has to be less than the peak moles of water at activation
-                d_dummy=brent(1.e-50_sp,1.e-12_sp,1.e1_sp, koehler02,1.e-30_sp,test)
-                rh_act=min(parcel1%rh,0.999_sp)
-                mult=1._sp
-                d_dummy=zbrent(koehler02,1.e-30_sp, test, 1.e-30_sp)*molw_water 
+                test=fmin(1.e-50_wp,1.e1_wp, koehler02,1.e-30_wp)
+                rh_act=min(parcel1%rh,0.999_wp)
+                mult=1._wp
+                d_dummy=zeroin(1.e-30_wp, test, koehler02,1.e-30_wp)*molw_water 
                 parcel1%mbin(i,n_comps+1)= d_dummy
             enddo
 !             call koehler01(parcel1%t,parcel1%mbin(:,n_comps+1),&
@@ -585,13 +585,13 @@
         case(1)
             do i=1,parcel1%n_bin_mode
                 n_sel=i
-                rh_act=0._sp !min(parcel1%rh,0.999_sp)
-                mult=-1._sp
+                rh_act=0._wp !min(parcel1%rh,0.999_wp)
+                mult=-1._wp
                 ! has to be less than the peak moles of water at activation
-                d_dummy=brent(1.e-50_sp,1.e-12_sp,1.e1_sp, kkoehler02,1.e-30_sp,test)
-                rh_act=min(parcel1%rh,0.999_sp)
-                mult=1._sp
-                d_dummy=zbrent(kkoehler02,1.e-30_sp, test, 1.e-30_sp)*molw_water 
+                test=fmin(1.e-50_wp,1.e1_wp, kkoehler02,1.e-30_wp)
+                rh_act=min(parcel1%rh,0.999_wp)
+                mult=1._wp
+                d_dummy=zeroin(1.e-30_wp, test, kkoehler02,1.e-30_wp)*molw_water 
                 parcel1%mbin(i,n_comps+1)= d_dummy
             enddo
 !             call kkoehler01(parcel1%t,parcel1%mbin(:,n_comps+1),&
@@ -613,10 +613,10 @@
     ! set-up ODE variables                                                         !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     parcel1%neq=parcel1%n_bin_mode+5 ! p,t,rh,z,w
-    parcel1%tt=0._sp
+    parcel1%tt=0._wp
     parcel1%tout=parcel1%tt+parcel1%dt
     parcel1%itol=2
-    parcel1%rtol=1.e-4_sp
+    parcel1%rtol=1.e-4_wp
     allocate( parcel1%y(parcel1%neq), stat = allocatestatus)
     if (allocatestatus /= 0) stop "*** not enough memory ***"
     allocate( parcel1%yold(parcel1%neq), stat = allocatestatus)
@@ -624,7 +624,7 @@
     allocate( parcel1%atol(parcel1%neq), stat = allocatestatus)
     if (allocatestatus /= 0) stop "*** not enough memory ***"
     
-    parcel1%atol(1:parcel1%n_bin_mode)=1.e-25_sp
+    parcel1%atol(1:parcel1%n_bin_mode)=1.e-25_wp
     
     parcel1%ipr=parcel1%n_bin_mode+1 ! pressure
     parcel1%ite=parcel1%n_bin_mode+2 ! temperarture
@@ -632,11 +632,11 @@
     parcel1%iz =parcel1%n_bin_mode+4 ! altitude
     parcel1%iw =parcel1%n_bin_mode+5 ! vertical wind
     
-    parcel1%atol(parcel1%ipr)=10._sp
-    parcel1%atol(parcel1%ite)=1.e-4_sp
-    parcel1%atol(parcel1%irh)=1.e-8_sp
-    parcel1%atol(parcel1%iz) =2.e-2_sp
-    parcel1%atol(parcel1%iw) =2.e-2_sp
+    parcel1%atol(parcel1%ipr)=10._wp
+    parcel1%atol(parcel1%ite)=1.e-4_wp
+    parcel1%atol(parcel1%irh)=1.e-8_wp
+    parcel1%atol(parcel1%iz) =2.e-2_wp
+    parcel1%atol(parcel1%iw) =2.e-2_wp
     
     if(parcel1%iw .ne. parcel1%neq) stop "*** problem with array lengths ***"
     parcel1%itask=1
@@ -653,13 +653,15 @@
     if (allocatestatus /= 0) stop "*** not enough memory ***"
     
     ! extra input variables:
+    parcel1%iwork=0
+    parcel1%rwork=0._wp
     parcel1%iwork(6) = 100 ! max steps
     parcel1%iwork(7) = 10 ! max message printed per problem
     parcel1%iwork(5) = 5 ! order
-    parcel1%rwork(5) = 0._sp !1.e-3_sp ! initial time-step
+    parcel1%rwork(5) = 0._wp !1.e-3_wp ! initial time-step
     parcel1%rwork(6) = dt ! max time-step
-    parcel1%rwork(7) = 0._sp !1.e-9_sp ! min time-step allowed
-    parcel1%rwork(14) = 2._sp ! tolerance scale factor
+    parcel1%rwork(7) = 0._wp !1.e-9_wp ! min time-step allowed
+    parcel1%rwork(14) = 2._wp ! tolerance scale factor
     
     ! put water in solution vector and set p, t, rh, z, w
     parcel1%y(1:parcel1%n_bin_mode)=parcel1%mbin(:,n_comps+1)
@@ -717,15 +719,15 @@
         allocate( parcel1%rime(1:parcel1%n_bin_mode), STAT = AllocateStatus)
         if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
         
-        parcel1%phi=1._sp
+        parcel1%phi=1._wp
         parcel1%rhoi=rhoice
-        parcel1%nump=1._sp
-        parcel1%rime=0._sp
+        parcel1%nump=1._wp
+        parcel1%rime=0._wp
         
                 
         parcel1%rho_coreice(:) = parcel1%rho_core(:)
         
-        parcel1%npartice=0._sp
+        parcel1%npartice=0._wp
         parcel1%dice=parcel1%d
         parcel1%maerice=parcel1%maer
         parcel1%mbinice=parcel1%mbin
@@ -738,10 +740,10 @@
         ! set-up ODE variables                                                         !
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         parcel1%neqice=parcel1%n_bin_mode+4 ! p,t,rh,w
-        parcel1%ttice=0._sp
+        parcel1%ttice=0._wp
         parcel1%toutice=parcel1%tout
         parcel1%itolice=2
-        parcel1%rtolice=1.e-3_sp
+        parcel1%rtolice=1.e-3_wp
         allocate( parcel1%yice(parcel1%neqice), stat = allocatestatus)
         if (allocatestatus /= 0) stop "*** not enough memory ***"
         allocate( parcel1%yoldice(parcel1%neqice), stat = allocatestatus)
@@ -749,17 +751,17 @@
         allocate( parcel1%atolice(parcel1%neqice), stat = allocatestatus)
         if (allocatestatus /= 0) stop "*** not enough memory ***"
     
-        parcel1%atolice(1:parcel1%n_bin_mode)=1.e-25_sp
+        parcel1%atolice(1:parcel1%n_bin_mode)=1.e-25_wp
     
         parcel1%ipri=parcel1%n_bin_mode+1 ! pressure
         parcel1%itei=parcel1%n_bin_mode+2 ! temperature
         parcel1%irhi=parcel1%n_bin_mode+3 ! rh
         parcel1%iwi =parcel1%n_bin_mode+4 ! vertical wind
     
-        parcel1%atolice(parcel1%ipri)=10._sp
-        parcel1%atolice(parcel1%itei)=1.e-4_sp
-        parcel1%atolice(parcel1%irhi)=1.e-8_sp
-        parcel1%atolice(parcel1%iwi) =2.e-2_sp
+        parcel1%atolice(parcel1%ipri)=10._wp
+        parcel1%atolice(parcel1%itei)=1.e-4_wp
+        parcel1%atolice(parcel1%irhi)=1.e-8_wp
+        parcel1%atolice(parcel1%iwi) =2.e-2_wp
     
         if(parcel1%iwi .ne. parcel1%neqice) stop "*** problem with array lengths ***"
         parcel1%itaskice=1
@@ -775,13 +777,15 @@
         if (allocatestatus /= 0) stop "*** not enough memory ***"
     
         ! extra input variables:
+        parcel1%iworkice=0
+        parcel1%rworkice=0._wp
         parcel1%iworkice(6) = 100 ! max steps
         parcel1%iworkice(7) = 10 ! max message printed per problem
         parcel1%iworkice(5) = 5 ! order
-        parcel1%rworkice(5) = 0._sp !1.e-3_sp ! initial time-step
+        parcel1%rworkice(5) = 0._wp !1.e-3_wp ! initial time-step
         parcel1%rworkice(6) = dt ! max time-step
-        parcel1%rworkice(7) = 0._sp !1.e-9_sp ! min time-step allowed
-        parcel1%rworkice(14) = 2._sp ! tolerance scale factor
+        parcel1%rworkice(7) = 0._wp !1.e-9_wp ! min time-step allowed
+        parcel1%rworkice(14) = 2._wp ! tolerance scale factor
     
         ! put water in solution vector and set p, t, rh, z, w
         parcel1%yice(1:parcel1%n_bin_mode)=parcel1%mbinice(:,n_comps+1)
@@ -811,17 +815,17 @@
 	!>@param[inout] num: number of aerosol particles
     subroutine lognormal_n_between_limits(n_aer1,d_aer1,sig_aer1,n_intern,dmin,dmax, &
                                         num)
-    real(sp), intent(in) :: dmin,dmax
-    real(sp), intent(in), dimension(n_intern) :: n_aer1,d_aer1,sig_aer1
+    real(wp), intent(in) :: dmin,dmax
+    real(wp), intent(in), dimension(n_intern) :: n_aer1,d_aer1,sig_aer1
     integer(i4b), intent(in) :: n_intern
-    real(sp), intent(inout) :: num
+    real(wp), intent(inout) :: num
     
     integer(i4b) :: i
        
-    num=0._sp                                 
+    num=0._wp                                 
     do i=1,n_intern
-        num=num+n_aer1(i)*(0.5_sp*erfc(-log(dmax/d_aer1(i))/sqrt(2._sp)/sig_aer1(i) ) - &
-            0.5_sp*erfc(-log(dmin/d_aer1(i))/sqrt(2._sp)/sig_aer1(i) ))
+        num=num+n_aer1(i)*(0.5_wp*erfc(-log(dmax/d_aer1(i))/sqrt(2._wp)/sig_aer1(i) ) - &
+            0.5_wp*erfc(-log(dmin/d_aer1(i))/sqrt(2._wp)/sig_aer1(i) ))
     enddo
     
     end subroutine lognormal_n_between_limits
@@ -841,10 +845,10 @@
 	!>@param[in] x: dmax guess
 	!>@return find_upper_bin_edge: zero when root found
     function find_upper_diameter(x)
-        use nrtype
+        use numerics_type
         implicit none
-        real(sp), intent(in) :: x
-        real(sp) :: find_upper_diameter, num
+        real(wp), intent(in) :: x
+        real(wp) :: find_upper_diameter, num
         
         call lognormal_n_between_limits(n_aer1(:,idum),d_aer1(:,idum),sig_aer1(:,idum), &
                                     n_intern,d_dummy,x, num)
@@ -864,15 +868,15 @@
 	!>@param[in] p: pressure
 	!>@return cloud_base: zero when root found
 	function cloud_base(p)
-	use nrtype
+	use numerics_type
 	implicit none
-	real(sp), intent(in) :: p
-	real(sp) :: t,qs, cloud_base, rm, cpm
+	real(wp), intent(in) :: p
+	real(wp) :: t,qs, cloud_base, rm, cpm
 	
 	rm=ra+rv*parcel1%qinit
 	cpm=cp+cpv**parcel1%qinit
 	
-	t=theta_init*(p/1.e5_sp)**(rm/cpm)
+	t=theta_init*(p/1.e5_wp)**(rm/cpm)
 	qs=eps1*svp_liq(t)/(p-svp_liq(t))
 	
 	cloud_base=qs-parcel1%q_cbase
@@ -883,66 +887,67 @@
 
 
 	subroutine hydrostatic1(p,z,dzdp)
-	use nrtype
+	use numerics_type
 	implicit none
-	real(sp), intent(in) :: p
-	real(sp), dimension(:), intent(in) :: z
-	real(sp), dimension(:), intent(out) :: dzdp
-	real(sp) :: t
+	real(wp), intent(in) :: p
+	real(wp), dimension(:), intent(in) :: z
+	real(wp), dimension(:), intent(out) :: dzdp
+	real(wp) :: t
 	
-	t=theta_surf*(p/1.e5_sp)**(ra/cp)
+	t=theta_surf*(p/1.e5_wp)**(ra/cp)
 	dzdp(1)=-(ra*t) / (grav*p)
 	
 	end subroutine hydrostatic1
 
 	subroutine hydrostatic1a(z,p,dpdz)
-	use nrtype
+	use numerics_type
 	implicit none
-	real(sp), intent(in) :: z
-	real(sp), dimension(:), intent(in) :: p
-	real(sp), dimension(:), intent(out) :: dpdz
-	real(sp) :: t
+	real(wp), intent(in) :: z
+	real(wp), dimension(:), intent(in) :: p
+	real(wp), dimension(:), intent(out) :: dpdz
+	real(wp) :: t
 	
-	t=theta_surf*(p(1)/1.e5_sp)**(ra/cp)
+	t=theta_surf*(p(1)/1.e5_wp)**(ra/cp)
 	dpdz(1)=-(grav*p(1)) / (ra*t) 
 	
 	end subroutine hydrostatic1a
 
 	subroutine hydrostatic1b(z,p,dpdz)
-	use nrtype
+	use numerics_type
 	implicit none
-	real(sp), intent(in) :: z
-	real(sp), dimension(:), intent(in) :: p
-	real(sp), dimension(:), intent(out) :: dpdz
-	real(sp) :: t, var, dummy, theta
+	real(wp), intent(in) :: z
+	real(wp), dimension(:), intent(in) :: p
+	real(wp), dimension(:), intent(out) :: dpdz
+	real(wp) :: t, var, dummy, theta
 	integer(i4b) :: iloc
 	
 	! interpolate to find theta
-    iloc=locate(z_read(1:n_levels_s),z)
+    iloc=find_pos(z_read(1:n_levels_s),z)
     iloc=min(n_levels_s-1,iloc)
     iloc=max(1,iloc)
     ! linear interp theta
-    call polint(z_read(iloc:iloc+1), theta_read(iloc:iloc+1), &
+    call poly_int(z_read(iloc:iloc+1), theta_read(iloc:iloc+1), &
                 min(z,z_read(n_levels_s)), var,dummy)
     theta=var     
                 
-	t=theta*(p(1)/1.e5_sp)**(ra/cp)
+	t=theta*(p(1)/1.e5_wp)**(ra/cp)
 	dpdz(1)=-(grav*p(1)) / (ra*t) 
 	
 	end subroutine hydrostatic1b
 
 	subroutine hydrostatic2(p,z,dzdp)
-	use nrtype
-	use nr, only : zbrent
+	use numerics_type
+	use numerics, only : zeroin
 	implicit none
-	real(sp), intent(in) :: p
-	real(sp), dimension(:), intent(in) :: z
-	real(sp), dimension(:), intent(out) :: dzdp
-	real(sp) :: t
+	real(wp), intent(in) :: p
+	real(wp), dimension(:), intent(in) :: z
+	real(wp), dimension(:), intent(out) :: dzdp
+	real(wp) :: t
 	
 	p111=p
-	t=theta_surf*(p111/1.e5_sp)**(ra/cp)
-	t=zbrent(calc_theta_q,t,t1old*1.01_sp,1.e-5_sp)
+	t=theta_surf*(p111/1.e5_wp)**(ra/cp)
+	t=zeroin(t,t1old*1.01_wp,calc_theta_q,1.e-5_wp)
+	
 !	print *,'hi',t,calc_theta_q(t)
 	! find the temperature by iteration
 	dzdp(1)=-(ra*t) / (grav*p)
@@ -950,17 +955,17 @@
 	end subroutine hydrostatic2
 
 	subroutine hydrostatic2a(z,p,dpdz)
-	use nrtype
-	use nr, only : zbrent
+	use numerics_type
+	use numerics, only : zeroin
 	implicit none
-	real(sp), intent(in) :: z
-	real(sp), dimension(:), intent(in) :: p
-	real(sp), dimension(:), intent(out) :: dpdz
-	real(sp) :: t
+	real(wp), intent(in) :: z
+	real(wp), dimension(:), intent(in) :: p
+	real(wp), dimension(:), intent(out) :: dpdz
+	real(wp) :: t
 	
 	p111=p(1)
-	t=theta_surf*(p111/1.e5_sp)**(ra/cp)
-	t=zbrent(calc_theta_q,t,t1old*1.01_sp,1.e-5_sp)
+	t=theta_surf*(p111/1.e5_wp)**(ra/cp)
+	t=zeroin(t,t1old*1.01_wp,calc_theta_q,1.e-5_wp)
 !	print *,'hi',t,calc_theta_q(t)
 	! find the temperature by iteration
 	dpdz(1)=-(grav*p(1))/(ra*t)
@@ -969,26 +974,26 @@
 	
 
 	function calc_theta_q(t111)
-	use nrtype
+	use numerics_type
 	implicit none
-	real(sp), intent(in) :: t111
-	real(sp) :: calc_theta_q
-	real(sp) :: qs,rm,cpm
+	real(wp), intent(in) :: t111
+	real(wp) :: calc_theta_q
+	real(wp) :: qs,rm,cpm
 	qs=eps1*svp_liq(t111)/(p111-svp_liq(t111))
 	rm=ra+rv*qs
 	cpm=cp+cpv*qs
-	calc_theta_q=t111*(1.e5_sp/p111)**(rm/cpm)*exp(lv*qs/cpm/t111)-theta_q_sat
+	calc_theta_q=t111*(1.e5_wp/p111)**(rm/cpm)*exp(lv*qs/cpm/t111)-theta_q_sat
 
 	end function calc_theta_q     
 
 	function calc_theta_q2(p)
-	use nrtype
+	use numerics_type
 	implicit none
-	real(sp), intent(in) :: p
-	real(sp) :: calc_theta_q2
-	real(sp) :: ws
+	real(wp), intent(in) :: p
+	real(wp) :: calc_theta_q2
+	real(wp) :: ws
 	ws=eps1*svp_liq(t1old)/(p-svp_liq(t1old))
-	calc_theta_q2=t1old*(1e5_sp/p)**(ra/cp)*exp(lv*ws/cp/t1old)-theta_q_sat
+	calc_theta_q2=t1old*(1e5_wp/p)**(ra/cp)*exp(lv*ws/cp/t1old)-theta_q_sat
 
 	end function calc_theta_q2    
 
@@ -1004,16 +1009,16 @@
 	!>@param[in] q: total water
 	!>@return calc_theta_q3: moist potential temperature
 	function calc_theta_q3(t,p,q)
-	use nrtype
+	use numerics_type
 	implicit none
-	real(sp), intent(in) :: t,p,q
-	real(sp) :: calc_theta_q3
-	real(sp) :: qs, rm, cpm, rh
+	real(wp), intent(in) :: t,p,q
+	real(wp) :: calc_theta_q3
+	real(wp) :: qs, rm, cpm, rh
 	qs=eps1*svp_liq(t)/(p-svp_liq(t))
 	rm=ra+rv*q
-	cpm=cp+cpv*qs !+cpw*max(q-qs,0._sp)
+	cpm=cp+cpv*qs !+cpw*max(q-qs,0._wp)
 	rh=q/qs
-	calc_theta_q3=t*(1.e5_sp/p)**(rm/cpm)*exp(lv*q/(t*(cpm))) * &
+	calc_theta_q3=t*(1.e5_wp/p)**(rm/cpm)*exp(lv*q/(t*(cpm))) * &
 	    rh**(-q*rv/(cp+q*cpv))
 
 	end function calc_theta_q3    
@@ -1030,13 +1035,13 @@
 	!>@param[in] t: temperature
 	!>@return svp_liq: saturation vapour pressure over liquid water
 	function svp_liq(t)
-		use nrtype
+		use numerics_type
 		implicit none
-		real(sp), intent(in) :: t
-		real(sp) :: svp_liq
-		svp_liq = 100._sp*6.1121_sp* &
-			  exp((18.678_sp - (t-ttr)/ 234.5_sp)* &
-			  (t-ttr)/(257.14_sp + (t-ttr)))
+		real(wp), intent(in) :: t
+		real(wp) :: svp_liq
+		svp_liq = 100._wp*6.1121_wp* &
+			  exp((18.678_wp - (t-ttr)/ 234.5_wp)* &
+			  (t-ttr)/(257.14_wp + (t-ttr)))
 	end function svp_liq
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 	! saturation vapour pressure over ice                                          !
@@ -1048,13 +1053,13 @@
 	!>@param[in] t: temperature
 	!>@return svp_ice: saturation vapour pressure over ice water
 	function svp_ice(t)
-		use nrtype
+		use numerics_type
 		implicit none
-		real(sp), intent(in) :: t
-		real(sp) :: svp_ice
-		svp_ice = 100._sp*6.1115_sp* &
-            exp((23.036_sp - (t-ttr)/ 333.7_sp)* &
-            (t-ttr)/(279.82_sp + (t-ttr)))
+		real(wp), intent(in) :: t
+		real(wp) :: svp_ice
+		svp_ice = 100._wp*6.1115_wp* &
+            exp((23.036_wp - (t-ttr)/ 333.7_wp)* &
+            (t-ttr)/(279.82_wp + (t-ttr)))
 
 	end function svp_ice
 
@@ -1069,12 +1074,12 @@
 	!>@param[in] t: temperature, p: pressure
 	!>@return dd: diffusivity of water vapour in air
     function dd(t,p)
-      use nrtype
+      use numerics_type
       implicit none
-      real(sp), intent(in) :: t, p
-      real(sp) :: dd, t1
-      t1=max(t,200._sp)
-      dd=2.11e-5_sp*(t1/ttr)**1.94_sp*(101325._sp/p)
+      real(wp), intent(in) :: t, p
+      real(wp) :: dd, t1
+      t1=max(t,200._wp)
+      dd=2.11e-5_wp*(t1/ttr)**1.94_wp*(101325._wp/p)
     end function dd
 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -1087,12 +1092,12 @@
 	!>@param[in] t: temperature
 	!>@return ka: thermal conductivity of air
     function ka(t)
-      use nrtype
+      use numerics_type
       implicit none
-      real(sp), intent(in) :: t
-      real(sp) :: ka, t1
-      t1=max(t,200._sp)
-      ka=(5.69_sp+0.017_sp*(t1-ttr))*1.e-3_sp*joules_in_a_cal
+      real(wp), intent(in) :: t
+      real(wp) :: ka, t1
+      t1=max(t,200._wp)
+      ka=(5.69_wp+0.017_wp*(t1-ttr))*1.e-3_wp*joules_in_a_cal
     end function ka
 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -1105,19 +1110,19 @@
 	!>@param[in] t: temperature
 	!>@return viscosity_air: viscosity of air
     function viscosity_air(t)
-        use nrtype
+        use numerics_type
         implicit none
-        real(sp), intent(in) :: t
-        real(sp) :: viscosity_air
-        real(sp) :: tc
+        real(wp), intent(in) :: t
+        real(wp) :: viscosity_air
+        real(wp) :: tc
 
         tc = t-ttr
-        tc = max(tc,-200._sp)
+        tc = max(tc,-200._wp)
 
-        if( tc.ge.0._sp) then
-            viscosity_air = (1.718_sp+0.0049_sp*tc) * 1e-5_sp ! the 1d-5 converts from poise to si units
+        if( tc.ge.0._wp) then
+            viscosity_air = (1.718_wp+0.0049_wp*tc) * 1e-5_wp ! the 1d-5 converts from poise to si units
         else
-            viscosity_air = (1.718_sp+0.0049_sp*tc-1.2e-5_sp*tc**2) * 1e-5_sp
+            viscosity_air = (1.718_wp+0.0049_wp*tc-1.2e-5_wp*tc**2) * 1e-5_wp
         end if
     end function viscosity_air
     
@@ -1132,26 +1137,26 @@
 	!>@param[in] t: temperature
 	!>@return surface_tension: surface_tension of water
     function surface_tension(t)	
-        use nrtype
-        real(sp), intent(in) :: t
-        real(sp) :: tc, surface_tension
+        use numerics_type
+        real(wp), intent(in) :: t
+        real(wp) :: tc, surface_tension
 
         tc=t-ttr
-        tc = max(tc,-40._sp)
+        tc = max(tc,-40._wp)
 
         ! pruppacher and klett pg 130 
-        surface_tension = 75.93_sp + 0.115_sp * tc + 6.818e-2_sp * tc**2 + &
-                          6.511e-3_sp * tc**3 + 2.933e-4_sp * tc**4 + &
-                          6.283e-6_sp * tc**5 + 5.285e-8_sp * tc**6
-        if(tc.ge.0._sp) then
-            surface_tension = 76.1_sp - 0.155_sp*tc
+        surface_tension = 75.93_wp + 0.115_wp * tc + 6.818e-2_wp * tc**2 + &
+                          6.511e-3_wp * tc**3 + 2.933e-4_wp * tc**4 + &
+                          6.283e-6_wp * tc**5 + 5.285e-8_wp * tc**6
+        if(tc.ge.0._wp) then
+            surface_tension = 76.1_wp - 0.155_wp*tc
         end if
     
         surface_tension = surface_tension*joules_in_an_erg ! convert to j/cm2 
-        surface_tension = surface_tension*1.e4_sp ! convert to j/m2 
+        surface_tension = surface_tension*1.e4_wp ! convert to j/m2 
 
     !    surface_tension=72d-3
-        !sigma = 75.93_sp * joules_in_an_erg*1d4
+        !sigma = 75.93_wp * joules_in_an_erg*1d4
     end function surface_tension
     
     
@@ -1170,21 +1175,21 @@
 	!>@param[in] sz: length of array
 	!>@param[inout] dw: wet diameter
     subroutine wetdiam(mwat,mbin,rhobin,sz,dw) 
-      use nrtype
+      use numerics_type
       implicit none
-      real(sp), dimension(:), intent(in) :: mwat
-      real(sp), dimension(:,:), intent(in) :: mbin,rhobin
+      real(wp), dimension(:), intent(in) :: mwat
+      real(wp), dimension(:,:), intent(in) :: mbin,rhobin
       integer(i4b), intent(in) :: sz
-      real(sp), dimension(:),intent(inout) :: dw
+      real(wp), dimension(:),intent(inout) :: dw
       
-      real(sp), dimension(sz) :: rhoat
+      real(wp), dimension(sz) :: rhoat
 
       ! calculate the diameter and radius
       rhoat(:)=mwat(:)/rhow+sum(mbin(:,1:n_comps)/rhobin(:,:),2)
       rhoat(:)=(mwat(:)+sum(mbin(:,1:n_comps),2))/rhoat(:);
   
       ! wet diameter:
-      dw(:)=((mwat(:)+sum(mbin(:,1:n_comps),2))*6._sp/(pi*rhoat(:)))**(1._sp/3._sp)
+      dw(:)=((mwat(:)+sum(mbin(:,1:n_comps),2))*6._wp/(pi*rhoat(:)))**(1._wp/3._wp)
       
     end subroutine wetdiam
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -1208,15 +1213,15 @@
 	!>@param[inout] rhoat: density of particle
 	!>@param[inout] dw: wet diameter
     subroutine koehler01(t,mwat,mbin,rhobin,nubin,molwbin,sz,rh_eq,rhoat,dw) 
-      use nrtype
+      use numerics_type
       implicit none
-      real(sp), dimension(:), intent(in) :: mwat
-      real(sp), dimension(:,:), intent(in) :: mbin,rhobin,nubin,molwbin
+      real(wp), dimension(:), intent(in) :: mwat
+      real(wp), dimension(:,:), intent(in) :: mbin,rhobin,nubin,molwbin
       integer(i4b), intent(in) :: sz
-      real(sp), dimension(sz) :: nw
-      real(sp), dimension(:),intent(inout) :: rh_eq,rhoat, dw
-      real(sp), intent(in) :: t
-      real(sp) :: sigma
+      real(wp), dimension(sz) :: nw
+      real(wp), dimension(:),intent(inout) :: rh_eq,rhoat, dw
+      real(wp), intent(in) :: t
+      real(wp) :: sigma
 
       ! calculate the diameter and radius
       nw(:)=mwat(:)/molw_water
@@ -1224,13 +1229,13 @@
       rhoat(:)=(mwat(:)+sum(mbin(:,1:n_comps),2))/rhoat(:);
   
       ! wet diameter:
-      dw(:)=((mwat(:)+sum(mbin(:,1:n_comps),2))*6._sp/(pi*rhoat(:)))**(1._sp/3._sp)
+      dw(:)=((mwat(:)+sum(mbin(:,1:n_comps),2))*6._wp/(pi*rhoat(:)))**(1._wp/3._wp)
   
       ! calculate surface tension
       sigma=surface_tension(t)
 
       ! equilibrium rh over particle - nb rh_act set to zero if not root-finding
-      rh_eq(:)=exp(4._sp*molw_water*sigma/r_gas/t/rhoat(:)/dw(:))* &
+      rh_eq(:)=exp(4._wp*molw_water*sigma/r_gas/t/rhoat(:)/dw(:))* &
            (nw(:))/(nw(:)+sum(mbin(:,1:n_comps)/molwbin(:,:)*nubin(:,:),2) ) 
 
     end subroutine koehler01
@@ -1260,24 +1265,24 @@
 	!>@param[inout] rhoat: density of particle
 	!>@param[inout] dw: wet diameter
     subroutine kkoehler01(t,mwat,mbin,rhobin,kappabin,molwbin,sz,rh_eq,rhoat,dw) 
-      use nrtype
+      use numerics_type
       implicit none
-      real(sp), dimension(:), intent(in) :: mwat
-      real(sp), dimension(:,:), intent(in) :: mbin,rhobin,kappabin,molwbin
+      real(wp), dimension(:), intent(in) :: mwat
+      real(wp), dimension(:,:), intent(in) :: mbin,rhobin,kappabin,molwbin
       integer(i4b), intent(in) :: sz
-      real(sp), dimension(sz) :: nw,dd,kappa
-      real(sp), dimension(:),intent(inout) :: rh_eq,rhoat, dw
-      real(sp), intent(in) :: t
-      real(sp) :: sigma
+      real(wp), dimension(sz) :: nw,dd,kappa
+      real(wp), dimension(:),intent(inout) :: rh_eq,rhoat, dw
+      real(wp), intent(in) :: t
+      real(wp) :: sigma
       ! calculate the diameter and radius
       nw(:)=mwat(:)/molw_water
       rhoat(:)=mwat(:)/rhow+sum(mbin(:,1:n_comps)/rhobin(:,:),2)
       rhoat(:)=(mwat(:)+sum(mbin(:,1:n_comps),2))/rhoat(:);
   
       ! wet diameter:
-      dw(:)=((mwat(:)+sum(mbin(:,1:n_comps),2))* 6._sp/(pi*rhoat(:)))**(1._sp/3._sp)
+      dw(:)=((mwat(:)+sum(mbin(:,1:n_comps),2))* 6._wp/(pi*rhoat(:)))**(1._wp/3._wp)
   
-      dd(:)=((sum(mbin(:,1:n_comps)/rhobin(:,:),2))*6._sp/(pi))**(1._sp/3._sp) ! dry diameter
+      dd(:)=((sum(mbin(:,1:n_comps)/rhobin(:,:),2))*6._wp/(pi))**(1._wp/3._wp) ! dry diameter
                                   ! needed for eqn 6, petters and kreidenweis (2007)
   
       kappa(:)=sum(mbin(:,1:n_comps)/rhobin(:,:)*kappabin(:,:),2) &
@@ -1288,8 +1293,8 @@
       sigma=surface_tension(t)
 
       ! equilibrium rh over particle - nb rh_act set to zero if not root-finding
-      rh_eq(:)=exp(4._sp*molw_water*sigma/r_gas/t/rhoat(:)/dw(:))* &
-           (dw(:)**3-dd(:)**3)/(dw(:)**3-dd(:)**3*(1._sp-kappa))
+      rh_eq(:)=exp(4._wp*molw_water*sigma/r_gas/t/rhoat(:)/dw(:))* &
+           (dw(:)**3-dd(:)**3)/(dw(:)**3-dd(:)**3*(1._wp-kappa))
            ! eq 6 petters and kreidenweis (acp, 2007)
     end subroutine kkoehler01
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -1308,12 +1313,12 @@
 	!>@param[in] nw: number of moles of water
 	!>@return koehler02: equilibrium rh - but called via root-finder, so nw is returned
     function koehler02(nw) ! only pass one variable so can use root-finders
-      use nrtype
+      use numerics_type
       implicit none
-      real(sp), intent(in) :: nw
-      real(sp) :: massw
-      real(sp) :: rhoat, dw,koehler02
-      real(sp) :: sigma
+      real(wp), intent(in) :: nw
+      real(wp) :: massw
+      real(wp) :: rhoat, dw,koehler02
+      real(wp) :: sigma
       
       
 
@@ -1322,13 +1327,13 @@
       rhoat=massw/rhow+sum(parcel1%mbin(n_sel,1:n_comps) / &
             parcel1%rhobin(n_sel,1:n_comps))
       rhoat=(massw+parcel1%maer(n_sel))/rhoat;
-      dw=((massw+parcel1%maer(n_sel))* 6._sp/(pi*rhoat))**(1._sp/3._sp)
+      dw=((massw+parcel1%maer(n_sel))* 6._wp/(pi*rhoat))**(1._wp/3._wp)
   
       ! calculate surface tension
       sigma=surface_tension(parcel1%t)
   
       ! equilibrium rh over particle - nb rh_act set to zero if not root-finding
-      koehler02=mult*(exp(4._sp*molw_water*sigma/r_gas/parcel1%t/rhoat/dw)* &
+      koehler02=mult*(exp(4._wp*molw_water*sigma/r_gas/parcel1%t/rhoat/dw)* &
            (nw)/(nw+sum(parcel1%mbin(n_sel,1:n_comps)/ &
            parcel1%molwbin(n_sel,1:n_comps) * &
            parcel1%nubin(n_sel,1:n_comps)) ))-rh_act
@@ -1352,25 +1357,25 @@
 	!>@param[in] nw: number of moles of water
 	!>@return kkoehler02: equilibrium rh - but called via root-finder, so nw is returned
     function kkoehler02(nw) ! only pass one variable so can use root-finders
-      use nrtype
+      use numerics_type
       implicit none
-      real(sp), intent(in) :: nw
-      real(sp) :: massw
-      real(sp) :: rhoat, dw,dd,kappa,kkoehler02
-      real(sp) :: sigma
+      real(wp), intent(in) :: nw
+      real(wp) :: massw
+      real(wp) :: rhoat, dw,dd,kappa,kkoehler02
+      real(wp) :: sigma
 
       ! wet diameter:
       massw=nw*molw_water
       rhoat=massw/rhow+sum(parcel1%mbin(n_sel,1:n_comps) / &
             parcel1%rhobin(n_sel,1:n_comps))
       rhoat=(massw+parcel1%maer(n_sel))/rhoat;
-      dw=((massw+parcel1%maer(n_sel))* 6._sp/(pi*rhoat))**(1._sp/3._sp)
+      dw=((massw+parcel1%maer(n_sel))* 6._wp/(pi*rhoat))**(1._wp/3._wp)
   
       ! calculate surface tension
       sigma=surface_tension(parcel1%t)
   
       dd=(sum(parcel1%mbin(n_sel,1:n_comps) / parcel1%rhobin(n_sel,:))* &
-          6._sp/(pi))**(1._sp/3._sp) ! dry diameter
+          6._wp/(pi))**(1._wp/3._wp) ! dry diameter
                                   ! needed for eqn 6, petters and kreidenweis (2007)
   
       kappa=sum(parcel1%mbin(n_sel,1:n_comps) / parcel1%rhobin(n_sel,1:n_comps)* &
@@ -1379,8 +1384,8 @@
                ! equation 7, petters and kreidenweis (2007)
 
       ! equilibrium rh over particle - nb rh_act set to zero if not root-finding
-      kkoehler02=mult*(exp(4._sp*molw_water*sigma/r_gas/parcel1%t/rhoat/dw)* &
-           (dw**3-dd**3)/(dw**3-dd**3*(1._sp-kappa)))-rh_act
+      kkoehler02=mult*(exp(4._wp*molw_water*sigma/r_gas/parcel1%t/rhoat/dw)* &
+           (dw**3-dd**3)/(dw**3-dd**3*(1._wp-kappa)))-rh_act
            ! eq 6 petters and kreidenweis (acp, 2007)
     end function kkoehler02
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -1402,25 +1407,25 @@
 	!>@param[in] nw: number of moles of water
 	!>@return koehler03: equilibrium rh - but called via root-finder, so mbin is returned
     function koehler03(mbin) ! only pass one variable so can use root-finders
-      use nrtype
+      use numerics_type
       implicit none
-      real(sp), intent(in) :: mbin ! mass of aerosol particle
-      real(sp) :: massw
-      real(sp) :: rhoat, dw,nw,koehler03
-      real(sp) :: sigma
+      real(wp), intent(in) :: mbin ! mass of aerosol particle
+      real(wp) :: massw
+      real(wp) :: rhoat, dw,nw,koehler03
+      real(wp) :: sigma
       
       ! calculate the diameter and radius
       nw=d_dummy/molw_water ! moles of water
       rhoat=d_dummy/rhow+mbin* sum(mass_frac_aer1(n_sel,1:n_comps)/ &
                            density_core1(1:n_comps))
       rhoat=(d_dummy+mbin)/rhoat;
-      dw=((d_dummy+mbin)* 6._sp/(pi*rhoat))**(1._sp/3._sp)
+      dw=((d_dummy+mbin)* 6._wp/(pi*rhoat))**(1._wp/3._wp)
   
       ! calculate surface tension
       sigma=surface_tension(parcel1%t)
   
       ! equilibrium rh over particle - nb rh_act set to zero if not root-finding
-      koehler03=mult*(exp(4._sp*molw_water*sigma/r_gas/parcel1%t/rhoat/dw)* &
+      koehler03=mult*(exp(4._wp*molw_water*sigma/r_gas/parcel1%t/rhoat/dw)* &
            (nw)/(nw+mbin* &
            sum(mass_frac_aer1(n_sel,1:n_comps)/ &
            molw_core1(1:n_comps)* &
@@ -1445,21 +1450,21 @@
 	!>@param[in] nw: number of moles of water
 	!>@return kkoehler03: equilibrium rh - but called via root-finder, so mbin is returned
     function kkoehler03(mbin) ! only pass one variable so can use root-finders
-      use nrtype
+      use numerics_type
       implicit none
-      real(sp), intent(in) :: mbin ! mass of aerosol particle
-      real(sp) :: massw
-      real(sp) :: rhoat, dw,nw,dd,kappa, kkoehler03
-      real(sp) :: sigma
+      real(wp), intent(in) :: mbin ! mass of aerosol particle
+      real(wp) :: massw
+      real(wp) :: rhoat, dw,nw,dd,kappa, kkoehler03
+      real(wp) :: sigma
       ! calculate the diameter and radius
       nw=d_dummy/molw_water ! moles of water
       rhoat=d_dummy/rhow+mbin* sum(mass_frac_aer1(n_sel,1:n_comps)/ &
                            density_core1(1:n_comps))
       rhoat=(d_dummy+mbin)/rhoat;
-      dw=((d_dummy+mbin)* 6._sp/(pi*rhoat))**(1._sp/3._sp)
+      dw=((d_dummy+mbin)* 6._wp/(pi*rhoat))**(1._wp/3._wp)
   
       dd=((sum(mbin*mass_frac_aer1(n_sel,1:n_comps)/ density_core1(1:n_comps),1))* &
-          6._sp/(pi))**(1._sp/3._sp) ! dry diameter
+          6._wp/(pi))**(1._wp/3._wp) ! dry diameter
                                   ! needed for eqn 6, petters and kreidenweis (2007)
   
       kappa=sum(mbin*mass_frac_aer1(n_sel,1:n_comps) &
@@ -1473,8 +1478,8 @@
       sigma=surface_tension(parcel1%t)
   
       ! equilibrium rh over particle - nb rh_act set to zero if not root-finding
-      kkoehler03=mult*(exp(4._sp*molw_water*sigma/r_gas/parcel1%t/rhoat/dw)* &
-           (dw**3-dd**3)/(dw**3-dd**3*(1._sp-kappa)))-rh_act
+      kkoehler03=mult*(exp(4._wp*molw_water*sigma/r_gas/parcel1%t/rhoat/dw)* &
+           (dw**3-dd**3)/(dw**3-dd**3*(1._wp-kappa)))-rh_act
            ! eq 6 petters and kreidenweis (acp, 2007)
     end function kkoehler03
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -1492,75 +1497,75 @@
 	!>@param[in] diam, rhoat, t, p: diameter, density, temperature and pressure
 	!>@param[in] sz: size of the array to calculate terminal velocities
     subroutine terminal01(vel,diam,rhoat, t,p,nre,cd,sz)
-      use nrtype
+      use numerics_type
       implicit none
-      real(sp), intent(in) :: t, p
-      real(sp), dimension(:), intent(in) :: diam, rhoat
+      real(wp), intent(in) :: t, p
+      real(wp), dimension(:), intent(in) :: diam, rhoat
       integer(i4b), intent(in) :: sz
-      real(sp), dimension(sz), intent(inout) :: nre,cd,vel 
-      real(sp) :: eta, sigma, physnum, phys6, mfpath, tc, rhoa
-      real(sp), dimension(sz) :: diam2, mass, bondnum, bestnm, x,y
+      real(wp), dimension(sz), intent(inout) :: nre,cd,vel 
+      real(wp) :: eta, sigma, physnum, phys6, mfpath, tc, rhoa
+      real(wp), dimension(sz) :: diam2, mass, bondnum, bestnm, x,y
 
 
         tc=t-ttr
-        vel = 0._sp ! zero array
+        vel = 0._wp ! zero array
         rhoa = p / (ra * t) ! density of air
         diam2=diam ! temporary array that can be changed
 
         eta = viscosity_air(t)
 
-        nre = 0._sp ! zero array
-        where(diam2.gt.7000.e-6_sp)
-            diam2=7000.e-6_sp
+        nre = 0._wp ! zero array
+        where(diam2.gt.7000.e-6_wp)
+            diam2=7000.e-6_wp
         end where
-        mass=pi/6._sp*diam2**3*rhoat
+        mass=pi/6._wp*diam2**3*rhoat
     
         sigma = surface_tension(t)
         
         ! regime 3:  eqns 5-12, 10-146 & 10-148 from p & k 
-        physnum = (sigma**3._sp) * (rhoa**2_sp) / ((eta**4._sp) * grav * (rhow - rhoa))		
-        phys6 = physnum**(1._sp / 6._sp)
-        where(diam2.gt.1070.e-6_sp) 
-            bondnum = (4._sp/3._sp)*grav * (rhow - rhoa) * (diam2**2) / sigma
+        physnum = (sigma**3._wp) * (rhoa**2_wp) / ((eta**4._wp) * grav * (rhow - rhoa))		
+        phys6 = physnum**(1._wp / 6._wp)
+        where(diam2.gt.1070.e-6_wp) 
+            bondnum = (4._wp/3._wp)*grav * (rhow - rhoa) * (diam2**2) / sigma
 
             x = log(bondnum*phys6)
-            y = -5.00015_sp + 5.23778_sp * x - 2.04914_sp * x * x + 0.475294_sp * (x**3) &
-                - 0.542819e-1_sp * (x**4._sp) + 0.238449e-2_sp * (x**5)
+            y = -5.00015_wp + 5.23778_wp * x - 2.04914_wp * x * x + 0.475294_wp * (x**3) &
+                - 0.542819e-1_wp * (x**4._wp) + 0.238449e-2_wp * (x**5)
 
             nre = phys6 * exp(y)
 
             vel = eta * (nre)/ (rhoa * diam2)
 
-            cd = 8._sp * mass * grav * rhoa/(pi * ((diam2 / 2._sp)* eta)**2)
+            cd = 8._wp * mass * grav * rhoa/(pi * ((diam2 / 2._wp)* eta)**2)
             cd = cd	/ (nre**2) 
         end where
 
         ! regime 2:  eqns 10-142, 10-145 & 10-146 from p & k 
-        where(diam2.le.1070.e-6_sp.and.diam2.gt.20.e-6_sp)
-            bestnm = 32._sp * ((diam2 / 2._sp)**3) * (rhow - rhoa) * rhoa * &
-                      grav / (3._sp * eta**2)
+        where(diam2.le.1070.e-6_wp.and.diam2.gt.20.e-6_wp)
+            bestnm = 32._wp * ((diam2 / 2._wp)**3) * (rhow - rhoa) * rhoa * &
+                      grav / (3._wp * eta**2)
             x = log(bestnm)
-            y = -3.18657_sp + 0.992696_sp * x - 0.153193e-2_sp * x * x &
-                -0.987059e-3_sp * (x**3) - 0.578878e-3_sp * (x**4) &
-                + 0.855176e-4_sp * (x**5) - 0.327815e-5_sp * (x**6)
+            y = -3.18657_wp + 0.992696_wp * x - 0.153193e-2_wp * x * x &
+                -0.987059e-3_wp * (x**3) - 0.578878e-3_wp * (x**4) &
+                + 0.855176e-4_wp * (x**5) - 0.327815e-5_wp * (x**6)
             nre =  exp(y)
-            vel = eta * nre / (2._sp * rhoa * (diam2 / 2._sp))
+            vel = eta * nre / (2._wp * rhoa * (diam2 / 2._wp))
             cd = bestnm/(nre**2)
         end where
 
         ! regime 1:  eqns 10-138, 10-139 & 10-140 from p & k 
-        mfpath = 6.6e-8_sp * (101325_sp / p) * (t / 293.15_sp)
-        where(diam2.le.20.e-6_sp) 
-            vel = 2._sp * ((diam2 / 2._sp)**2) * grav * (rhow - rhoa) / (9._sp * eta)
-            vel = vel * (1._sp + 1.26_sp * mfpath / (diam2 / 2._sp))
+        mfpath = 6.6e-8_wp * (101325_wp / p) * (t / 293.15_wp)
+        where(diam2.le.20.e-6_wp) 
+            vel = 2._wp * ((diam2 / 2._wp)**2) * grav * (rhow - rhoa) / (9._wp * eta)
+            vel = vel * (1._wp + 1.26_wp * mfpath / (diam2 / 2._wp))
             nre = vel * rhoa * diam2 / eta
 
-            cd = 8._sp * mass * grav * rhoa/(pi * ((diam2 / 2._sp)* eta)**2)
+            cd = 8._wp * mass * grav * rhoa/(pi * ((diam2 / 2._wp)* eta)**2)
             cd = cd	/ (nre**2) 
          end where
 
         where(isnan(vel))
-          vel=0._sp
+          vel=0._wp
         end where
     end subroutine terminal01
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -1579,14 +1584,14 @@
 	!>@param[in] diam, rhoat, t, p: diameter, density, temperature and pressure
 	!>@param[in] sz: size of the array to calculate ventilation factors
     subroutine ventilation01(diam, rhoat,t, p, fv, fh,sz)
-      use nrtype
+      use numerics_type
       implicit none
-      real(sp), intent(in) :: t, p
-      real(sp), dimension(:), intent(in) :: diam, rhoat
-      real(sp), dimension(sz), intent(inout) :: fv,fh
+      real(wp), intent(in) :: t, p
+      real(wp), dimension(:), intent(in) :: diam, rhoat
+      real(wp), dimension(sz), intent(inout) :: fv,fh
       integer(i4b), intent(in) :: sz
-      real(sp), dimension(sz) :: nre,cd,vel,calc
-      real(sp) :: d1,k1,rhoa, eta, nu, nsc1,nsc2
+      real(wp), dimension(sz) :: nre,cd,vel,calc
+      real(wp) :: d1,k1,rhoa, eta, nu, nsc1,nsc2
       ! density of air
       rhoa = p/ra/t
       ! diffusivity of water vapour in air
@@ -1605,28 +1610,28 @@
       call terminal01(vel,diam,rhoat, t,p,nre,cd,sz)
   
       ! mass ventilation - use dv+++++++++
-      calc = (nsc1**(1._sp/3._sp)) * sqrt(nre)
-      where(calc.gt.51.4_sp)
-        calc=51.4_sp
+      calc = (nsc1**(1._wp/3._wp)) * sqrt(nre)
+      where(calc.gt.51.4_wp)
+        calc=51.4_wp
       end where
 
-      where(calc.lt.1.4_sp)
-        fv=1.00_sp+0.108_sp*calc**2
+      where(calc.lt.1.4_wp)
+        fv=1.00_wp+0.108_wp*calc**2
       elsewhere
-        fv=0.78_sp+0.308_sp*calc
+        fv=0.78_wp+0.308_wp*calc
       end where
       !-----------------------------------
     
       ! heat ventilation - use ka---------
-      calc = (nsc2**(1._sp/3._sp)) * sqrt(nre)
-      where(calc.gt.51.4_sp)
-        calc=51.4_sp
+      calc = (nsc2**(1._wp/3._wp)) * sqrt(nre)
+      where(calc.gt.51.4_wp)
+        calc=51.4_wp
       end where
 
-      where(calc.lt.1.4_sp)
-        fh=1.00_sp+0.108_sp*calc**2
+      where(calc.lt.1.4_wp)
+        fh=1.00_wp+0.108_wp*calc**2
       elsewhere
-        fh=0.78_sp+0.308_sp*calc
+        fh=0.78_wp+0.308_wp*calc
       end where
       !-----------------------------------
     end subroutine ventilation01
@@ -1648,14 +1653,14 @@
 	!>@param[in] mwat, t, p, phi, rhoi, nump, rime
 	!>@param[in] sz: size of the array to calculate terminal velocities
     subroutine terminal02(vel,mwat, t,p,phi,rhoi,nump,rime,nre,sz)
-      use nrtype
+      use numerics_type
       implicit none
-      real(sp), intent(in) :: t, p
-      real(sp), dimension(:), intent(in) :: mwat, phi, rhoi, nump, rime
+      real(wp), intent(in) :: t, p
+      real(wp), dimension(:), intent(in) :: mwat, phi, rhoi, nump, rime
       integer(i4b), intent(in) :: sz
-      real(sp), dimension(sz), intent(inout) :: nre,vel 
-      real(sp) :: eta, rhoa
-      real(sp), dimension(sz) :: dmax,drime,area,ar, x
+      real(wp), dimension(sz), intent(inout) :: nre,vel 
+      real(wp) :: eta, rhoa
+      real(wp), dimension(sz) :: dmax,drime,area,ar, x
       integer(i4b) :: i	
       ! air properties
       eta = viscosity_air(t)
@@ -1667,23 +1672,24 @@
 !       ! calculate the area of the particle
 !       call areaaggregates01(area,mwat-rime,rhoi,phi,nump,dmax,drime,sz)
 !       ! area ratio
-!       ar=area/(pi/4._sp* (dmax**2._sp))
-!       ar=min(max(ar,0.1_sp),1._sp)
-      ar=1._sp
+!       ar=area/(pi/4._wp* (dmax**2._wp))
+!       ar=min(max(ar,0.1_wp),1._wp)
+      dmax=(mwat/rhoice*6._wp/pi)**(1/3)
+      ar=1._wp
   
       ! heymsfield and westbrook
-      x=rhoa*8._sp*mwat*grav/( (eta**2._sp)*pi*(ar**0.5_sp))
-      nre=(8.0_sp**2._sp)/4._sp* &
-          ( (sqrt(1._sp+(4._sp*sqrt(x))/( (8._sp**2._sp)*sqrt(0.35_sp)))-1._sp)**2._sp)
+      x=rhoa*8._wp*mwat*grav/( (eta**2._wp)*pi*(ar**0.5_wp))
+      nre=(8.0_wp**2._wp)/4._wp* &
+          ( (sqrt(1._wp+(4._wp*sqrt(x))/( (8._wp**2._wp)*sqrt(0.35_wp)))-1._wp)**2._wp)
       vel=eta*(nre)/(rhoa*dmax)
     
       ! viscous regime
-      where(nre.lt.1._sp) 
-        vel = grav*mwat / (6._sp*pi*eta*0.465_sp*dmax*(ar**0.5_sp))
+      where(nre.lt.1._wp) 
+        vel = grav*mwat / (6._wp*pi*eta*0.465_wp*dmax*(ar**0.5_wp))
       end where
 
       where(isnan(vel)) 
-            vel=0._sp
+            vel=0._wp
       end where
     end subroutine terminal02
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -1702,15 +1708,15 @@
 	!>@param[in] mwat, t, p, phi, rhoi, nump, rime
 	!>@param[in] sz: size of the array to calculate terminal velocities
     subroutine ventilation02(mwat, t, p,phi, rhoi, nump,rime,fv, fh,sz)
-      use nrtype
+      use numerics_type
 
       implicit none
-      real(sp), intent(in) :: t, p
-      real(sp), dimension(:), intent(in) :: mwat, phi, rhoi, nump, rime
-      real(sp), dimension(sz), intent(inout) :: fv,fh
+      real(wp), intent(in) :: t, p
+      real(wp), dimension(:), intent(in) :: mwat, phi, rhoi, nump, rime
+      real(wp), dimension(sz), intent(inout) :: fv,fh
       integer(i4b), intent(in) :: sz
-      real(sp), dimension(sz) :: nre,vel,nre2,x
-      real(sp) :: d1,k1,rhoa, eta, nu, nsc1,nsc2, calc1, calc2
+      real(wp), dimension(sz) :: nre,vel,nre2,x
+      real(wp) :: d1,k1,rhoa, eta, nu, nsc1,nsc2, calc1, calc2
       ! density of air
       rhoa = p/ra/t
       ! diffusivity of water vapour in air
@@ -1729,40 +1735,40 @@
       call terminal02(vel,mwat, t,p,phi,rhoi,nump,rime,nre,sz)
 
       ! mass ventilation - use dv; heat ventilation - use ka +++++++
-      calc1 = nsc1**(1._sp/3._sp)
-      calc2 = nsc2**(1._sp/3._sp)
+      calc1 = nsc1**(1._wp/3._wp)
+      calc2 = nsc2**(1._wp/3._wp)
   
       ! columns
-      nre2=min(nre,20._sp)
-      where(phi.gt.1.0_sp)  
+      nre2=min(nre,20._wp)
+      where(phi.gt.1.0_wp)  
         x = calc1*sqrt(nre2)	
-        fv = 1.0_sp - 0.000668_sp*x/4._sp + 2.39402_sp*((x/4._sp)**2._sp) + &
-             0.73409_sp*((x/4._sp)**3._sp)-0.73911_sp*((x/4._sp)**4._sp)
+        fv = 1.0_wp - 0.000668_wp*x/4._wp + 2.39402_wp*((x/4._wp)**2._wp) + &
+             0.73409_wp*((x/4._wp)**3._wp)-0.73911_wp*((x/4._wp)**4._wp)
         x = calc2*sqrt(nre2);	
-        fh = 1.0_sp - 0.000668_sp*x/4._sp + 2.39402_sp*((x/4._sp)**2._sp) + &
-             0.73409_sp*((x/4._sp)**3._sp)-0.73911_sp*((x/4._sp)**4._sp)
+        fh = 1.0_wp - 0.000668_wp*x/4._wp + 2.39402_wp*((x/4._wp)**2._wp) + &
+             0.73409_wp*((x/4._wp)**3._wp)-0.73911_wp*((x/4._wp)**4._wp)
       end where
       !--------
   
       ! plates
-      nre2=min(nre,120._sp)
-      where(phi.le.1._sp) 
+      nre2=min(nre,120._wp)
+      where(phi.le.1._wp) 
         x = calc1*sqrt(nre2)	
-        fv = 1.0_sp - 0.06042_sp*x/10._sp + 2.79820_sp*((x/10._sp)**2._sp) - &
-             0.31933_sp*((x/10._sp)**3._sp)-0.06247_sp*((x/10._sp)**4._sp)
+        fv = 1.0_wp - 0.06042_wp*x/10._wp + 2.79820_wp*((x/10._wp)**2._wp) - &
+             0.31933_wp*((x/10._wp)**3._wp)-0.06247_wp*((x/10._wp)**4._wp)
         x = calc2*sqrt(nre2)	
-        fh = 1.0_sp - 0.06042_sp*x/10._sp + 2.79820_sp*((x/10._sp)**2._sp) - &
-             0.31933_sp*((x/10._sp)**3._sp)-0.06247_sp*((x/10._sp)**4._sp)
+        fh = 1.0_wp - 0.06042_wp*x/10._wp + 2.79820_wp*((x/10._wp)**2._wp) - &
+             0.31933_wp*((x/10._wp)**3._wp)-0.06247_wp*((x/10._wp)**4._wp)
       end where
       !-------
   
       ! broad-branched crystals
       !nre2=min(nre,120d0) ! already done above
-      where(phi.lt.0.2_sp.and.rhoi.le.500._sp) 
+      where(phi.lt.0.2_wp.and.rhoi.le.500._wp) 
         x = calc1*sqrt(nre2)	
-        fv = 1.0_sp + 0.35463_sp*x/10._sp + 3.55333_sp*((x/10._sp)**2._sp)
+        fv = 1.0_wp + 0.35463_wp*x/10._wp + 3.55333_wp*((x/10._wp)**2._wp)
         x = calc2*sqrt(nre2)
-        fh = 1.0_sp + 0.35463_sp*x/10._sp + 3.55333_sp*((x/10._sp)**2._sp)
+        fh = 1.0_wp + 0.35463_wp*x/10._wp + 3.55333_wp*((x/10._wp)**2._wp)
       end where
       ! -----------------------
     end subroutine ventilation02
@@ -1782,16 +1788,16 @@
 	!>@param[in] sz: size of array
 	!>@return dropgrowthrate01: growth rate of drops
     function dropgrowthrate01(t,p,rh,rh_eq,rhoat,diam,sz) 
-      use nrtype
+      use numerics_type
       implicit none
-      real(sp), intent(in) :: t, p, rh
-      real(sp), dimension(:), intent(in) :: rh_eq,rhoat, diam
+      real(wp), intent(in) :: t, p, rh
+      real(wp), dimension(:), intent(in) :: rh_eq,rhoat, diam
       integer(i4b), intent(in) :: sz
-      real(sp), dimension(sz) :: dropgrowthrate01
-      real(sp), dimension(sz) :: rad, dstar,kstar,fv,fh
-      real(sp) :: d1,k1,rhoa
+      real(wp), dimension(sz) :: dropgrowthrate01
+      real(wp), dimension(sz) :: rad, dstar,kstar,fv,fh
+      real(wp) :: d1,k1,rhoa
   
-      rad=diam/2._sp
+      rad=diam/2._wp
       ! density of air
       rhoa=p/ra/t
       ! diffusivity of water vapour in air
@@ -1799,19 +1805,19 @@
       ! thermal conductivity of air
       k1=ka(t)
       ! ventilation coefficient
-      fv=1._sp
-      fh=1._sp
+      fv=1._wp
+      fh=1._wp
       if(vent_flag.eq.1) then
         call ventilation01(diam, rhoat,t, p, fv, fh,sz)
       end if
   
       ! modify diffusivity and conductivity
-      dstar=d1*fv/(rad/(rad+0.7_sp*8.e-8_sp)+d1*fv/rad/alpha_cond*sqrt(2._sp*pi/rv/t))
-      kstar=k1*fh/(rad/(rad+2.16e-7_sp)+k1*fh/rad/alpha_therm/cp/rhoa*sqrt(2._sp*pi/ra/t))
+      dstar=d1*fv/(rad/(rad+0.7_wp*8.e-8_wp)+d1*fv/rad/alpha_cond*sqrt(2._wp*pi/rv/t))
+      kstar=k1*fh/(rad/(rad+2.16e-7_wp)+k1*fh/rad/alpha_therm/cp/rhoa*sqrt(2._wp*pi/ra/t))
   
       ! 455 jacobson and 511 pruppacher and klett
       dropgrowthrate01=dstar*lv*rh_eq*svp_liq(t)* &
-                       rhoat/kstar/t*(lv*molw_water/t/r_gas-1._sp) 
+                       rhoat/kstar/t*(lv*molw_water/t/r_gas-1._wp) 
       dropgrowthrate01=dropgrowthrate01+rhoat*r_gas*t/molw_water  
       dropgrowthrate01=dstar*(rh-rh_eq)*svp_liq(t)/rad/dropgrowthrate01
                  
@@ -1824,16 +1830,16 @@
     ! calculate growth rate of an ice crystal					  				   !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     function icegrowthrate01(t,p,rh_ice,rh_eq,mwat,mbin,rhobin,phi, rhoi, nump,rime,sz) 
-      use nrtype
+      use numerics_type
 
       implicit none
-      real(sp), intent(in) :: t, p, rh_ice
-      real(sp), dimension(:), intent(in) :: rh_eq,mwat, phi, rhoi, nump, rime
-      real(sp), dimension(:,:), intent(in) :: mbin,rhobin
+      real(wp), intent(in) :: t, p, rh_ice
+      real(wp), dimension(:), intent(in) :: rh_eq,mwat, phi, rhoi, nump, rime
+      real(wp), dimension(:,:), intent(in) :: mbin,rhobin
       integer(i4b), intent(in) :: sz
-      real(sp), dimension(sz) :: icegrowthrate01
-      real(sp), dimension(sz) :: rad, dstar,kstar,rhoat,diam,fv,fh
-      real(sp) :: d1,k1,rhoa
+      real(wp), dimension(sz) :: icegrowthrate01
+      real(wp), dimension(sz) :: rad, dstar,kstar,rhoat,diam,fv,fh
+      real(wp) :: d1,k1,rhoa
       integer(i4b) :: i
 
       ! calculate the capacitance - get rid of yiceold as messy
@@ -1845,21 +1851,21 @@
       ! thermal conductivity of air
       k1=ka(t)
       ! ventilation coefficient
-      fv=1._sp
-      fh=1._sp
+      fv=1._wp
+      fh=1._wp
       if(vent_flag.eq.1) then
         call ventilation02(mwat, t, p,phi, &
              rhoi,nump, rime,fv, fh,sz)
       end if
       ! modify diffusivity and conductivity
-      dstar=d1*fv/(rad/(rad+0.7_sp*8e-8_sp)+d1*fv/rad/alpha_dep*sqrt(2._sp*pi/rv/t))
-      kstar=k1*fh/(rad/(rad+2.16e-7_sp)+k1*fh/rad/alpha_therm_ice/cp/rhoa*sqrt(2._sp*pi/ra/t))
+      dstar=d1*fv/(rad/(rad+0.7_wp*8e-8_wp)+d1*fv/rad/alpha_dep*sqrt(2._wp*pi/rv/t))
+      kstar=k1*fh/(rad/(rad+2.16e-7_wp)+k1*fh/rad/alpha_therm_ice/cp/rhoa*sqrt(2._wp*pi/ra/t))
   
       ! 473 jacobson 
       icegrowthrate01=dstar*ls*rh_eq*svp_ice(t)/ &
-                       kstar/t*(ls*molw_water/t/r_gas-1._sp) 
+                       kstar/t*(ls*molw_water/t/r_gas-1._wp) 
       icegrowthrate01=icegrowthrate01+r_gas*t/molw_water  
-      icegrowthrate01=4._sp*pi*rad*dstar*(rh_ice-rh_eq)*svp_ice(t)/icegrowthrate01
+      icegrowthrate01=4._wp*pi*rad*dstar*(rh_ice-rh_eq)*svp_ice(t)/icegrowthrate01
                  
     end function icegrowthrate01
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -1871,34 +1877,34 @@
     ! spheroids. a is the length of the prism axis (half of) and c the basal 
     ! (half of). see page 1214 of chen and lamb, jas, 1994.
     function capacitance01(mwat,phi,rhoice,numi,rimemass,sz)
-      use nrtype
+      use numerics_type
       implicit none
-      real(sp), dimension(:), intent(in) :: mwat, phi, rhoice, numi, rimemass
-      real(sp), dimension(sz) :: capacitance01,vol,a,c,ecc,dmax,drime
+      real(wp), dimension(:), intent(in) :: mwat, phi, rhoice, numi, rimemass
+      real(wp), dimension(sz) :: capacitance01,vol,a,c,ecc,dmax,drime
   
       integer(i4b), intent(in) :: sz
   
       vol=mwat/rhoice
   
-      a=( 3._sp*vol/(4._sp*pi*phi) )**(1._sp/3._sp)
+      a=( 3._wp*vol/(4._wp*pi*phi) )**(1._wp/3._wp)
       c=a*phi
   
-      where(phi.lt.1._sp)
-        ecc=sqrt(1._sp-phi**2._sp)
+      where(phi.lt.1._wp)
+        ecc=sqrt(1._wp-phi**2._wp)
         capacitance01=a*ecc/asin(ecc)
       elsewhere
-        ecc=sqrt(1._sp-phi**(-2._sp))
-        capacitance01=c*ecc/log((1._sp+ecc)*phi)
+        ecc=sqrt(1._wp-phi**(-2._wp))
+        capacitance01=c*ecc/log((1._wp+ecc)*phi)
       end where
     
-      where(abs(phi-1._sp).lt.1.e-4_sp)
+      where(abs(phi-1._wp).lt.1.e-4_wp)
         capacitance01=a
       end where
       ! westbrook et al. (2008, jas): capacitance of aggregates is 0.25 times the 
       ! maximum dimension of the ice particle
 !       call maxdimension01(mwat-rimemass,rhoice,phi,numi,rimemass,dmax,drime,sz)
-!       where(numi.ge.2._sp)
-!          capacitance01=0.25_sp*dmax
+!       where(numi.ge.2._wp)
+!          capacitance01=0.25_wp*dmax
 !       end where
   
     end function capacitance01
@@ -1918,39 +1924,39 @@
 	!>@param[in] sz: size of array
 	!>@return koopnucrate: nucleation rate
     function koopnucrate(aw,t,p,sz)
-          use nrtype
+          use numerics_type
           implicit none
           integer(i4b), intent(in) :: sz
-          real(sp), parameter :: k_water_amb=1.6_sp, &
-                    dk_water_dp=-8.8_sp,k_ice_amb=0.22_sp,dk_ice_dp=-0.17_sp
-          real(sp) :: pg,t,p, & 
+          real(wp), parameter :: k_water_amb=1.6_wp, &
+                    dk_water_dp=-8.8_wp,k_ice_amb=0.22_wp,dk_ice_dp=-0.17_wp
+          real(wp) :: pg,t,p, & 
                       integral3, mudiff0
-          real(sp), intent(in), dimension(:) :: aw
-          real(sp), dimension(sz) :: koopnucrate,deltaaw,logj
+          real(wp), intent(in), dimension(:) :: aw
+          real(wp), dimension(sz) :: koopnucrate,deltaaw,logj
       
-          pg=p/1.e9_sp
+          pg=p/1.e9_wp
 
       
-          integral3=(-230.76_sp - 0.1478_sp * t + 4099.2_sp * t**(-1) + &
-                     48.8341_sp * log(t) ) * &
-            (pg - 0.5_sp * (k_water_amb + dk_water_dp * pg)* pg**2 &
-             - (1._sp/6._sp) * dk_water_dp * pg**3 ) &
-             - (19.43_sp - 2.2e-3_sp * t + 1.08e-5_sp * t**2 ) * &
-            (pg - 0.5_sp * (k_ice_amb + dk_ice_dp * pg) * pg**2 - &
-            (1._sp/6._sp) * dk_ice_dp * pg**3 )
+          integral3=(-230.76_wp - 0.1478_wp * t + 4099.2_wp * t**(-1) + &
+                     48.8341_wp * log(t) ) * &
+            (pg - 0.5_wp * (k_water_amb + dk_water_dp * pg)* pg**2 &
+             - (1._wp/6._wp) * dk_water_dp * pg**3 ) &
+             - (19.43_wp - 2.2e-3_wp * t + 1.08e-5_wp * t**2 ) * &
+            (pg - 0.5_wp * (k_ice_amb + dk_ice_dp * pg) * pg**2 - &
+            (1._wp/6._wp) * dk_ice_dp * pg**3 )
 
-          mudiff0 = 210368._sp + 131.438_sp * t - 3.32373e6_sp * t**(-1)  &
-                   - 41729.1_sp * log(t)
+          mudiff0 = 210368._wp + 131.438_wp * t - 3.32373e6_wp * t**(-1)  &
+                   - 41729.1_wp * log(t)
     
           ! delta activity
           deltaaw = aw * exp(integral3 / r_gas / t) - exp(mudiff0 / r_gas / t)
         
 
           ! nucleation rate
-          logj = -906.7_sp + 8502._sp * deltaaw - 26924._sp * deltaaw**2 + 29180._sp * &
+          logj = -906.7_wp + 8502._wp * deltaaw - 26924._wp * deltaaw**2 + 29180._wp * &
                 deltaaw**3
 
-          koopnucrate = (10._sp**logj) * 1.e6_sp;	! nucleation rate in m^-3 s^-1 
+          koopnucrate = (10._wp**logj) * 1.e6_wp;	! nucleation rate in m^-3 s^-1 
     end function koopnucrate
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
@@ -1970,19 +1976,19 @@
 	!>@param[in] rpar: real data coming in
 	!>@param[in] ipar: integer data coming in
     subroutine fparcelwarm(neq, tt, y, ydot, rpar, ipar)
-        use nrtype
-        use nr, only : dfridr,locate
+        use numerics_type
+        use numerics, only : dfsid1,find_pos
 
         implicit none
-        real(sp), intent(inout) :: tt
-        real(sp), intent(inout), dimension(neq) :: y, ydot
+        real(wp), intent(inout) :: tt
+        real(wp), intent(inout), dimension(neq) :: y, ydot
         integer(i4b), intent(inout) :: neq
-        real(sp), intent(inout) :: rpar
+        real(wp), intent(inout) :: rpar
         integer(i4b), intent(inout) :: ipar
 
         ! local variables
-        real(sp) :: wv=0._sp, wl=0._sp, wi=0._sp, rm, cpm, &
-                  drv=0._sp, dri=0._sp,dri2=0._sp, &
+        real(wp) :: wv=0._wp, wl=0._wp, wi=0._wp, rm, cpm, &
+                  drv=0._wp, dri=0._wp,dri2=0._wp, &
                   rh,t,p,err,sl, w, &
                   te, qve, pe, var, dummy, rhoe, rhop, b
 
@@ -2002,14 +2008,14 @@
     
 
         ! check there are no negative values
-        where(y(1:ipart).le.0.e1_sp)
-            y(1:ipart)=1.e-22_sp
+        where(y(1:ipart).le.0.e1_wp)
+            y(1:ipart)=1.e-22_wp
         end where
 
 
         ! calculate mixing ratios from rh, etc
         sl=svp_liq(t)*rh/(p-svp_liq(t)) ! saturation ratio
-        sl=(sl*p/(1._sp+sl))/svp_liq(t)
+        sl=(sl*p/(1._wp+sl))/svp_liq(t)
         wv=eps1*rh*svp_liq(t) / (p-svp_liq(t)) ! vapour mixing ratio
         wl=sum(parcel1%npart*y(1:ipart))             ! liquid mixing ratio
 
@@ -2047,8 +2053,8 @@
             parcel1%rhoat,parcel1%dw,ipart)
         ! do not bother if number concentration too small
         do i=1,ipart
-            if(isnan(parcel1%da_dt(i)).or.parcel1%npart(i).le. 1.e-9_sp) then
-              parcel1%da_dt(i)=0._sp
+            if(isnan(parcel1%da_dt(i)).or.parcel1%npart(i).le. 1.e-9_wp) then
+              parcel1%da_dt(i)=0._wp
             endif
         enddo
 
@@ -2063,19 +2069,19 @@
             ! parcel p, density
             ! buoyancy...
             ! locate position
-            iloc=locate(parcel1%z_sound(1:n_levels_s),y(iz))
+            iloc=find_pos(parcel1%z_sound(1:n_levels_s),y(iz))
             iloc=min(n_levels_s-1,iloc)
             iloc=max(1,iloc)
             ! linear interp p
-            call polint(parcel1%z_sound(iloc:iloc+1), parcel1%p_sound(iloc:iloc+1), &
+            call poly_int(parcel1%z_sound(iloc:iloc+1), parcel1%p_sound(iloc:iloc+1), &
                         min(y(iz),parcel1%z_sound(n_levels_s)), var,dummy)        
             pe=var
             ! linear interp qv
-            call polint(parcel1%z_sound(iloc:iloc+1), parcel1%q_sound(1,iloc:iloc+1), &
+            call poly_int(parcel1%z_sound(iloc:iloc+1), parcel1%q_sound(1,iloc:iloc+1), &
                         min(y(iz),parcel1%z_sound(n_levels_s)), var,dummy)        
             qve=var
             ! linear interp te
-            call polint(parcel1%z_sound(iloc:iloc+1), parcel1%t_sound(iloc:iloc+1), &
+            call poly_int(parcel1%z_sound(iloc:iloc+1), parcel1%t_sound(iloc:iloc+1), &
                         min(y(iz),parcel1%z_sound(n_levels_s)), var,dummy)        
             te=var
             ! env density:
@@ -2085,7 +2091,7 @@
             !buoyancy
             if((parcel1%z_sound(n_levels_s) .lt. y(iz)) .or. &
                 (parcel1%z_sound(1) .gt. y(iz))) then
-                b=0._sp
+                b=0._wp
             else
                 b=grav*(rhoe-rhop)/rhoe
             endif
@@ -2110,13 +2116,13 @@
 !             parcel1%theta_q=calc_theta_q3(t,p,wv+wl)
 !             parcel1%x_ent=(parcel1%theta_q-parcel1%theta_q_cbase) / &
 !                 (parcel1%theta_q_ctop-parcel1%theta_q_cbase)
-!             parcel1%x_ent=max(0._sp,parcel1%x_ent)
-!             parcel1%x_ent=min(1._sp,parcel1%x_ent)
+!             parcel1%x_ent=max(0._wp,parcel1%x_ent)
+!             parcel1%x_ent=min(1._wp,parcel1%x_ent)
 !             
 !             ydot(ite)=ydot(ite)+&
 !                 parcel1%x_ent/dt*(parcel1%t_ctop-y(ite) + &
 !                 lv/cpm*(parcel1%q_ctop-wv)) +&
-!                 (1._sp-parcel1%x_ent)/dt*(parcel1%t_cbase-y(ite) + &
+!                 (1._wp-parcel1%x_ent)/dt*(parcel1%t_cbase-y(ite) + &
 !                 lv/cpm*(parcel1%q_cbase-wv))
 !         endif 
 
@@ -2125,7 +2131,7 @@
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         ydot(irh)=(p-svp_liq(t))*svp_liq(t)*drv
         ydot(irh)=ydot(irh)+svp_liq(t)*wv*ydot(ipr)
-        ydot(irh)=ydot(irh)-wv*p*dfridr(svp_liq,t,1.e0_sp,err)*ydot(ite)
+        ydot(irh)=ydot(irh)-wv*p*dfsid1(svp_liq,t,1.e0_wp,1.e-8_wp,err)*ydot(ite)
         ydot(irh)=ydot(irh) / (eps1*svp_liq(t)**2)
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
       
@@ -2147,19 +2153,19 @@
 	!>@param[in] rpar: real data coming in
 	!>@param[in] ipar: integer data coming in
     subroutine fparcelcold(neq, tt, y, ydot, rpar, ipar)
-        use nrtype
-        use nr, only : dfridr,locate
+        use numerics_type
+        use numerics, only : dfsid1,find_pos
 
         implicit none
-        real(sp), intent(inout) :: tt
-        real(sp), intent(inout), dimension(neq) :: y, ydot
+        real(wp), intent(inout) :: tt
+        real(wp), intent(inout), dimension(neq) :: y, ydot
         integer(i4b), intent(inout) :: neq
-        real(sp), intent(inout) :: rpar
+        real(wp), intent(inout) :: rpar
         integer(i4b), intent(inout) :: ipar
 
         ! local variables
-        real(sp) :: wv=0._sp, wl=0._sp, wi=0._sp, rm, cpm, &
-                  drv=0._sp, dri=0._sp,dri2=0._sp, &
+        real(wp) :: wv=0._wp, wl=0._wp, wi=0._wp, rm, cpm, &
+                  drv=0._wp, dri=0._wp,dri2=0._wp, &
                   rh,t,p,err,sl, w, &
                   te, qve, pe, var, dummy, rhoe, rhop, b, rh_ice
 
@@ -2171,7 +2177,7 @@
         irh=parcel1%irhi
         iw =parcel1%iwi
         
-        ydot(iw)=0._sp
+        ydot(iw)=0._wp
 
         rh=y(irh)
         t=y(ite)
@@ -2180,14 +2186,14 @@
     
 
         ! check there are no negative values
-        where(y(1:ipartice).le.0.e1_sp)
-            y(1:ipartice)=1.e-22_sp
+        where(y(1:ipartice).le.0.e1_wp)
+            y(1:ipartice)=1.e-22_wp
         end where
 
 
         ! calculate mixing ratios from rh, etc
         sl=svp_liq(t)*rh/(p-svp_liq(t)) ! saturation ratio
-        sl=(sl*p/(1._sp+sl))/svp_liq(t)
+        sl=(sl*p/(1._wp+sl))/svp_liq(t)
         wv=eps1*rh*svp_liq(t) / (p-svp_liq(t)) ! vapour mixing ratio
         wl=sum(parcel1%npart*parcel1%y(1:ipartice))          ! liquid mixing ratio
         wi=sum(parcel1%npartice*y(1:ipartice))             ! liquid mixing ratio
@@ -2199,19 +2205,19 @@
 
         ! now calculate derivatives
         ! adiabatic parcel model
-        ydot(ipr)=0._sp      ! hydrostatic equation
+        ydot(ipr)=0._wp      ! hydrostatic equation
 
         
         ! particle growth rate - mass growth rate
-        parcel1%rh_eq=1._sp
+        parcel1%rh_eq=1._wp
         ydot(1:ipartice)=icegrowthrate01(t,p,rh_ice,parcel1%rh_eq,y(1:ipartice), &
             parcel1%mbinice(:,1:n_comps),parcel1%rhobinice,&
             parcel1%phi,parcel1%rhoi,parcel1%nump,parcel1%rime,ipartice) 
         
         ! do not bother if number concentration too small
         do i=1,ipartice
-            if(isnan(ydot(i)).or.parcel1%npartice(i).le. 1.e-9_sp) then
-              ydot(i)=0._sp
+            if(isnan(ydot(i)).or.parcel1%npartice(i).le. 1.e-9_wp) then
+              ydot(i)=0._wp
             endif
         enddo
 
@@ -2232,7 +2238,7 @@
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         ydot(irh)=(p-svp_liq(t))*svp_liq(t)*drv
         ydot(irh)=ydot(irh)+svp_liq(t)*wv*ydot(ipr)
-        ydot(irh)=ydot(irh)-wv*p*dfridr(svp_liq,t,1.e0_sp,err)*ydot(ite)
+        ydot(irh)=ydot(irh)-wv*p*dfsid1(svp_liq,t,1.e0_wp,1.e-8_wp,err)*ydot(ite)
         ydot(irh)=ydot(irh) / (eps1*svp_liq(t)**2)
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
       
@@ -2245,13 +2251,13 @@
     ! jacobian for a warm parcel model : dummy subroutine                          !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     subroutine jparcelwarm(neq, t, y, ml, mu, pd, nrpd, rpar, ipar)
-          use nrtype
+          use numerics_type
           implicit none
-          real(sp) :: t
-          real(sp), dimension(neq) :: y
-          real(sp), dimension(nrpd, neq) :: pd
+          real(wp) :: t
+          real(wp), dimension(neq) :: y
+          real(wp), dimension(nrpd, neq) :: pd
           integer(i4b) :: neq, ml, mu, nrpd
-          real(sp) :: rpar
+          real(wp) :: rpar
           integer(i4b) :: ipar
       
     end subroutine jparcelwarm
@@ -2265,20 +2271,20 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     subroutine icenucleation(npart, npartice, mwat,mbin2,mbin2_ice, &
                          rhobin,nubin,kappabin,molwbin,t,p,sz,sz2,yice,rh,dt) 
-      use nrtype
+      use numerics_type
       implicit none
-      real(sp), intent(inout) :: t
-      real(sp), intent(in) :: p,rh,dt
-      real(sp), dimension(sz2), intent(inout) :: npart,npartice
-      real(sp), dimension(:), intent(in) :: mwat
-      real(sp), dimension(:,:), intent(in) :: mbin2, &
+      real(wp), intent(inout) :: t
+      real(wp), intent(in) :: p,rh,dt
+      real(wp), dimension(sz2), intent(inout) :: npart,npartice
+      real(wp), dimension(:), intent(in) :: mwat
+      real(wp), dimension(:,:), intent(in) :: mbin2, &
                                               rhobin,nubin,kappabin,molwbin
       integer(i4b), intent(in) :: sz,sz2
-      real(sp), dimension(sz2) :: nw,aw,jw,dn01,m01,ns,dw,dd,kappa,rhoat
-      real(sp), dimension(sz2,sz) :: dmaer01
-      real(sp), dimension(sz2,sz), intent(inout) :: mbin2_ice
+      real(wp), dimension(sz2) :: nw,aw,jw,dn01,m01,ns,dw,dd,kappa,rhoat
+      real(wp), dimension(sz2,sz) :: dmaer01
+      real(wp), dimension(sz2,sz), intent(inout) :: mbin2_ice
       
-      real(sp), intent(inout), dimension(sz2) :: yice
+      real(wp), intent(inout), dimension(sz2) :: yice
       
       !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
       ! first calculate the ice formation over dt using koop et al. 2000       !
@@ -2293,15 +2299,15 @@
           rhoat(:)=mwat(:)/rhow+sum(mbin2(:,:)/rhobin(:,:),2)
           rhoat(:)=(mwat(:)+sum(mbin2(:,:),2))/rhoat(:);
   
-          dw(:)=((mwat(:)+sum(mbin2(:,:),2))*6._sp/(pi*rhoat(:)))**(1._sp/3._sp)
+          dw(:)=((mwat(:)+sum(mbin2(:,:),2))*6._wp/(pi*rhoat(:)))**(1._wp/3._wp)
   
           dd(:)=((sum(mbin2(:,:)/rhobin(:,:),2))* &
-                 6._sp/(pi))**(1._sp/3._sp) ! dry diameter
+                 6._wp/(pi))**(1._wp/3._wp) ! dry diameter
                               ! needed for eqn 6, petters and kreidenweis (2007)
-          kappa(:)=sum((mbin2(:,:)+1.e-60_sp)/rhobin(:,:)*kappabin(:,:),2) &
-                 / sum((mbin2(:,:)+1.e-60_sp)/rhobin(:,:),2)
+          kappa(:)=sum((mbin2(:,:)+1.e-60_wp)/rhobin(:,:)*kappabin(:,:),2) &
+                 / sum((mbin2(:,:)+1.e-60_wp)/rhobin(:,:),2)
                  ! equation 7, petters and kreidenweis (2007)
-          aw=(dw**3-dd**3)/(dw**3-dd**3*(1._sp-kappa)) ! from eq 6,p+k(acp,2007)
+          aw=(dw**3-dd**3)/(dw**3-dd**3*(1._wp-kappa)) ! from eq 6,p+k(acp,2007)
         case default
           print *,'error kappa_flag'
           stop
@@ -2311,14 +2317,14 @@
       !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
       
       ! the number of ice crystals nucleated:
-      dn01(:)=abs( npart(:)*(1._sp-exp(-jw(:)*mwat(:)/rhow*dt)) )
+      dn01(:)=abs( npart(:)*(1._wp-exp(-jw(:)*mwat(:)/rhow*dt)) )
 
       if(t.gt.ttr) then
-          dn01=0._sp
+          dn01=0._wp
       endif
       !!!!
       ! total aerosol mass in each bin added together:
-      dmaer01(:,:)=(mbin2_ice(:,:)*(spread(npartice(:),2,sz)+1.e-50_sp)+ &
+      dmaer01(:,:)=(mbin2_ice(:,:)*(spread(npartice(:),2,sz)+1.e-50_wp)+ &
                       mbin2(:,:)*spread(dn01(:),2,sz) ) 
       ! total water mass that will be in the ice bins:
       m01=(yice*npartice+mwat(:)*dn01(:)) 
@@ -2331,14 +2337,14 @@
       m01=m01/(npartice) 
       
       
-      where(m01.gt.0._sp.and.npartice.gt.0._sp)
+      where(m01.gt.0._wp.and.npartice.gt.0._wp)
         yice=m01
       elsewhere
         yice=yice
       end where
       
       ! aerosol mass in ice bins
-      mbin2_ice(:,:)=dmaer01(:,:)/(1.e-50_sp+spread(npartice,2,sz))
+      mbin2_ice(:,:)=dmaer01(:,:)/(1.e-50_wp+spread(npartice,2,sz))
 
       ! latent heat of fusion:
       t=t+lf/cp*sum(mwat(:)*dn01(:))
@@ -2357,53 +2363,53 @@
 	!>@brief
 	!>calculates one time-step of bin-microphysics
     subroutine bin_microphysics(func1,func2,func3)
-    use nrtype
-    use nr, only : zbrent
+    use numerics_type
+    use numerics, only : zeroin, dvode
     implicit none
-    real(sp) :: mass1, mass2, deltam, vapour_mass, liquid_mass, x1,x2 , cpm, &
+    real(wp) :: mass1, mass2, deltam, vapour_mass, liquid_mass, x1,x2 , cpm, &
         var, dummy
     integer(i4b) :: iloc
     
     interface
         subroutine func1(neq, tt, y, ydot, rpar, ipar)
-            use nrtype
-            use nr, only : dfridr,locate
+            use numerics_type
+            use numerics, only : dfsid1,find_pos
 
             implicit none
-            real(sp), intent(inout) :: tt
-            real(sp), intent(inout), dimension(neq) :: y, ydot
+            real(wp), intent(inout) :: tt
+            real(wp), intent(inout), dimension(neq) :: y, ydot
             integer(i4b), intent(inout) :: neq
-            real(sp), intent(inout) :: rpar
+            real(wp), intent(inout) :: rpar
             integer(i4b), intent(inout) :: ipar
         end subroutine func1
     end interface
     interface
         subroutine func2(neq, tt, y, ydot, rpar, ipar)
-            use nrtype
-            use nr, only : dfridr,locate
+            use numerics_type
+            use numerics, only : dfsid1,find_pos
 
             implicit none
-            real(sp), intent(inout) :: tt
-            real(sp), intent(inout), dimension(neq) :: y, ydot
+            real(wp), intent(inout) :: tt
+            real(wp), intent(inout), dimension(neq) :: y, ydot
             integer(i4b), intent(inout) :: neq
-            real(sp), intent(inout) :: rpar
+            real(wp), intent(inout) :: rpar
             integer(i4b), intent(inout) :: ipar
         end subroutine func2
     end interface
     interface
         subroutine func3(npart, npartice, mwat,mbin2,mbin2_ice, &
                          rhobin,nubin,kappabin,molwbin,t,p,sz,sz2,yice,rh,dt) 
-            use nrtype
+            use numerics_type
             implicit none
-            real(sp), intent(inout) :: t
-            real(sp), intent(in) :: p,rh,dt
-            real(sp), dimension(sz2), intent(inout) :: npart,npartice
-            real(sp), dimension(:), intent(in) :: mwat
-            real(sp), dimension(:,:), intent(in) :: mbin2, &
+            real(wp), intent(inout) :: t
+            real(wp), intent(in) :: p,rh,dt
+            real(wp), dimension(sz2), intent(inout) :: npart,npartice
+            real(wp), dimension(:), intent(in) :: mwat
+            real(wp), dimension(:,:), intent(in) :: mbin2, &
                                                   rhobin,nubin,kappabin,molwbin
             integer(i4b), intent(in) :: sz,sz2
-            real(sp), dimension(sz2,sz), intent(inout) :: mbin2_ice
-            real(sp), intent(inout), dimension(sz2) :: yice
+            real(wp), dimension(sz2,sz), intent(inout) :: mbin2_ice
+            real(wp), intent(inout), dimension(sz2) :: yice
         end subroutine func3
     end interface
     
@@ -2441,8 +2447,8 @@
                    parcel1%iwork,parcel1%liw,jparcelwarm, &
                    parcel1%mf,parcel1%rpar,parcel1%ipar)
         ! check there are no negative values
-!         where(parcel1%y(1:parcel1%n_bin_mode).lt.0._sp)
-!             parcel1%y(1:parcel1%n_bin_mode)=1.e-22_sp
+!         where(parcel1%y(1:parcel1%n_bin_mode).lt.0._wp)
+!             parcel1%y(1:parcel1%n_bin_mode)=1.e-22_wp
 !         end where
     enddo
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -2492,8 +2498,8 @@
                            parcel1%iworkice,parcel1%liwice,jparcelwarm, &
                            parcel1%mfice,parcel1%rparice,parcel1%iparice)
             ! check there are no negative values
-            where(parcel1%yice(1:parcel1%n_bin_mode).le.0.e1_sp)
-                parcel1%yice(1:parcel1%n_bin_mode)=1.e-22_sp
+            where(parcel1%yice(1:parcel1%n_bin_mode).le.0.e1_wp)
+                parcel1%yice(1:parcel1%n_bin_mode)=1.e-22_wp
             end where
         enddo
         parcel1%y(parcel1%ipr)=parcel1%yice(parcel1%ipri)
@@ -2535,7 +2541,7 @@
             parcel1%theta_q_cbase=calc_theta_q3(parcel1%y(parcel1%ite), &
                                     parcel1%y(parcel1%ipr), mass2)
             parcel1%q_cbase=mass2
-            if(parcel1%y(parcel1%irh) .gt. 1._sp) then
+            if(parcel1%y(parcel1%irh) .gt. 1._wp) then
                 set_theta_q_cb_flag=.false.
             endif
         endif
@@ -2546,19 +2552,19 @@
 !             parcel1%theta_q=calc_theta_q3(parcel1%y(parcel1%ite), &
 !                                         parcel1%y(parcel1%ipr), mass2)
             ! locate position
-            iloc=locate(parcel1%z_sound(1:n_levels_s),parcel1%y(parcel1%iz))
+            iloc=find_pos(parcel1%z_sound(1:n_levels_s),parcel1%y(parcel1%iz))
             iloc=min(n_levels_s-1,iloc)
             iloc=max(1,iloc)
             ! linear interp theta_q
-            call polint(parcel1%z_sound(iloc:iloc+1), parcel1%theta_q_sound(iloc:iloc+1), &
+            call poly_int(parcel1%z_sound(iloc:iloc+1), parcel1%theta_q_sound(iloc:iloc+1), &
                     min(parcel1%y(parcel1%iz),parcel1%z_sound(n_levels_s)), var,dummy)        
             parcel1%theta_q=var
                                         
             ! equation 5 (Sanchez et al, 2017, acp)
             parcel1%x_ent=(parcel1%theta_q-parcel1%theta_q_cbase) / &
                     (parcel1%theta_q_ctop-parcel1%theta_q_cbase)
-            x1=min(max(parcel1%x_ent,0._sp),1._sp)
-            x2=1._sp-x1
+            x1=min(max(parcel1%x_ent,0._wp),1._wp)
+            x2=1._wp-x1
 
             ! entrainment of vapour:
             vapour_mass= &!vapour_mass+&
@@ -2573,8 +2579,8 @@
             
             p111=parcel1%y(parcel1%ipr)
             theta_q_sat=parcel1%theta_q
-            parcel1%y(parcel1%ite)=zbrent(calc_theta_q,150._sp, &
-                 theta_q_sat, 1.e-30_sp)
+            parcel1%y(parcel1%ite)=zeroin(150._wp, &
+                 theta_q_sat, calc_theta_q,1.e-30_wp)
             print *,x1,x2
 
             ! rh
@@ -2625,7 +2631,7 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     subroutine check(status)
     use netcdf
-    use nrtype
+    use numerics_type
     integer(I4B), intent ( in) :: status
 
     if(status /= nf90_noerr) then
@@ -2646,7 +2652,7 @@
 	!>@param[inout] new_file
     subroutine output(new_file,outputfile)
 
-    use nrtype
+    use numerics_type
     use netcdf
 
     implicit none
@@ -2857,14 +2863,14 @@
     ! write variable: beta_ext
     call check( nf90_inq_varid(io1%ncid, "beta_ext", io1%varid ) )
     call check( nf90_put_var(io1%ncid, io1%varid, &
-        2._sp*sum((parcel1%y(1:parcel1%n_bin_mode)* &
-            6._sp/(rhow*pi))**(2._sp/3._sp)* pi/4._sp* &
+        2._wp*sum((parcel1%y(1:parcel1%n_bin_mode)* &
+            6._wp/(rhow*pi))**(2._wp/3._wp)* pi/4._wp* &
             parcel1%npart(1:parcel1%n_bin_mode)), &
                 start = (/io1%icur/)))
 
     ! write variable: number > 2.5 microns (8.1812e-15 kg)
-    parcel1%ndrop=0._sp
-    where (parcel1%y(1:parcel1%n_bin_mode) > 6.5450e-14_sp)
+    parcel1%ndrop=0._wp
+    where (parcel1%y(1:parcel1%n_bin_mode) > 6.5450e-14_wp)
         parcel1%ndrop=parcel1%npart(:)
     end where
     
@@ -2876,10 +2882,10 @@
     call check( nf90_inq_varid(io1%ncid, "deff", io1%varid ) )
     call check( nf90_put_var(io1%ncid, io1%varid, &
         sum((parcel1%y(1:parcel1%n_bin_mode)* &
-            6._sp/(rhow*pi))**(3._sp/3._sp)*  &
+            6._wp/(rhow*pi))**(3._wp/3._wp)*  &
             parcel1%npart(1:parcel1%n_bin_mode)) / &
         sum((parcel1%y(1:parcel1%n_bin_mode)* &
-            6._sp/(rhow*pi))**(2._sp/3._sp)*  &
+            6._wp/(rhow*pi))**(2._wp/3._wp)*  &
             parcel1%npart(1:parcel1%n_bin_mode)), &
                 start = (/io1%icur/)))
 
@@ -2931,12 +2937,12 @@
 	!>@brief
 	!>driver for the bin-microphysics module
     subroutine bmm_driver()
-    use nrtype
+    use numerics_type
     implicit none
     integer(i4b) :: i, nt
     
     
-    nt=ceiling(runtime / real(dt,kind=sp))
+    nt=ceiling(runtime / real(dt,kind=wp))
     do i=1,nt
         ! output to file
         call output(io1%new_file,outputfile)

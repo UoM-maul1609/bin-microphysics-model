@@ -22,7 +22,7 @@
 	!>main programme reads in information, allocates arrays, then calls the model driver
 
     program main
-        use nrtype
+        use numerics_type
         use bmm, only : read_in_bmm_namelist, initialise_bmm_arrays, bmm_driver, io1
 !        use drivers
         implicit none
