@@ -4,6 +4,7 @@
     !>code to solve a tridiagonal system of equations based 
     !> based on the Thomas algorithm: 
     !> https://en.wikipedia.org/wiki/Tridiagonal_matrix_algorithm
+    !> https://en.wikibooks.org/wiki/Algorithm_Implementation/Linear_Algebra/Tridiagonal_matrix_algorithm
     !>@param[in] a,b,c,r
     !>@param[inout] x - solution vector
     subroutine tridiagonal(a,b,c,r,x)
