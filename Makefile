@@ -34,12 +34,12 @@ osnf_lib.a	:  numerics.$(OBJ) zeroin.$(OBJ) sfmin.$(OBJ) \
             poly_int.$(OBJ) find_pos.$(OBJ) numerics_type.$(OBJ) \
             svode.$(OBJ) slinpk.$(OBJ) vode.$(OBJ) dlinpk.$(OBJ) \
             vode_integrate.$(OBJ) erfinv.$(OBJ) tridiagonal.$(OBJ) \
-            hygfx.$(OBJ)
+            hygfx.$(OBJ) random.$(OBJ)
 	$(AR) rc osnf_lib.a numerics.$(OBJ) zeroin.$(OBJ) sfmin.$(OBJ) \
 	    fmin.$(OBJ) r1mach.$(OBJ) \
 	    d1mach.$(OBJ) dfsid1.$(OBJ) poly_int.$(OBJ) find_pos.$(OBJ) numerics_type.$(OBJ) \
             svode.$(OBJ) slinpk.$(OBJ) vode.$(OBJ) dlinpk.$(OBJ) vode_integrate.$(OBJ) \
-            erfinv.$(OBJ) tridiagonal.$(OBJ) hygfx.$(OBJ)
+            erfinv.$(OBJ) tridiagonal.$(OBJ) hygfx.$(OBJ) random.$(OBJ)
 numerics_type.$(OBJ)	: numerics_type.f90 
 	$(FOR) numerics_type.f90 $(FFLAGS)numerics_type.$(OBJ)
 numerics.$(OBJ)	: numerics.f90 numerics_type.$(OBJ)
@@ -74,6 +74,8 @@ tridiagonal.$(OBJ)	: tridiagonal.f90 numerics_type.$(OBJ)
 	$(FOR) tridiagonal.f90 $(FFLAGS)tridiagonal.$(OBJ)
 erfinv.$(OBJ)	: erfinv.f90 numerics_type.$(OBJ)
 	$(FOR) erfinv.f90 $(FFLAGS)erfinv.$(OBJ)
+random.$(OBJ)	: random.f90 numerics_type.$(OBJ)
+	$(FOR) random.f90 $(FFLAGS)random.$(OBJ)
 hygfx.$(OBJ) : hygfx.for 
 	$(FOR) hygfx.for $(FFLAGS)hygfx.$(OBJ) 
 main.$(OBJ)   : main.f90 

@@ -16,6 +16,7 @@
         use numerics_type
         use numerics, only : dvode, dfsid1, zeroin,fmin, vode_integrate, &
                 tridiagonal, erfinv
+        use random, only : random_normal
         use hypergeo, only : hygfx
         implicit none
         real(wp) :: machep
@@ -34,6 +35,9 @@
         real(wp) :: x1,x2,eps,h1,hmin,f,ff1,aa,bb
         real(wp), dimension(10000001) :: b,x,r
         real(wp), dimension(10000000) :: a,c
+        integer(i4b), allocatable, dimension(:) :: seed
+        integer(i4b) :: l
+        real(wp) :: rr
 
         external func 
         external func2
@@ -127,8 +131,21 @@
         call hygfx(aa, bb, real(1,sp)+2.5_wp+1.0_wp,0.5_wp,ff1)
         print *,ff1
         
+        ! random number
+		call random_seed(size=l)
+		allocate(seed(1:l))
+		seed(:)=2
+		call random_seed(put=seed)
+        
+        do l=1,10
+            rr=random_normal()
+            print *,rr
+        enddo
+        
         
     end program main
+
+
 
     function func(x)
         use numerics_type
