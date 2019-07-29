@@ -106,7 +106,7 @@
 
         ! now test integration by vode_integrate
         ystart(1)=0._wp
-        x1=0._sp
+        x1=0._wp
         x2=pi/2._wp
         eps=1.e-4_wp
         h1=0.01_wp
