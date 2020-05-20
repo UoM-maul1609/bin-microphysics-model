@@ -1,0 +1,73 @@
+ &run_vars
+	outputfile = '/tmp/output.nc',
+	runtime=7200.,
+	dt=10.,
+	tinit=244,
+	pinit=90000,
+	rhinit=0.95,
+	microphysics_flag=1, ! flag for microphysics: 0 (no micro); 
+	                     ! 1 (microphysics on)
+	ice_flag=1,          ! flag for ice-microphysics: 0 (no ice);
+	                     ! 1 (ice on)
+	bin_scheme_flag=0,   ! flag for bin-scheme: 0 (full moving);
+	kappa_flag=1/
+&aerosol_setup
+    n_mode            = 2,
+    n_intern          = 3,
+    n_sv              = 10,
+    sv_flag           = 0,
+    n_bins            = 60,
+    n_comps           = 4/
+&cloud_setup
+    ! extends the aerosol in that cloud has internal and external mixtures
+    n_binsc                  =80,
+    kfac                     =2,
+    dminc                    =3e-6,
+    dmaxc                    =10e-2/
+&aerosol_spec
+    ! internal modes X external mixture modes 
+    ! note: internal modes means add the distributions of the same composition together
+    ! external modes can have different mass fractions in the distribution
+!    n_aer1(1:3,1:1)        = 401.e6, 550.e6, 460.e6,
+!    d_aer1(1:3,1:1)        = 1.3e-8   , 4.4e-8, 1.36e-7, 
+!    sig_aer1(1:3,1:1)      = 0.34   , 0.40, 0.44, 
+!    dmina              = 10.e-9,
+!    dmaxa              = 3.e-6,
+!    ! number of external modes x internal compositions
+!    mass_frac_aer1(1:1,1:4) = 1.,
+! 	                        0.,
+! 	                        0.,
+! 	                        0.,                      
+    n_aer1(1:3,1:2)        = 401.e6, 550.e6, 460.e6,
+                             401.e6, 550.e6, 460.e6,
+    d_aer1(1:3,1:2)        = 1.3e-8   , 4.4e-8, 1.36e-7, 
+                            1.3e-8   , 4.4e-8, 1.36e-7,
+    sig_aer1(1:3,1:2)      = 0.34   , 0.40, 0.44, 
+                             0.34   , 0.40, 0.44,
+    dmina              = 10.e-9,
+    dmaxa              = 3.e-6,
+    ! number of external modes x internal compositions
+    mass_frac_aer1(1:2,1:4) = 1., 1.,
+ 	                        0., 0.,
+ 	                        0., 0.,
+ 	                        0., 0.,	                        
+    molw_core1(1:4)       = 132.14e-3,
+ 	                        132.14e-3,
+ 	                        132.14e-3,
+ 	                        132.14e-3,
+    density_core1(1:4) =    1770.,
+                            1770.,
+ 	                        1770., 
+                            1770.,
+    nu_core1(1:4)      =    3,  
+                            3,  
+                            3,  
+                            3,                      
+    kappa_core1(1:4)      = 0.3,  
+                            0.2,  
+                            0.3, 
+                            0.3/
+&cloud_spec
+    lwc(1,1)                 =1.e-3,
+    dbar(1,1)                =20.e-6/
+
