@@ -181,14 +181,12 @@
         lwc=0._wp
         dbar=10._wp
 
-        if (ice_flag.eq.1) then
-            allocate( iwc(1:n_intern,1:n_mode), STAT = AllocateStatus)
-            if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
-            allocate( dbari(1:n_intern,1:n_mode), STAT = AllocateStatus)
-            if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
-            iwc=0._wp
-            dbari=10._wp
-        endif
+        allocate( iwc(1:n_intern,1:n_mode), STAT = AllocateStatus)
+        if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+        allocate( dbari(1:n_intern,1:n_mode), STAT = AllocateStatus)
+        if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+        iwc=0._wp
+        dbari=10._wp
 
 	end subroutine allocate_arrays
 	
