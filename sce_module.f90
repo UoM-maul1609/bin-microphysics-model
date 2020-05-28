@@ -19,15 +19,18 @@
         						lv=2.5e6_wp, ls=2.837e6_wp, lf=ls-lv, ttr=273.15_wp, &
         						joules_in_an_erg=1.0e-7_wp,joules_in_a_cal=4.187e0_wp, &
         						rhow=1000._wp, ra=r_gas/molw_a,rv=r_gas/molw_water , &
-        						eps1=ra/rv, rhoice=910._wp, qsmall=1.e-30_wp
+        						eps1=ra/rv, rhoice=910._wp, n_avo=6.02e23_wp, &
+        						kboltz=r_gas/n_avo, epsilond=2000.e-4_wp, &
+        						qsmall=1.e-30_wp
         						
 
         type parcel
             ! variables for bin model
             integer(i4b) :: n_bins1,n_bins2,n_binst, &
-                            n_modes,n_comps, n_bin_mode, n_bin_mode1, n_bin_mode2, &
+                            n_modes,n_comps, &
+                            n_bin_modew, n_bin_mode, n_bin_mode1, n_bin_mode2, &
                             n_bin_modea, n_bin_modea1, &
-                            ice_flag
+                            ice_flag, imoms
             real(wp) :: dt
             real(wp) :: z,p,t,w,rh
                         
@@ -94,7 +97,7 @@
                                         kappa_core1, ncloud
 
         ! cloud spec
-        real(wp), allocatable, dimension(:,:) :: lwc, dbar
+        real(wp), allocatable, dimension(:,:) :: lwc, dbar, iwc, dbari
         
         
 
@@ -131,17 +134,21 @@
 	!>@param[inout] kappa_core1: kappa parameter
 	!>@param[inout] lwc: liquid water content
 	!>@param[inout] dbar: mean diameter
+	!>@param[inout] iwc: ice water content
+	!>@param[inout] dbari: mean diameter of ice
 	!>@param[inout] ncloud: for initialisation
 	subroutine allocate_arrays(n_intern,n_mode,n_sv,n_bins,n_comps, &
 		                    n_aer1,d_aer1,sig_aer1,mass_frac_aer1, molw_core1, &
-		                    density_core1, nu_core1, kappa_core1,lwc,dbar,ncloud)
+		                    density_core1, nu_core1, kappa_core1,lwc,dbar,&
+		                    iwc,dbari, ncloud)
 		                    
 		                    
 		use numerics_type
 		implicit none
 		integer(i4b), intent(in) :: n_intern, n_mode, n_sv, n_bins,n_comps
 		real(wp), dimension(:,:), allocatable, intent(inout) :: &
-		                        n_aer1,d_aer1,sig_aer1,mass_frac_aer1,lwc,dbar
+		                        n_aer1,d_aer1,sig_aer1,mass_frac_aer1,lwc,dbar, &
+		                        iwc, dbari
 		real(wp), dimension(:), allocatable, intent(inout) :: molw_core1,density_core1, &
 		                        nu_core1,kappa_core1,ncloud
 		
@@ -174,6 +181,15 @@
         lwc=0._wp
         dbar=10._wp
 
+        if (ice_flag.eq.1) then
+            allocate( iwc(1:n_intern,1:n_mode), STAT = AllocateStatus)
+            if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+            allocate( dbari(1:n_intern,1:n_mode), STAT = AllocateStatus)
+            if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+            iwc=0._wp
+            dbari=10._wp
+        endif
+
 	end subroutine allocate_arrays
 	
 	
@@ -202,7 +218,7 @@
                                 mass_frac_aer1, molw_core1, &
                                 density_core1,nu_core1,kappa_core1
         namelist /cloud_setup/ n_binsc,kfac,dminc,dmaxc
-        namelist /cloud_spec/ lwc,dbar
+        namelist /cloud_spec/ lwc,dbar,iwc,dbari
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
@@ -221,7 +237,8 @@
         ! allocate memory / init
 		call allocate_arrays(n_intern,n_mode,n_sv,n_bins,n_comps, &
 		                    n_aer1,d_aer1,sig_aer1,mass_frac_aer1, molw_core1, &
-		                    density_core1, nu_core1, kappa_core1, lwc, dbar,ncloud)
+		                    density_core1, nu_core1, kappa_core1, lwc, dbar, &
+		                    iwc,dbari,ncloud)
         
         read(8,nml=aerosol_spec)
         read(8,nml=cloud_spec)
@@ -252,45 +269,64 @@
                 eps2, z1, z2, htry, hmin, var, dummy, mass, vol, rho
     real(wp), dimension(1) :: p1, z11
     real(wp) :: p11, p22, rm, cpm
-    integer(i4b) :: i,j,k, AllocateStatus, iloc,i2, mode1,mode2,moden
+    integer(i4b) :: i,j,k, AllocateStatus, iloc,i2, mode1,mode2,moden, phase1, phase2
 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! set variables and allocate arrays in parcel                                  !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    parcel1%n_bins1=n_bins 
-    parcel1%n_bins2=n_binsc
-    parcel1%n_binst=n_bins+n_binsc
-    parcel1%n_modes=n_mode
-    parcel1%n_comps=n_comps
+    parcel1%n_bins1=n_bins          ! for the aerosol bins
+    parcel1%n_bins2=n_binsc         ! cloud range
+    parcel1%n_binst=n_bins+n_binsc  ! total
+    parcel1%n_modes=n_mode          ! number of modes
+    parcel1%n_comps=n_comps         ! number of compositions
     
-    parcel1%n_bin_modea=parcel1%n_bins1*n_mode
+    parcel1%n_bin_modea=parcel1%n_bins1*n_mode      ! for all the aerosol
     parcel1%n_bin_modea1=(parcel1%n_bins1+1)*n_mode ! extra due to bin edges
-    parcel1%n_bin_mode=parcel1%n_binst*n_mode
-    parcel1%n_bin_mode1=(parcel1%n_binst+1)*n_mode ! extra due bin edges
-    parcel1%n_bin_mode2=(parcel1%n_binst+2)*n_mode ! extra due bin edges
+    parcel1%n_bin_modew=parcel1%n_binst*n_mode      ! for all the liquid
+    parcel1%n_bin_mode1=(parcel1%n_binst+1)*n_mode  ! extra due bin edges
+    parcel1%n_bin_mode2=(parcel1%n_binst+2)*n_mode  ! extra due bin edges
+    
+    ! could do this for all ice bins too....
+    parcel1%ice_flag=ice_flag
+    parcel1%n_bin_mode=&
+        parcel1%n_binst*n_mode*(1+parcel1%ice_flag)     ! for all the liquid and ice
+    parcel1%n_bin_mode1=&
+        (parcel1%n_binst+1)*n_mode*(1+parcel1%ice_flag) ! extra due bin edges
+    parcel1%n_bin_mode2=&
+        (parcel1%n_binst+2)*n_mode*(1+parcel1%ice_flag) ! extra due bin edges
+    parcel1%imoms=ice_flag*5                            ! phi, nmon, vol, rim, unf
+    !--
+
     
     parcel1%p=pinit
     parcel1%t=tinit
     parcel1%rh=rhinit
     parcel1%dt=dt
-    allocate( parcel1%d(1:parcel1%n_bin_mode1), STAT = AllocateStatus)
+    
+    ! just aerosol set-up
+    allocate( parcel1%d(1:parcel1%n_bin_mode1), STAT = AllocateStatus) 
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+    ! same bin edges used for ice
     allocate( parcel1%mbinedges(1:parcel1%n_binst+1,1:parcel1%n_modes), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+    ! ice has its own
     allocate( parcel1%maer(1:parcel1%n_bin_mode), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
     allocate( parcel1%npart(1:parcel1%n_bin_mode), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
     allocate( parcel1%mbin(1:parcel1%n_bin_mode,1:n_comps+1), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+    
     allocate( parcel1%rho_core(1:parcel1%n_modes), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
 
-    allocate( parcel1%moments(1:parcel1%n_bin_mode,1:n_comps), STAT = AllocateStatus)
+    allocate( parcel1%moments(1:parcel1%n_bin_mode,1:n_comps+parcel1%imoms), &
+        STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
-    allocate( parcel1%momenttype(1:n_comps), STAT = AllocateStatus)
+    allocate( parcel1%momenttype(1:n_comps+parcel1%imoms), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
 
+    ! ice has its own
     allocate( parcel1%rhobin(1:parcel1%n_bin_mode,1:n_comps), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
     allocate( parcel1%nubin(1:parcel1%n_bin_mode,1:n_comps), STAT = AllocateStatus)
@@ -361,6 +397,12 @@
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         
     enddo
+    
+    ! ** ice **
+    ! set ice number to zero and don't set diameter for ice 
+    if (parcel1%ice_flag.eq.1) then
+        parcel1%npart(parcel1%n_bin_modew+1:parcel1%n_bin_mode)=0._wp
+    endif
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
     
@@ -390,6 +432,13 @@
             endif
         enddo
     enddo
+
+    ! ** ice **
+    ! same for the ice - just equate
+    if (parcel1%ice_flag.eq.1) then
+        parcel1%maer(parcel1%n_bin_modew+1:parcel1%n_bin_mode)= &
+                        parcel1%maer(1:parcel1%n_bin_modew)
+    endif
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
@@ -414,6 +463,21 @@
             enddo
         enddo
     enddo
+    ! ** ice **
+    ! can just loop over all - for the ice (if set correctly), but easier to just set
+    ! same
+    if (parcel1%ice_flag.eq.1) then
+        parcel1%mbin(parcel1%n_bin_modew+1:parcel1%n_bin_mode,1:parcel1%n_comps)= &
+            parcel1%mbin(1:parcel1%n_bin_modew,1:parcel1%n_comps)
+        parcel1%rhobin(parcel1%n_bin_modew+1:parcel1%n_bin_mode,:)= &
+            parcel1%rhobin(1:parcel1%n_bin_modew,:)
+        parcel1%nubin(parcel1%n_bin_modew+1:parcel1%n_bin_mode,:)= &
+            parcel1%nubin(1:parcel1%n_bin_modew,:)
+        parcel1%molwbin(parcel1%n_bin_modew+1:parcel1%n_bin_mode,:)= &
+            parcel1%molwbin(1:parcel1%n_bin_modew,:)
+        parcel1%kappabin(parcel1%n_bin_modew+1:parcel1%n_bin_mode,:)= &
+            parcel1%kappabin(1:parcel1%n_bin_modew,:)        
+    endif
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
     
@@ -481,6 +545,13 @@
             print *,'error kappa flag'
             stop
     end select
+    
+    ! ** ice **
+    ! same for the ice
+    if (parcel1%ice_flag.eq.1) then
+        parcel1%mbin(parcel1%n_bin_modew+1:parcel1%n_bin_mode,parcel1%n_comps+1)= &
+            parcel1%mbin(1:parcel1%n_bin_modew,parcel1%n_comps+1)
+    endif
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
@@ -489,6 +560,7 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Set the water bin-edges                                                      !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! need a second loop or variable for the ice? or just use the same bin edges
     do k=1,parcel1%n_modes
         parcel1%mbinedges(1,k)=0._wp
         parcel1%mbinedges(parcel1%n_binst+1,k)=pi/6._wp*rhow*dmaxc**3
@@ -514,16 +586,38 @@
                 exp(-parcel1%mbinedges(j,k)/(4._wp/3._wp*pi*rhow*dbar(:,k)**3)))
             ncloud=max(ncloud,0._wp)
 
-
+            
             parcel1%npart(j+(k-1)*parcel1%n_binst) = &
                 sum(ncloud)
-        enddo
+
+        enddo  
     enddo
+    
+    ! ** ice **
+    ! careful consideration for the ice
+    if (parcel1%ice_flag.eq.1) then
+        do k=1,parcel1%n_modes
+            ! above the aerosol
+            do j=1+parcel1%n_bins1,parcel1%n_binst
+                ncloud=-1._wp/(4._wp/3._wp*pi*rhoice*dbari(:,k)**3)*iwc(:,k)* &
+                    (exp(-parcel1%mbinedges(j+1,k)/(4._wp/3._wp*pi*rhoice*dbari(:,k)**3))-&
+                    exp(-parcel1%mbinedges(j,k)/(4._wp/3._wp*pi*rhoice*dbari(:,k)**3)))
+                ncloud=max(ncloud,0._wp)
+
+                parcel1%npart(parcel1%n_bin_modew+ j+(k-1)*parcel1%n_binst) = &
+                    sum(ncloud)
+            enddo  
+        enddo
+    endif
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+
 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Initialise conserved moments                                                 !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    parcel1%moments=0._wp
     do j=1,parcel1%n_comps
         ! above the aerosol
         do i=1,parcel1%n_bin_mode
@@ -532,6 +626,32 @@
         enddo
     enddo
     parcel1%momenttype(1:parcel1%n_comps)=1 ! 1 is mass, 2 is number
+
+    ! ** ice **
+    ! same for the ice
+    ! additional moments - 2 general ones and 3 just for ice maybe just do 5
+    if (parcel1%ice_flag.eq.1) then
+        do i=parcel1%n_bin_modew+1,parcel1%n_bin_mode
+            ! ice moments: phi, nmon, vol, rim, unf
+            ! phi: 1*n
+            parcel1%moments(i,parcel1%n_comps+1)=parcel1%npart(i)
+            ! nmon: 1*n
+            parcel1%moments(i,parcel1%n_comps+2)=parcel1%npart(i)
+            ! vol: mass/rho
+            parcel1%moments(i,parcel1%n_comps+3)=parcel1%npart(i)* &
+                parcel1%mbin(i,parcel1%n_comps+1)/rhoice
+        enddo        
+        do i=1,parcel1%n_bin_modew
+            ! ice moments: phi, nmon, vol, rim, unf
+            ! rim: mass
+            parcel1%moments(i,parcel1%n_comps+4)=parcel1%npart(i)* &
+                parcel1%mbin(i,parcel1%n_comps+1)
+            ! unf: mass
+            parcel1%moments(i,parcel1%n_comps+5)=parcel1%npart(i)* &
+                parcel1%mbin(i,parcel1%n_comps+1)
+        enddo        
+        parcel1%momenttype(parcel1%n_comps+1:parcel1%n_comps+parcel1%imoms)=[2,2,1,1,1]
+    endif
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
     
@@ -545,25 +665,33 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! collision efficiency - gravitational settling                                !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    call ecollision(parcel1%dw,parcel1%n_bin_mode,parcel1%ecoll) 
+    call ecollision(parcel1%t,parcel1%p, &
+        parcel1%dw,sum(parcel1%mbin,2),parcel1%n_bin_mode,parcel1%ecoll) 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! which mode should gain go into?                                              !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    moden=parcel1%n_bin_mode/parcel1%n_binst
+    ! same if set up correctly
+    moden=parcel1%n_bin_modew/parcel1%n_binst
     do j=1,parcel1%n_bin_mode
         do i=1,parcel1%n_bin_mode
+            ! determine whether you are in liquid or ice bins
+            phase1=(i-1)/parcel1%n_bin_modew
+            phase2=(j-1)/parcel1%n_bin_modew
+
+
             ! which mode is first in?
-            mode1=(i-1)/parcel1%n_binst+1
+            mode1=(i-1)/parcel1%n_binst+1 - phase1*moden
             ! which mode is second in?
-            mode2=(j-1)/parcel1%n_binst+1
+            mode2=(j-1)/parcel1%n_binst+1 - phase2*moden
+            
             ! if both in same mode, put them in same mode
             ! if different, put in last mode
             if (mode1.eq.mode2) then
                 parcel1%indexc(i,j)=mode1
             else
-                parcel1%indexc(i,j)=moden
+                parcel1%indexc(i,j)=moden ! fine
             endif
         enddo
     enddo
@@ -583,19 +711,37 @@
 	!>@brief
 	!>calculates the collision efficiency between two droplets according to the 
 	!> `Long' kernel
-	!>@param[in] dw - diameters of droplets
+	!>@param[in] t, p - temperature and pressure
+	!>@param[in] dw, mw - diameters and masses of droplets
 	!>@param[in] sz - size of array
 	!>@param[inout] ecoll: collision efficiency
-    subroutine ecollision(dw,sz,ecoll) 
+    subroutine ecollision(t, p,dw,mw,sz,ecoll) 
+    real(wp), intent(in) :: t, p
     integer(i4b), intent(in) :: sz
-    real(wp), intent(in), dimension(sz) :: dw
+    real(wp), intent(in), dimension(sz) :: dw, mw
     real(wp), intent(inout), dimension(sz,sz) :: ecoll
     
     integer(i4b) :: i,j
-    real(wp) :: x1,x2,as,al,r,u,v
-       
+    real(wp) :: x1,x2,as,al,r,u,v, &
+                visc_air, rhoa, va, nu_air1, nu_air2, &
+                lambda1, lambda2, knud1,knud2, prefac, g1,g2, d1, d2, &
+                delta1sq, delta2sq, kbrown, kde, kti, kts, sc1, re1, re2
+    real(wp), dimension(sz) :: rhoat, vel, nre, cd
+    
+    ! for brownian kernel
+    visc_air=viscosity_air(t)
+    rhoa=p/(ra*t)
+    va=visc_air/rhoa
+    prefac=2._wp*kboltz*t/(6._wp*pi*visc_air)
+    !--------------------
+    
+    rhoat=mw / (pi/6._wp*dw**3)
+    call terminal01(vel,dw,rhoat, t,p,nre,cd,sz)
+    
     do j=1,sz
         do i=1,sz ! left-most should vary quickest
+        
+            ! Long kernel for gravitational settling+++++++++
             x1=min(dw(i),dw(j))
             x2=max(dw(i),dw(j))
             as=x1/2._wp
@@ -609,6 +755,64 @@
             else
                 ecoll(i,j) = 5.78e3_wp*(u+v)/1.e6_wp
             endif
+            !------------------------------------------------
+            
+            
+            ! turbulent inertial motion +++++++++++++++++++++
+            ! Equation 15.40, Jacobson, page 511 
+            kti = ecoll(i,j) * epsilond**0.75_wp / (grav * va**0.25_wp)
+            !------------------------------------------------
+            
+            ! turbulent shear +++++++++++++++++++++++++++++++
+            ! Equation 15.41, Jacobson, page 511 
+            kts = (pi*epsilond/(120._wp*va))**0.5_wp*(dw(i)+dw(j))**3
+            !------------------------------------------------
+            
+            
+            ! Brownian kernel +++++++++++++++++++++++++++++++
+            ! Equation 15.33, Jacobson, page 509 - the transition regime
+            ! and 519 - all effects
+            nu_air1=sqrt(8._wp*kboltz*t/(pi*molw_a/n_avo))
+            lambda1=2._wp*visc_air/rhoa/nu_air1
+            nu_air2=sqrt(8._wp*kboltz*t/(pi*molw_a/n_avo))
+            lambda2=2._wp*visc_air/rhoa/nu_air2
+            knud1=2._wp*lambda1/dw(i)
+            knud2=2._wp*lambda2/dw(j)
+            g1=1._wp+knud1*(1.249_wp+0.42_wp*exp(-0.87/knud1))
+            g2=1._wp+knud2*(1.249_wp+0.42_wp*exp(-0.87/knud2))
+            d1=prefac*g1/dw(i)
+            d2=prefac*g2/dw(j)
+
+            nu_air1=sqrt(8._wp*kboltz*t/(pi*mw(i)))
+            lambda1=8._wp*d1/(pi*nu_air1)
+            nu_air2=sqrt(8._wp*kboltz*t/(pi*mw(j)))
+            lambda2=8._wp*d2/(pi*nu_air2)
+            
+            delta1sq=((dw(i)+lambda1)**3-(dw(i)**2+lambda1**2)**(1.5_wp)) / &
+                (3._wp*dw(i)*lambda1)-dw(i)
+            delta1sq=delta1sq**2
+            
+            delta2sq=((dw(j)+lambda2)**3-(dw(j)**2+lambda2**2)**(1.5_wp)) / &
+                (3._wp*dw(j)*lambda2)-dw(j)
+            delta2sq=delta2sq**2
+            
+            
+            kbrown=2._wp*pi*(dw(i)+dw(j)) * (d1 + d2) / &
+                ((dw(i)+dw(j)) / (dw(i)+dw(j)+2._wp*sqrt(delta1sq+delta2sq)) + &
+                8._wp*(d1+d2)/(sqrt(nu_air1**2+nu_air2**2)*(dw(i)+dw(j))) ) 
+            !------------------------------------------------
+            
+            ! Brownian Diffusion Enhancement kernel +++++++++
+            ! Equation 15.35, Jacobson, page 510 
+            sc1=va/d1
+            if ((nre(j).le.1._wp).and.(dw(j).ge.dw(i))) then
+                kde=kbrown*0.45_wp*nre(j)**(1._wp/3._wp)*sc1**(1._wp/3._wp)
+            elseif ((nre(j).gt.1._wp).and.(dw(j).ge.dw(i))) then
+                kde=kbrown*0.45_wp*nre(j)**(0.5_wp)*sc1**(1._wp/3._wp)
+            endif
+            !------------------------------------------------
+            
+            ecoll(i,j)=ecoll(i,j) +kbrown+kde+kti+kts
         enddo
     enddo
     
@@ -1637,7 +1841,7 @@
     real(wp) :: remove1,remove2,massn,massaddto,nnew,gk,beta1,cw,fk05, &
                 frac1, frac2, fracl, fracadj1, fracadj2, totloss
     real(wp), dimension(n_moments) :: momtemp
-    integer(i4b) :: i,j,k,l,il,ih,jl,jh, modeinto
+    integer(i4b) :: i,j,k,l,il,ih,jl,jh, modeinto, phase
     
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Find the min and max bins to do computations on                                    !
@@ -1660,6 +1864,7 @@
     do i=il,ih
         if (npart(i).lt.qsmall) cycle
         do j=i+1,ih
+            
             ! numbers removed from each bin:
             remove1=min(npart(i)*ecoll(j,i)*npart(j),npart(i))
             remove2=min(npart(i)*ecoll(j,i)*npart(j),npart(j))
@@ -1676,9 +1881,10 @@
             !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
             ! now, which bin does the new particle go into?
             !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            phase=(j-1)/parcel1%n_bin_modew
             modeinto=indexc(j,i)
-            jl=(modeinto-1)*n_binst+1
-            jh=(modeinto)*n_binst
+            jl=(modeinto-1)*n_binst+1+phase*parcel1%n_bin_modew
+            jh=(modeinto)*n_binst+phase*parcel1%n_bin_modew
             do k=jl,jh
                 if (xn(k).gt.massn) exit
             enddo
@@ -1789,7 +1995,8 @@
         
         
         ! one time-step of model
-        call sce_microphysics(parcel1%n_binst,parcel1%n_bin_mode,parcel1%n_comps,&
+        call sce_microphysics(parcel1%n_binst,parcel1%n_bin_mode,parcel1%n_comps+&
+                            parcel1%imoms,&
                             parcel1%npart,parcel1%moments,parcel1%momenttype, &
                             parcel1%ecoll,parcel1%indexc, &
                             parcel1%mbin(:,n_comps+1))
@@ -2017,24 +2224,33 @@
                        "units", "kg kg-1") )
                    
                    
-            ! define variable: number of ice crystals
-            call check( nf90_def_var(io1%ncid, "nice", NF90_DOUBLE, &
-                        (/io1%x_dimid/), io1%varid) )
-            ! get id to a_dimid
-            call check( nf90_inq_varid(io1%ncid, "nice", io1%a_dimid) )
-            ! units
-            call check( nf90_put_att(io1%ncid, io1%a_dimid, &
-                       "units", "m-3") )  
-                        
             ! define variable: mice
             call check( nf90_def_var(io1%ncid, "mice", NF90_DOUBLE, &
-                        (/io1%bin_dimid,io1%mode_dimid, io1%x_dimid/), io1%varid) )
+                        (/io1%bin2_dimid,io1%mode_dimid, io1%x_dimid/), io1%varid) )
             ! get id to a_dimid
             call check( nf90_inq_varid(io1%ncid, "mice", io1%a_dimid) )
             ! units
             call check( nf90_put_att(io1%ncid, io1%a_dimid, &
                        "units", "kg") )
                    
+            ! define variable: number of ice crystals
+            call check( nf90_def_var(io1%ncid, "nice", NF90_DOUBLE, &
+                        (/io1%bin2_dimid,io1%mode_dimid, io1%x_dimid/), io1%varid) )
+            ! get id to a_dimid
+            call check( nf90_inq_varid(io1%ncid, "nice", io1%a_dimid) )
+            ! units
+            call check( nf90_put_att(io1%ncid, io1%a_dimid, &
+                       "units", "#/kg") )
+                        
+            ! define variable: maeri
+            call check( nf90_def_var(io1%ncid, "maeri", NF90_DOUBLE, &
+                        (/io1%bin2_dimid,io1%mode_dimid,io1%comp_dimid, io1%x_dimid/), &
+                            io1%varid) )
+            ! get id to a_dimid
+            call check( nf90_inq_varid(io1%ncid, "maeri", io1%a_dimid) )
+            ! units
+            call check( nf90_put_att(io1%ncid, io1%a_dimid, &
+                       "units", "kg") )
                    
         endif
         
@@ -2122,41 +2338,50 @@
 
     call check( nf90_inq_varid(io1%ncid, "mwat", io1%varid ) )
     call check( nf90_put_var(io1%ncid, io1%varid, &
-        reshape(parcel1%mbin(1:parcel1%n_bin_mode,parcel1%n_comps+1), &
+        reshape(parcel1%mbin(1:parcel1%n_bin_modew,parcel1%n_comps+1), &
         (/parcel1%n_binst,n_mode/)), start = (/1,1,io1%icur/)))
 
     call check( nf90_inq_varid(io1%ncid, "nwat", io1%varid ) )
     call check( nf90_put_var(io1%ncid, io1%varid, &
-        reshape(parcel1%npart(1:parcel1%n_bin_mode), &
+        reshape(parcel1%npart(1:parcel1%n_bin_modew), &
         (/parcel1%n_binst,n_mode/)), start = (/1,1,io1%icur/)))
 
     call check( nf90_inq_varid(io1%ncid, "maer", io1%varid ) )
     call check( nf90_put_var(io1%ncid, io1%varid, &
-        reshape(parcel1%mbin(1:parcel1%n_bin_mode,1:parcel1%n_comps), &
+        reshape(parcel1%mbin(1:parcel1%n_bin_modew,1:parcel1%n_comps), &
         (/parcel1%n_binst,n_mode,n_comps/)), start = (/1,1,1,io1%icur/)))
 
-! 
-!     if(ice_flag .eq. 1) then
-!         ! write variable: qi
+
+    if(ice_flag .eq. 1) then
+        ! write variable: qi
 !         call check( nf90_inq_varid(io1%ncid, "qi", io1%varid ) )
 !         call check( nf90_put_var(io1%ncid, io1%varid, &
 !             sum(parcel1%yice(1:parcel1%n_bin_mode)* &
 !                 parcel1%npartice(1:parcel1%n_bin_mode)), &
 !                     start = (/io1%icur/)))
-! 
-!         ! write variable: number concentration of ice crystals
-!         parcel1%nice=parcel1%npartice
-!         call check( nf90_inq_varid(io1%ncid, "nice", io1%varid ) )
-!         call check( nf90_put_var(io1%ncid, io1%varid, &
-!             sum(parcel1%nice), start = (/io1%icur/)))
-!     
-!         call check( nf90_inq_varid(io1%ncid, "mice", io1%varid ) )
-!         call check( nf90_put_var(io1%ncid, io1%varid, &
-!             reshape(parcel1%yice(1:parcel1%n_bin_mode),(/n_bins,n_mode/)), &
-!              start = (/1,1,io1%icur/)))
-! 
-!     endif
-!     
+
+
+        call check( nf90_inq_varid(io1%ncid, "mice", io1%varid ) )
+        call check( nf90_put_var(io1%ncid, io1%varid, &
+            reshape(parcel1%mbin(parcel1%n_bin_modew+1:parcel1%n_bin_mode,&
+                parcel1%n_comps+1), &
+            (/parcel1%n_binst,n_mode/)), start = (/1,1,io1%icur/)))
+
+        ! write variable: number concentration of ice crystals
+        call check( nf90_inq_varid(io1%ncid, "nice", io1%varid ) )
+        call check( nf90_put_var(io1%ncid, io1%varid, &
+            reshape(parcel1%npart(parcel1%n_bin_modew+1:parcel1%n_bin_mode), &
+            (/parcel1%n_binst,n_mode/)), start = (/1,1,io1%icur/)))
+    
+        call check( nf90_inq_varid(io1%ncid, "maeri", io1%varid ) )
+        call check( nf90_put_var(io1%ncid, io1%varid, &
+            reshape(parcel1%mbin(parcel1%n_bin_modew+1:parcel1%n_bin_mode,&
+                1:parcel1%n_comps), &
+            (/parcel1%n_binst,n_mode,n_comps/)), start = (/1,1,1,io1%icur/)))
+
+
+    endif
+    
 
     call check( nf90_close(io1%ncid) )
 
