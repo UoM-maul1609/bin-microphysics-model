@@ -648,11 +648,10 @@
             parcel1%moments(i,parcel1%n_comps+5)=parcel1%npart(i)* &
                 parcel1%mbin(i,parcel1%n_comps+1)
         enddo        
-        parcel1%momenttype(parcel1%n_comps+1:parcel1%n_comps+parcel1%imoms)=[2,2,1,1,1]
+        parcel1%momenttype(parcel1%n_comps+1:parcel1%n_comps+parcel1%imoms)=[1,1,1,1,1]
     endif
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-    
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! calculate the diameters                                                      !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -1825,7 +1824,7 @@
 	!>@brief
 	!>calculates one time-step of sce-microphysics
     subroutine sce_microphysics(n_binst,n_bin_mode,n_moments,npart,moments,momtype, &
-                                ecoll,indexc,xn)
+                                ecoll,indexc,xn,dt)
     use numerics_type
     use numerics, only : zeroin, dvode
     implicit none
@@ -1835,6 +1834,7 @@
     real(wp), dimension(n_bin_mode), intent(inout) :: npart,xn
     real(wp), dimension(n_bin_mode,n_moments), intent(inout) :: moments
     integer(i4b), dimension(n_moments), intent(in) :: momtype
+    real(wp), intent(in) :: dt
     
     real(wp) :: remove1,remove2,massn,massaddto,nnew,gk,beta1,cw,fk05, &
                 frac1, frac2, fracl, fracadj1, fracadj2, totloss
@@ -1864,8 +1864,8 @@
         do j=i+1,ih
             
             ! numbers removed from each bin:
-            remove1=min(npart(i)*ecoll(j,i)*npart(j),npart(i))
-            remove2=min(npart(i)*ecoll(j,i)*npart(j),npart(j))
+            remove1=min(npart(i)*ecoll(j,i)*npart(j)*dt,npart(i))
+            remove2=min(npart(i)*ecoll(j,i)*npart(j)*dt,npart(j))
             
             ! interaction creates a drops of this mass:
             massn = xn(i) + xn(j)
@@ -1881,8 +1881,8 @@
             !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
             phase=(j-1)/parcel1%n_bin_modew
             modeinto=indexc(j,i)
-            jl=(modeinto-1)*n_binst+1+phase*parcel1%n_bin_modew
-            jh=(modeinto)*n_binst+phase*parcel1%n_bin_modew
+            jl=(modeinto-1)*n_binst+1+  phase*parcel1%n_bin_modew
+            jh=(modeinto)*n_binst+      phase*parcel1%n_bin_modew
             do k=jl,jh
                 if (xn(k).gt.massn) exit
             enddo
@@ -1944,10 +1944,10 @@
             fracl=(massaddto-fk05)/massaddto
             ! add the 'loss' moments to the new bin
             do k=1,n_moments
-                if (momtemp(k).eq.2) then
+                if (momtype(k).eq.2) then
                     moments(l,k)=moments(l,k)+momtemp(k)*fracadj1
                     moments(l+1,k)=moments(l+1,k)+momtemp(k)*fracadj2
-                elseif(momtemp(k).eq.1) then
+                elseif(momtype(k).eq.1) then
                     moments(l,k)=moments(l,k)+momtemp(k)*fracl
                     moments(l+1,k)=moments(l+1,k)+momtemp(k)*(1._wp-fracl)
                 endif
@@ -1984,6 +1984,7 @@
     use numerics_type
     implicit none
     integer(i4b) :: i, nt,j
+    real(wp), dimension(parcel1%n_bin_mode) :: tmp
     
     
     nt=ceiling(runtime / real(dt,kind=wp))
@@ -1997,7 +1998,7 @@
                             parcel1%imoms,&
                             parcel1%npart,parcel1%moments,parcel1%momenttype, &
                             parcel1%ecoll,parcel1%indexc, &
-                            parcel1%mbin(:,n_comps+1))
+                            parcel1%mbin(:,n_comps+1),parcel1%dt)
         
         
         ! redefine the mass of each component of aerosol
@@ -2005,8 +2006,15 @@
             where (parcel1%npart(:).gt.qsmall)
                 parcel1%mbin(:,j)=parcel1%moments(:,j)/parcel1%npart(:)
             end where
-        enddo    
-             
+        enddo 
+        
+!         tmp=0._wp
+!         where (parcel1%moments(:,7).gt.qsmall)  
+!             tmp=(parcel1%mbin(:,n_comps+1)*parcel1%npart(:)-parcel1%moments(:,9))/ &
+!             (parcel1%moments(:,7))
+!         end where
+!         print *, (tmp)
+         
         ! break-out if flag has been set 
         if(parcel1%break_flag) exit
     enddo
