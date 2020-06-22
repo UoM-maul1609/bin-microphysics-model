@@ -24,7 +24,7 @@
 
         type parcel
             ! variables for bin model
-            integer(i4b) :: n_bins1,n_modes,n_comps, n_bin_mode, n_bin_mode1, &
+            integer(i4b) :: n_bins1,n_modes,n_comps, n_bin_mode, n_bin_modew, n_bin_mode1, &
                             n_sound, ice_flag
             real(wp) :: dt
             real(wp), dimension(:,:), allocatable :: q_sound
@@ -53,7 +53,15 @@
                             rh_eqice, rhoatice, dwice, da_dtice, nice, &
                             phi, rhoi, nump, rime
             real(wp), dimension(:,:), allocatable :: mbinice, rhobinice, &
-                                        nubinice,molwbinice,kappabinice ! all bins x all comps                                
+                                        nubinice,molwbinice,kappabinice ! all bins x all comps  
+                                        
+                                        
+            ! general
+            integer(i4b) :: imoms
+            real(wp), allocatable, dimension(:,:) :: moments
+            real(wp), allocatable, dimension(:) :: momtemp
+            integer(i4b), allocatable, dimension(:) :: momenttype
+                                          
             ! variables for ODE:                    
             integer(i4b) :: neqice, itolice, ipri, itei, izi, iwi, irhi, &
                             itaskice, istateice, ioptice, mfice, lrwice, liwice
@@ -125,6 +133,19 @@
         real(wp) :: theta_surf,theta_init, &
             theta_q_sat,t1old, p111, w_cb, n_dummy, d_dummy, x2old=1.0_wp
         logical :: set_theta_q_cb_flag=.true.
+
+        ! Chen and Lamb (1994) Gamma variable fit (scaled and centred logarithm)
+        integer(i4b), parameter :: n_cl=18
+        real(wp), dimension(n_cl), parameter :: gam_cl=[-0.072328469664620_wp, &
+            -0.324623262465577_wp, 0.363138099937540_wp, 3.323089908344732_wp, &
+            0.874844989423720_wp, &
+            -13.554426432462339_wp, -9.810322482346461_wp, 27.846739088352344_wp, &
+            26.480447842355410_wp,&
+             -29.890199206698309_wp, -32.327548996894521_wp, 15.827423311652167_wp, &
+             18.466605783503052_wp, -4.158566361058538_wp, -5.039533848938808_wp, &
+             1.477272813054374_wp, 1.038600921563425_wp, -0.457007828432810_wp]
+        real(sp), dimension(2), parameter :: gam_mu_cl=[260.163817050062335_wp, &
+                                                    8.274747821396463_wp]
 
 
         character (len=200) :: outputfile='output'
@@ -318,7 +339,7 @@
     parcel1%n_bins1=n_bins    
     parcel1%n_modes=n_mode
     parcel1%n_comps=n_comps
-    parcel1%n_bin_mode=n_bins*n_mode
+    parcel1%n_bin_modew=n_bins*n_mode
     parcel1%n_bin_mode1=(n_bins+1)*n_mode
     parcel1%z=zinit
     parcel1%p=pinit
@@ -326,35 +347,51 @@
     parcel1%w=winit
     parcel1%rh=rhinit
     parcel1%dt=dt
+
+    parcel1%ice_flag=ice_flag
+    parcel1%n_bin_mode=&
+        parcel1%n_bins1*n_mode*(1+parcel1%ice_flag)     ! for all the liquid and ice    
+    parcel1%imoms=ice_flag*5                            ! phi, nmon, vol, rim, unf
+    
     allocate( parcel1%d(1:parcel1%n_bin_mode1), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
-    allocate( parcel1%maer(1:parcel1%n_bin_mode), STAT = AllocateStatus)
+    allocate( parcel1%maer(1:parcel1%n_bin_modew), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
-    allocate( parcel1%npart(1:parcel1%n_bin_mode), STAT = AllocateStatus)
+    allocate( parcel1%npart(1:parcel1%n_bin_modew), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
-    allocate( parcel1%mbin(1:parcel1%n_bin_mode,1:n_comps+1), STAT = AllocateStatus)
+    allocate( parcel1%mbin(1:parcel1%n_bin_modew,1:n_comps+1), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
     allocate( parcel1%rho_core(1:parcel1%n_modes), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+    
+    allocate( parcel1%momtemp(1:parcel1%n_bin_mode), &
+        STAT = AllocateStatus)
+    if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+    allocate( parcel1%moments(1:parcel1%n_bin_mode,1:n_comps+parcel1%imoms), &
+        STAT = AllocateStatus)
+    if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+    allocate( parcel1%momenttype(1:n_comps+parcel1%imoms), STAT = AllocateStatus)
+    if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+    
 
-    allocate( parcel1%rhobin(1:parcel1%n_bin_mode,1:n_comps), STAT = AllocateStatus)
+    allocate( parcel1%rhobin(1:parcel1%n_bin_modew,1:n_comps), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
-    allocate( parcel1%nubin(1:parcel1%n_bin_mode,1:n_comps), STAT = AllocateStatus)
+    allocate( parcel1%nubin(1:parcel1%n_bin_modew,1:n_comps), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
-    allocate( parcel1%molwbin(1:parcel1%n_bin_mode,1:n_comps), STAT = AllocateStatus)
+    allocate( parcel1%molwbin(1:parcel1%n_bin_modew,1:n_comps), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
-    allocate( parcel1%kappabin(1:parcel1%n_bin_mode,1:n_comps), STAT = AllocateStatus)
+    allocate( parcel1%kappabin(1:parcel1%n_bin_modew,1:n_comps), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
 
-    allocate( parcel1%rh_eq(1:parcel1%n_bin_mode), STAT = AllocateStatus)
+    allocate( parcel1%rh_eq(1:parcel1%n_bin_modew), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
-    allocate( parcel1%rhoat(1:parcel1%n_bin_mode), STAT = AllocateStatus)
+    allocate( parcel1%rhoat(1:parcel1%n_bin_modew), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
-    allocate( parcel1%dw(1:parcel1%n_bin_mode), STAT = AllocateStatus)
+    allocate( parcel1%dw(1:parcel1%n_bin_modew), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
-    allocate( parcel1%da_dt(1:parcel1%n_bin_mode), STAT = AllocateStatus)
+    allocate( parcel1%da_dt(1:parcel1%n_bin_modew), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
-    allocate( parcel1%ndrop(1:parcel1%n_bin_mode), STAT = AllocateStatus)
+    allocate( parcel1%ndrop(1:parcel1%n_bin_modew), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
 
     allocate( parcel1%q_sound(1:parcel1%n_sound,1:nq), STAT = AllocateStatus)
@@ -445,6 +482,14 @@
         enddo
     enddo
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+
+
+
+
+
+
 
     
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -566,7 +611,7 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     select case(kappa_flag)
         case(0)
-            do i=1,parcel1%n_bin_mode
+            do i=1,parcel1%n_bin_modew
                 n_sel=i
                 rh_act=0._wp !min(parcel1%rh,0.999_wp)
                 mult=-1._wp
@@ -579,11 +624,11 @@
             enddo
 !             call koehler01(parcel1%t,parcel1%mbin(:,n_comps+1),&
 !                 parcel1%mbin,parcel1%rhobin,&
-!                 parcel1%nubin,parcel1%molwbin,parcel1%n_bin_mode,&
+!                 parcel1%nubin,parcel1%molwbin,parcel1%n_bin_modew,&
 !                 parcel1%rh_eq,parcel1%rhoat,parcel1%dw) 
 !             print *,parcel1%rh_eq
         case(1)
-            do i=1,parcel1%n_bin_mode
+            do i=1,parcel1%n_bin_modew
                 n_sel=i
                 rh_act=0._wp !min(parcel1%rh,0.999_wp)
                 mult=-1._wp
@@ -596,7 +641,7 @@
             enddo
 !             call kkoehler01(parcel1%t,parcel1%mbin(:,n_comps+1),&
 !                 parcel1%mbin,parcel1%rhobin,&
-!                 parcel1%kappabin,parcel1%molwbin,parcel1%n_bin_mode,&
+!                 parcel1%kappabin,parcel1%molwbin,parcel1%n_bin_modew,&
 !                 parcel1%rh_eq,parcel1%rhoat,parcel1%dw) 
 !             print *,parcel1%rh_eq
         case default
@@ -612,7 +657,7 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! set-up ODE variables                                                         !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    parcel1%neq=parcel1%n_bin_mode+5 ! p,t,rh,z,w
+    parcel1%neq=parcel1%n_bin_modew+5 ! p,t,rh,z,w
     parcel1%tt=0._wp
     parcel1%tout=parcel1%tt+parcel1%dt
     parcel1%itol=2
@@ -624,13 +669,13 @@
     allocate( parcel1%atol(parcel1%neq), stat = allocatestatus)
     if (allocatestatus /= 0) stop "*** not enough memory ***"
     
-    parcel1%atol(1:parcel1%n_bin_mode)=1.e-25_wp
+    parcel1%atol(1:parcel1%n_bin_modew)=1.e-25_wp
     
-    parcel1%ipr=parcel1%n_bin_mode+1 ! pressure
-    parcel1%ite=parcel1%n_bin_mode+2 ! temperarture
-    parcel1%irh=parcel1%n_bin_mode+3 ! rh
-    parcel1%iz =parcel1%n_bin_mode+4 ! altitude
-    parcel1%iw =parcel1%n_bin_mode+5 ! vertical wind
+    parcel1%ipr=parcel1%n_bin_modew+1 ! pressure
+    parcel1%ite=parcel1%n_bin_modew+2 ! temperarture
+    parcel1%irh=parcel1%n_bin_modew+3 ! rh
+    parcel1%iz =parcel1%n_bin_modew+4 ! altitude
+    parcel1%iw =parcel1%n_bin_modew+5 ! vertical wind
     
     parcel1%atol(parcel1%ipr)=10._wp
     parcel1%atol(parcel1%ite)=1.e-4_wp
@@ -664,7 +709,7 @@
     parcel1%rwork(14) = 2._wp ! tolerance scale factor
     
     ! put water in solution vector and set p, t, rh, z, w
-    parcel1%y(1:parcel1%n_bin_mode)=parcel1%mbin(:,n_comps+1)
+    parcel1%y(1:parcel1%n_bin_modew)=parcel1%mbin(:,n_comps+1)
     parcel1%y(parcel1%ipr)=parcel1%p
     parcel1%y(parcel1%ite)=parcel1%t
     parcel1%y(parcel1%irh)=parcel1%rh
@@ -681,42 +726,42 @@
         ! allocation:
         allocate( parcel1%dice(1:parcel1%n_bin_mode1), STAT = AllocateStatus)
         if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
-        allocate( parcel1%maerice(1:parcel1%n_bin_mode), STAT = AllocateStatus)
+        allocate( parcel1%maerice(1:parcel1%n_bin_modew), STAT = AllocateStatus)
         if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
-        allocate( parcel1%npartice(1:parcel1%n_bin_mode), STAT = AllocateStatus)
+        allocate( parcel1%npartice(1:parcel1%n_bin_modew), STAT = AllocateStatus)
         if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
-        allocate( parcel1%mbinice(1:parcel1%n_bin_mode,1:n_comps+1), STAT = AllocateStatus)
+        allocate( parcel1%mbinice(1:parcel1%n_bin_modew,1:n_comps+1), STAT = AllocateStatus)
         if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
         allocate( parcel1%rho_coreice(1:parcel1%n_modes), STAT = AllocateStatus)
         if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
 
-        allocate( parcel1%rhobinice(1:parcel1%n_bin_mode,1:n_comps), STAT = AllocateStatus)
+        allocate( parcel1%rhobinice(1:parcel1%n_bin_modew,1:n_comps), STAT = AllocateStatus)
         if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
-        allocate( parcel1%nubinice(1:parcel1%n_bin_mode,1:n_comps), STAT = AllocateStatus)
+        allocate( parcel1%nubinice(1:parcel1%n_bin_modew,1:n_comps), STAT = AllocateStatus)
         if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
-        allocate( parcel1%molwbinice(1:parcel1%n_bin_mode,1:n_comps), STAT = AllocateStatus)
+        allocate( parcel1%molwbinice(1:parcel1%n_bin_modew,1:n_comps), STAT = AllocateStatus)
         if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
-        allocate( parcel1%kappabinice(1:parcel1%n_bin_mode,1:n_comps), STAT = AllocateStatus)
+        allocate( parcel1%kappabinice(1:parcel1%n_bin_modew,1:n_comps), STAT = AllocateStatus)
         if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
 
-        allocate( parcel1%rh_eqice(1:parcel1%n_bin_mode), STAT = AllocateStatus)
+        allocate( parcel1%rh_eqice(1:parcel1%n_bin_modew), STAT = AllocateStatus)
         if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
-        allocate( parcel1%rhoatice(1:parcel1%n_bin_mode), STAT = AllocateStatus)
+        allocate( parcel1%rhoatice(1:parcel1%n_bin_modew), STAT = AllocateStatus)
         if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
-        allocate( parcel1%dwice(1:parcel1%n_bin_mode), STAT = AllocateStatus)
+        allocate( parcel1%dwice(1:parcel1%n_bin_modew), STAT = AllocateStatus)
         if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
-        allocate( parcel1%da_dtice(1:parcel1%n_bin_mode), STAT = AllocateStatus)
+        allocate( parcel1%da_dtice(1:parcel1%n_bin_modew), STAT = AllocateStatus)
         if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
-        allocate( parcel1%nice(1:parcel1%n_bin_mode), STAT = AllocateStatus)
+        allocate( parcel1%nice(1:parcel1%n_bin_modew), STAT = AllocateStatus)
         if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
         
-        allocate( parcel1%phi(1:parcel1%n_bin_mode), STAT = AllocateStatus)
+        allocate( parcel1%phi(1:parcel1%n_bin_modew), STAT = AllocateStatus)
         if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
-        allocate( parcel1%rhoi(1:parcel1%n_bin_mode), STAT = AllocateStatus)
+        allocate( parcel1%rhoi(1:parcel1%n_bin_modew), STAT = AllocateStatus)
         if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
-        allocate( parcel1%nump(1:parcel1%n_bin_mode), STAT = AllocateStatus)
+        allocate( parcel1%nump(1:parcel1%n_bin_modew), STAT = AllocateStatus)
         if (AllocateStatus /= 0) STOP "*** Not enough memory ***"     
-        allocate( parcel1%rime(1:parcel1%n_bin_mode), STAT = AllocateStatus)
+        allocate( parcel1%rime(1:parcel1%n_bin_modew), STAT = AllocateStatus)
         if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
         
         parcel1%phi=1._wp
@@ -739,7 +784,7 @@
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         ! set-up ODE variables                                                         !
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        parcel1%neqice=parcel1%n_bin_mode+4 ! p,t,rh,w
+        parcel1%neqice=parcel1%n_bin_modew+4 ! p,t,rh,w
         parcel1%ttice=0._wp
         parcel1%toutice=parcel1%tout
         parcel1%itolice=2
@@ -751,12 +796,12 @@
         allocate( parcel1%atolice(parcel1%neqice), stat = allocatestatus)
         if (allocatestatus /= 0) stop "*** not enough memory ***"
     
-        parcel1%atolice(1:parcel1%n_bin_mode)=1.e-25_wp
+        parcel1%atolice(1:parcel1%n_bin_modew)=1.e-25_wp
     
-        parcel1%ipri=parcel1%n_bin_mode+1 ! pressure
-        parcel1%itei=parcel1%n_bin_mode+2 ! temperature
-        parcel1%irhi=parcel1%n_bin_mode+3 ! rh
-        parcel1%iwi =parcel1%n_bin_mode+4 ! vertical wind
+        parcel1%ipri=parcel1%n_bin_modew+1 ! pressure
+        parcel1%itei=parcel1%n_bin_modew+2 ! temperature
+        parcel1%irhi=parcel1%n_bin_modew+3 ! rh
+        parcel1%iwi =parcel1%n_bin_modew+4 ! vertical wind
     
         parcel1%atolice(parcel1%ipri)=10._wp
         parcel1%atolice(parcel1%itei)=1.e-4_wp
@@ -788,13 +833,66 @@
         parcel1%rworkice(14) = 2._wp ! tolerance scale factor
     
         ! put water in solution vector and set p, t, rh, z, w
-        parcel1%yice(1:parcel1%n_bin_mode)=parcel1%mbinice(:,n_comps+1)
+        parcel1%yice(1:parcel1%n_bin_modew)=parcel1%mbinice(:,n_comps+1)
         parcel1%yice(parcel1%ipri)=parcel1%p
         parcel1%yice(parcel1%itei)=parcel1%t
         parcel1%yice(parcel1%irhi)=parcel1%rh
         parcel1%yice(parcel1%iwi) =parcel1%w
     endif
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! Initialise conserved moments                                                 !
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    parcel1%moments=0._wp
+    do j=1,parcel1%n_comps
+        ! above the aerosol
+        do i=1,parcel1%n_bin_modew
+            ! aerosol moments
+            parcel1%moments(i,j)=parcel1%npart(i)*parcel1%mbin(i,j)
+        enddo
+    enddo
+    parcel1%momenttype(1:parcel1%n_comps)=1 ! 1 is mass, 2 is number
+
+    ! ** ice **
+    ! same for the ice
+    ! additional moments - 2 general ones and 3 just for ice maybe just do 5
+    if (parcel1%ice_flag.eq.1) then
+    
+        do j=1,parcel1%n_comps
+            ! above the aerosol
+            do i=1,parcel1%n_bin_modew
+                ! aerosol moments
+                parcel1%moments(i+parcel1%n_bin_modew,j)= &
+                    parcel1%npartice(i)*parcel1%mbinice(i,j)
+            enddo
+        enddo
+    
+        ! extra ice moments
+        do i=1,parcel1%n_bin_modew
+            ! ice moments: phi, nmon, vol, rim, unf
+            ! phi: 1*n
+            parcel1%moments(i+parcel1%n_bin_modew,parcel1%n_comps+1)=parcel1%npartice(i)
+            ! nmon: 1*n
+            parcel1%moments(i+parcel1%n_bin_modew,parcel1%n_comps+2)=parcel1%npartice(i)
+            ! vol: mass/rho
+            parcel1%moments(i+parcel1%n_bin_modew,parcel1%n_comps+3)=parcel1%npartice(i)* &
+                parcel1%mbinice(i,parcel1%n_comps+1)/rhoice
+        enddo  
+        
+              
+        do i=1,parcel1%n_bin_modew
+            ! ice moments: phi, nmon, vol, rim, unf
+            ! rim: mass
+            parcel1%moments(i,parcel1%n_comps+4)=parcel1%npart(i)* &
+                parcel1%mbin(i,parcel1%n_comps+1)
+            ! unf: mass
+            parcel1%moments(i,parcel1%n_comps+5)=parcel1%npart(i)* &
+                parcel1%mbin(i,parcel1%n_comps+1)
+        enddo        
+        parcel1%momenttype(parcel1%n_comps+1:parcel1%n_comps+parcel1%imoms)=[1,1,1,1,1]
+    endif
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
     end subroutine initialise_bmm_arrays
@@ -1994,7 +2092,7 @@
 
         integer(i4b) :: i, j,iloc, ipart, ipr, ite, irh, iz,iw
 
-        ipart=parcel1%n_bin_mode
+        ipart=parcel1%n_bin_modew
         ipr=parcel1%ipr
         ite=parcel1%ite
         irh=parcel1%irh
@@ -2171,7 +2269,7 @@
 
         integer(i4b) :: i, j,iloc, ipartice, ipr, ite, irh, iz,iw
 
-        ipartice=parcel1%n_bin_mode
+        ipartice=parcel1%n_bin_modew
         ipr=parcel1%ipri
         ite=parcel1%itei
         irh=parcel1%irhi
@@ -2264,27 +2362,58 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
     
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! INP source function                                                          !
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>calculates the number concentration of INPs using the DeMott et al. (2010)
+	!> parameterisation (Predicting global atmospheric ice...
+	!>                    https://doi.org/10.1073/pnas.0910818107)
+	!>@param[in] t, naer05: temperature, number concentration of aerosols > 0.5 um
+	!>@return demott_2010: number concentration of INPs
+	function demott_2010(t,naer05)
+		implicit none
+		real(wp), intent(in) :: t,naer05
+		real(wp) :: demott_2010
+		real(wp) :: tc
+		tc=ttr-t
+		! equation 1 from
+		! https://www.pnas.org/content/107/25/11217
+		! number per std m^3
+		demott_2010=min(0.0594_wp*(tc)**3.33_wp * &
+		    (naer05/1.e6_wp)**(0.0264_wp*tc+0.0033_wp),naer05)
+		
+	end function demott_2010
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
     
     
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! ice nucleation                                                               !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     subroutine icenucleation(npart, npartice, mwat,mbin2,mbin2_ice, &
-                         rhobin,nubin,kappabin,molwbin,t,p,sz,sz2,yice,rh,dt) 
+                         rhobin,nubin,kappabin,molwbin, &
+                         moments,t,p,sz,sz2,sz3,yice,rh,dt) 
       use numerics_type
       implicit none
       real(wp), intent(inout) :: t
       real(wp), intent(in) :: p,rh,dt
       real(wp), dimension(sz2), intent(inout) :: npart,npartice
-      real(wp), dimension(:), intent(in) :: mwat
-      real(wp), dimension(:,:), intent(in) :: mbin2, &
+      real(wp), dimension(sz2), intent(in) :: mwat
+      real(wp), dimension(sz2,sz), intent(in) :: mbin2, &
                                               rhobin,nubin,kappabin,molwbin
-      integer(i4b), intent(in) :: sz,sz2
+      real(wp), dimension(2*sz2,sz3), intent(inout) :: moments
+      integer(i4b), intent(in) :: sz,sz2, sz3
       real(wp), dimension(sz2) :: nw,aw,jw,dn01,m01,ns,dw,dd,kappa,rhoat
       real(wp), dimension(sz2,sz) :: dmaer01
       real(wp), dimension(sz2,sz), intent(inout) :: mbin2_ice
       
       real(wp), intent(inout), dimension(sz2) :: yice
+      
+      integer(i4b) :: i
+      real(wp) :: fracinliq, fracinice, naer05, nprimary
       
       !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
       ! first calculate the ice formation over dt using koop et al. 2000       !
@@ -2315,10 +2444,43 @@
       ! koop et al. (2000) nucleation rate - due to homogeneous nucleation.
       jw(:)=koopnucrate(aw,t,p,sz2)
       !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      dn01=0._wp
       
-      ! the number of ice crystals nucleated:
-      dn01(:)=abs( npart(:)*(1._wp-exp(-jw(:)*mwat(:)/rhow*dt)) )
+      ! the number of ice crystals nucleated by homogeneous nucleation:
+      dn01(:)=dn01(:)+abs( npart(:)*(1._wp-exp(-jw(:)*mwat(:)/rhow*dt)) )
 
+
+      
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      ! calculate the dry size of the aerosol particle                         !
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      dd(:)=((sum(mbin2(:,:)/rhobin(:,:),2))* &
+             6._wp/(pi))**(1._wp/3._wp) ! dry diameter
+      naer05=0._wp
+      do i=1,sz2
+        if ((dd(i).gt.0.5e-6_wp).and.(rh.ge.1._wp)) naer05=naer05+npart(i)-dn01(i)
+      enddo  
+      ! calculate the number of ice crystals
+      nprimary=demott_2010(t,naer05)
+      ! ensure the number nucleated is less than the number that can nucleate
+      nprimary=min(naer05,nprimary) 
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      ! deplete the aerosols larger than 0.5 microns
+      ! maybe in future will want to deplete the largest first
+      do i=1,sz2
+        if (nprimary.le.0._wp) exit
+        if ((dd(i).gt.0.5e-6_wp).and.(rh.ge.1._wp)) then
+            ! it can nucleate
+            ! reduce number of primary ice
+            dn01(i)=dn01(i)+min(nprimary,npart(i)-dn01(i))
+            nprimary=nprimary-min(npart(i)-dn01(i),nprimary)
+        endif
+      enddo
+      
+      
+      
+      dn01(:)=min(dn01(:),npart(:))
+      
       if(t.gt.ttr) then
           dn01=0._wp
       endif
@@ -2336,6 +2498,28 @@
       ! new ice mass in bin:
       m01=m01/(npartice) 
       
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      ! transfer moments to ice                                                !
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      do i=1,sz2
+          ! aerosol
+          fracinliq=npart(i)/max(npart(i)+dn01(i),1.e-30_wp)
+          fracinice=npartice(i)/max(npartice(i)-dn01(i),1.e-30_wp)
+          moments(i,1:sz) = moments(i,1:sz)*fracinliq
+          moments(i+sz2,1:sz) = moments(i+sz2,1:sz)*fracinice
+          ! phi, nmon, vol, rim, unf
+          ! phi is 1 times number concentration
+          moments(i+sz2,sz+1) = moments(i+sz2,sz+1)+dn01(i) 
+          ! nmon is 1 times number concentration
+          moments(i+sz2,sz+2) = moments(i+sz2,sz+2)+dn01(i) 
+          ! volume is number concentration times volume of these crystals
+          if (m01(i) .gt. 0._wp) then
+              moments(i+sz2,sz+3) = moments(i+sz2,sz+3)+dn01(i)*m01(i)/rhoice
+          else
+              moments(i+sz2,sz+3)=0._wp
+          endif
+      enddo
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
       
       where(m01.gt.0._wp.and.npartice.gt.0._wp)
         yice=m01
@@ -2352,6 +2536,118 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
 
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! calculate new volume and phi                                                       !
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief calculates ice growth model of Chen and Lamb (1994) 
+	!>@param[in] t,qv, qvsat,rhoa,dm,gamma_t,dep_density
+	!>@param[inout] v,phi
+    subroutine chen_and_lamb_prop(dm,gamma_t,v,phi, dep_density)
+        implicit none
+        real(wp), intent(in) :: dm, gamma_t,dep_density
+        real(wp), intent(inout) :: v, phi
+
+        real(wp) :: deltaV,v_old,rgamma_tp2,ln_vn_vo
+        integer(i4b) :: i
+        
+        
+        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        ! increment to volume of crystals - see equation 41
+        ! note that this will be per kg of air, rather than crystal but, since we are 
+        ! taking the ratio to determine c and a-axes, it should not matter
+        deltaV=dm/dep_density
+        v_old=v
+        v=v+deltaV
+        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        ! solving equations 43 and 43 over dV
+        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        rgamma_tp2=1._sp/(gamma_t+2._sp)
+        ln_vn_vo=log(v/v_old)
+        phi=phi*exp((gamma_t-1._sp)*rgamma_tp2*ln_vn_vo)       
+        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+       
+    end subroutine chen_and_lamb_prop
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! Chen and Lamb (1994) ancillary variables                                           !
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief calculates ancillary variables for ice growth model of Chen and Lamb (1994) 
+	!>@param[in] t,qv, qvsat,rhoa
+	!>@param[inout] v,phi,gamma_t,dep_density
+    subroutine chen_and_lamb_anc(t,qv,qvsat,rhoa,gamma_t, dep_density)
+        implicit none
+        real(wp), intent(in) :: t,qv,qvsat,rhoa
+        real(wp), intent(inout) :: gamma_t,dep_density
+
+        real(wp) :: delta_rho,t1
+        integer(i4b) :: i
+        
+        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        ! calculate the inherent growth ratio - this is from a 17th order polynomial
+        gamma_t=0._sp
+        t1=min(max(t,243.15),273.15) ! range of fit
+        do i=1,n_cl
+            gamma_t=gamma_t+((t1-gam_mu_cl(1))/gam_mu_cl(2))**(n_cl-i)*gam_cl(i)
+        enddo
+        gamma_t=10._sp**gamma_t
+        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        
+        
+        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        ! equation 42 from Chen and Lamb (1994, JAS: The Theoretical Basis for 
+        !   Parameterisation of Ice Crystal Habits)
+        delta_rho=(qv-qvsat)*rhoa*1000._sp ! g/m^3
+        dep_density=rhoice*exp(-3._sp*max(delta_rho-0.05_sp,0._sp)/gamma_t)
+        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    end subroutine chen_and_lamb_anc
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! Chen and Lamb (1994) capacitance factors                                           !
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief calculates the ratio of capacitance to that of an equivalent spehre
+	!  Chen and Lamb (1994) 
+	!>@param[in] phi
+	!>@return cap_fac
+    function chen_and_lamb_cap_fac(phi)
+        implicit none
+        real(wp), intent(in) :: phi
+        real(wp) :: chen_and_lamb_cap_fac
+        real(wp) :: fac1,fac2,ecc
+
+        
+        ! factor to convert between R and a - derived from equating volume of sphere to 
+        ! volume of spheroid and taking the ratio of a / r
+        fac1=(1._sp/(phi))**(1/3)
+        
+        ! factor to convert between a and capacitance
+        if(phi<0.99_sp) then
+            ! see equation 39 of Chen and Lamb (1994)
+            ecc=sqrt(1._sp-phi**2)
+            fac2=ecc/asin(ecc)
+        elseif(phi>1.01_sp) then
+            ! see equation 40 of Chen and Lamb (1994)
+            ecc=sqrt(1._sp-(1._sp/phi)**2)
+            fac2=1._sp/phi/log((1._sp+ecc)*phi)
+        else
+            fac2=1._sp
+        endif
+        
+        ! total factor
+        chen_and_lamb_cap_fac=fac1*fac2
+        
+    end function chen_and_lamb_cap_fac
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
     
     
@@ -2367,8 +2663,8 @@
     use numerics, only : zeroin, dvode
     implicit none
     real(wp) :: mass1, mass2, deltam, vapour_mass, liquid_mass, x1,x2 , cpm, &
-        var, dummy
-    integer(i4b) :: iloc
+        var, dummy, gamma_t, dep_density, rhoa, qv, qvsat
+    integer(i4b) :: iloc, i
     
     interface
         subroutine func1(neq, tt, y, ydot, rpar, ipar)
@@ -2398,16 +2694,18 @@
     end interface
     interface
         subroutine func3(npart, npartice, mwat,mbin2,mbin2_ice, &
-                         rhobin,nubin,kappabin,molwbin,t,p,sz,sz2,yice,rh,dt) 
+                         rhobin,nubin,kappabin,molwbin,moments, &
+                         t,p,sz,sz2,sz3,yice,rh,dt) 
             use numerics_type
             implicit none
             real(wp), intent(inout) :: t
             real(wp), intent(in) :: p,rh,dt
             real(wp), dimension(sz2), intent(inout) :: npart,npartice
-            real(wp), dimension(:), intent(in) :: mwat
-            real(wp), dimension(:,:), intent(in) :: mbin2, &
+            real(wp), dimension(sz2), intent(in) :: mwat
+            real(wp), dimension(sz2,sz), intent(in) :: mbin2, &
                                                   rhobin,nubin,kappabin,molwbin
-            integer(i4b), intent(in) :: sz,sz2
+            real(wp), dimension(2*sz2,sz3), intent(inout) :: moments
+            integer(i4b), intent(in) :: sz,sz2, sz3
             real(wp), dimension(sz2,sz), intent(inout) :: mbin2_ice
             real(wp), intent(inout), dimension(sz2) :: yice
         end subroutine func3
@@ -2419,12 +2717,12 @@
     if(adiabatic_prof) then
         parcel1%yold=parcel1%y ! store old
         ! total water before:
-        mass1=sum(parcel1%npart*parcel1%y(1:parcel1%n_bin_mode))+ &
+        mass1=sum(parcel1%npart*parcel1%y(1:parcel1%n_bin_modew))+ &
             parcel1%y(parcel1%irh)*eps1* &
             svp_liq(parcel1%y(parcel1%ite)) / &
             (parcel1%y(parcel1%ipr)-svp_liq(parcel1%y(parcel1%ite)))
         if(ice_flag .eq. 1) then
-            mass1=mass1+sum(parcel1%npartice*parcel1%yice(1:parcel1%n_bin_mode))
+            mass1=mass1+sum(parcel1%npartice*parcel1%yice(1:parcel1%n_bin_modew))
         endif
     endif    
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -2447,8 +2745,8 @@
                    parcel1%iwork,parcel1%liw,jparcelwarm, &
                    parcel1%mf,parcel1%rpar,parcel1%ipar)
         ! check there are no negative values
-!         where(parcel1%y(1:parcel1%n_bin_mode).lt.0._wp)
-!             parcel1%y(1:parcel1%n_bin_mode)=1.e-22_wp
+!         where(parcel1%y(1:parcel1%n_bin_modew).lt.0._wp)
+!             parcel1%y(1:parcel1%n_bin_modew)=1.e-22_wp
 !         end where
     enddo
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -2460,35 +2758,59 @@
         ! ice part of the parcel model
         
         
-        
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         ! Ice nucleation                                                   !
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        call func3(parcel1%npart(1:parcel1%n_bin_mode), &
-                parcel1%npartice(1:parcel1%n_bin_mode), &
-                parcel1%y(1:parcel1%n_bin_mode), &
+        call func3(parcel1%npart(1:parcel1%n_bin_modew), &
+                parcel1%npartice(1:parcel1%n_bin_modew), &
+                parcel1%y(1:parcel1%n_bin_modew), &
                 parcel1%mbin(:,1:n_comps), &
                 parcel1%mbinice(:,1:n_comps), &
                 parcel1%rhobin(:,1:n_comps), &
                 parcel1%nubin(:,1:n_comps), &
                 parcel1%kappabin(:,1:n_comps), &
                 parcel1%molwbin(:,1:n_comps), &
+                parcel1%moments(1:2*parcel1%n_bin_modew,1:parcel1%imoms), &
                 parcel1%y(parcel1%ite), &
                 parcel1%y(parcel1%ipr),&
-                n_comps,parcel1%n_bin_mode, &
-                parcel1%yice(1:parcel1%n_bin_mode), &
+                n_comps,parcel1%n_bin_modew,parcel1%imoms+n_comps, &
+                parcel1%yice(1:parcel1%n_bin_modew), &
                 parcel1%y(parcel1%irh), parcel1%dt) 
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         
         
 
-        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        ! ODE solver                                                       !
-        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        ! ODE solver for ice                                                             !
+        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         parcel1%toutice=parcel1%ttice+parcel1%dt
         parcel1%yice(parcel1%ipri)=parcel1%y(parcel1%ipr)
         parcel1%yice(parcel1%itei)=parcel1%y(parcel1%ite)
         parcel1%yice(parcel1%irhi)=parcel1%y(parcel1%irh)
+        
+        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        ! needed for ice crystal shape                                                   !
+        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        parcel1%yoldice=parcel1%yice                            ! set the old value of ice
+        rhoa = parcel1%yice(parcel1%ipri) / &
+                (ra*parcel1%y(parcel1%ite))                             ! density of air
+        qvsat = parcel1%yice(parcel1%irhi) * svp_liq(parcel1%y(parcel1%ite)) / &
+            (parcel1%yice(parcel1%ipri)-svp_liq(parcel1%y(parcel1%ite)))        ! qv_sat
+        qv = qvsat * parcel1%yice(parcel1%irhi)
+        call chen_and_lamb_anc(parcel1%yice(parcel1%itei), &
+                qv,qvsat,rhoa,gamma_t, dep_density) ! set the deposition density
+        
+        parcel1%phi=parcel1%moments(parcel1%n_bin_modew+1:parcel1%n_bin_mode,n_comps+1) &
+            / parcel1%moments(parcel1%n_bin_modew+1:parcel1%n_bin_mode,n_comps+2)
+        
+        parcel1%nump=parcel1%moments(parcel1%n_bin_modew+1:parcel1%n_bin_mode,n_comps+2) &
+            / parcel1%npartice
+
+        parcel1%rhoi=(parcel1%npartice*parcel1%yice(1:parcel1%n_bin_modew)-&
+            parcel1%moments(parcel1%n_bin_modew+1:parcel1%n_bin_mode,n_comps+4)) &
+            / parcel1%moments(parcel1%n_bin_modew+1:parcel1%n_bin_mode,n_comps+3)
+        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        
         do while (parcel1%ttice .lt. parcel1%toutice)
             parcel1%istateice=1
             call dvode(func2,parcel1%neqice,parcel1%yice,parcel1%ttice,parcel1%toutice,&
@@ -2498,14 +2820,36 @@
                            parcel1%iworkice,parcel1%liwice,jparcelwarm, &
                            parcel1%mfice,parcel1%rparice,parcel1%iparice)
             ! check there are no negative values
-            where(parcel1%yice(1:parcel1%n_bin_mode).le.0.e1_wp)
-                parcel1%yice(1:parcel1%n_bin_mode)=1.e-22_wp
+            where(parcel1%yice(1:parcel1%n_bin_modew).le.0.e1_wp)
+                parcel1%yice(1:parcel1%n_bin_modew)=1.e-22_wp
             end where
         enddo
         parcel1%y(parcel1%ipr)=parcel1%yice(parcel1%ipri)
         parcel1%y(parcel1%ite)=parcel1%yice(parcel1%itei)
         parcel1%y(parcel1%irh)=parcel1%yice(parcel1%irhi)
-        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        
+        do i=1,parcel1%n_bin_modew
+            ! new total volume
+            parcel1%momtemp(i)= &
+                parcel1%moments(parcel1%n_bin_modew+i,parcel1%n_comps+3)+&
+                (parcel1%yice(i)-parcel1%yoldice(i))/&
+                dep_density*parcel1%npartice(i)
+            ! new phi
+            if (parcel1%momtemp(i)> 0._wp) then
+                parcel1%moments(parcel1%n_bin_modew+i,parcel1%n_comps+1)= &
+                 parcel1%moments(parcel1%n_bin_modew+i,parcel1%n_comps+1)*&
+                    exp((gamma_t-1._wp)/(gamma_t+2._wp)*&
+                        log(parcel1%momtemp(i) / &
+                    parcel1%moments(parcel1%n_bin_modew+i,parcel1%n_comps+3)))
+            else
+                parcel1%moments(parcel1%n_bin_modew+i,parcel1%n_comps+1)= &
+                    parcel1%npartice(i)
+            endif
+        enddo
+        ! save new volume
+        parcel1%moments(parcel1%n_bin_modew+1:parcel1%n_bin_mode,parcel1%n_comps+3)= &
+            parcel1%momtemp(1:parcel1%n_bin_modew)
+        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     endif
 
 
@@ -2533,7 +2877,7 @@
             (parcel1%y(parcel1%ipr)-svp_liq(parcel1%y(parcel1%ite)))
 
         ! liquid mass:
-        liquid_mass=sum(parcel1%npart*parcel1%y(1:parcel1%n_bin_mode))
+        liquid_mass=sum(parcel1%npart*parcel1%y(1:parcel1%n_bin_modew))
         ! total water:
         mass2=liquid_mass+ vapour_mass
 
@@ -2601,12 +2945,12 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     if(adiabatic_prof) then
         ! total water after:
-        mass2=sum(parcel1%npart*parcel1%y(1:parcel1%n_bin_mode))+ &
+        mass2=sum(parcel1%npart*parcel1%y(1:parcel1%n_bin_modew))+ &
             parcel1%y(parcel1%irh)*eps1* &
             svp_liq(parcel1%y(parcel1%ite)) / &
             (parcel1%y(parcel1%ipr)-svp_liq(parcel1%y(parcel1%ite)))
         if(ice_flag .eq. 1) then
-            mass2=mass2+sum(parcel1%npartice*parcel1%yice(1:parcel1%n_bin_mode))
+            mass2=mass2+sum(parcel1%npartice*parcel1%yice(1:parcel1%n_bin_modew))
         endif
         
         deltam=mass2-mass1
@@ -2623,6 +2967,13 @@
     
     end subroutine bin_microphysics
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    
+    
+    
+    
+    
+    
+    
     
     
     
@@ -2857,20 +3208,20 @@
     ! write variable: ql
     call check( nf90_inq_varid(io1%ncid, "ql", io1%varid ) )
     call check( nf90_put_var(io1%ncid, io1%varid, &
-        sum(parcel1%y(1:parcel1%n_bin_mode)*parcel1%npart(1:parcel1%n_bin_mode)), &
+        sum(parcel1%y(1:parcel1%n_bin_modew)*parcel1%npart(1:parcel1%n_bin_modew)), &
                 start = (/io1%icur/)))
 
     ! write variable: beta_ext
     call check( nf90_inq_varid(io1%ncid, "beta_ext", io1%varid ) )
     call check( nf90_put_var(io1%ncid, io1%varid, &
-        2._wp*sum((parcel1%y(1:parcel1%n_bin_mode)* &
+        2._wp*sum((parcel1%y(1:parcel1%n_bin_modew)* &
             6._wp/(rhow*pi))**(2._wp/3._wp)* pi/4._wp* &
-            parcel1%npart(1:parcel1%n_bin_mode)), &
+            parcel1%npart(1:parcel1%n_bin_modew)), &
                 start = (/io1%icur/)))
 
     ! write variable: number > 2.5 microns (8.1812e-15 kg)
     parcel1%ndrop=0._wp
-    where (parcel1%y(1:parcel1%n_bin_mode) > 6.5450e-14_wp)
+    where (parcel1%y(1:parcel1%n_bin_modew) > 6.5450e-14_wp)
         parcel1%ndrop=parcel1%npart(:)
     end where
     
@@ -2881,24 +3232,24 @@
     ! write variable: effective radius
     call check( nf90_inq_varid(io1%ncid, "deff", io1%varid ) )
     call check( nf90_put_var(io1%ncid, io1%varid, &
-        sum((parcel1%y(1:parcel1%n_bin_mode)* &
+        sum((parcel1%y(1:parcel1%n_bin_modew)* &
             6._wp/(rhow*pi))**(3._wp/3._wp)*  &
-            parcel1%npart(1:parcel1%n_bin_mode)) / &
-        sum((parcel1%y(1:parcel1%n_bin_mode)* &
+            parcel1%npart(1:parcel1%n_bin_modew)) / &
+        sum((parcel1%y(1:parcel1%n_bin_modew)* &
             6._wp/(rhow*pi))**(2._wp/3._wp)*  &
-            parcel1%npart(1:parcel1%n_bin_mode)), &
+            parcel1%npart(1:parcel1%n_bin_modew)), &
                 start = (/io1%icur/)))
 
     call check( nf90_inq_varid(io1%ncid, "mwat", io1%varid ) )
     call check( nf90_put_var(io1%ncid, io1%varid, &
-        reshape(parcel1%y(1:parcel1%n_bin_mode),(/n_bins,n_mode/)), start = (/1,1,io1%icur/)))
+        reshape(parcel1%y(1:parcel1%n_bin_modew),(/n_bins,n_mode/)), start = (/1,1,io1%icur/)))
 
     if(ice_flag .eq. 1) then
         ! write variable: qi
         call check( nf90_inq_varid(io1%ncid, "qi", io1%varid ) )
         call check( nf90_put_var(io1%ncid, io1%varid, &
-            sum(parcel1%yice(1:parcel1%n_bin_mode)* &
-                parcel1%npartice(1:parcel1%n_bin_mode)), &
+            sum(parcel1%yice(1:parcel1%n_bin_modew)* &
+                parcel1%npartice(1:parcel1%n_bin_modew)), &
                     start = (/io1%icur/)))
 
         ! write variable: number concentration of ice crystals
@@ -2909,7 +3260,7 @@
     
         call check( nf90_inq_varid(io1%ncid, "mice", io1%varid ) )
         call check( nf90_put_var(io1%ncid, io1%varid, &
-            reshape(parcel1%yice(1:parcel1%n_bin_mode),(/n_bins,n_mode/)), &
+            reshape(parcel1%yice(1:parcel1%n_bin_modew),(/n_bins,n_mode/)), &
              start = (/1,1,io1%icur/)))
 
     endif
