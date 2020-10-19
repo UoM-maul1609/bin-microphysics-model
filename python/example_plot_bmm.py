@@ -9,7 +9,8 @@ from netCDF4 import Dataset
 import numpy as np
 import matplotlib.pyplot as plt
 
-from runsDefine import outputDir
+#from runsDefine import outputDir
+outputDir='/tmp'
 fileName=outputDir + '/output1.nc'
 
 def plot_model_run(fileName='/tmp/output1.nc'):
