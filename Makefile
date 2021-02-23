@@ -1,7 +1,8 @@
 OSNF_DIR = osnf
+SCE_DIR = sce
 
-.PHONY: osnf_code cleanall
-CLEANDIRS = $(OSNF_DIR) ./
+.PHONY: osnf_code sce_code cleanall
+CLEANDIRS = $(OSNF_DIR) $(SCE_DIR) ./
 
 
 DEBUG = -fbounds-check -g
@@ -31,20 +32,24 @@ FFLAGS2 =  $(DEBUG) -O3 -o
 
 
 
-main.exe	:  b_micro_lib.a  osnf_code main.$(OBJ) bin_microphysics_module.$(OBJ) 
+main.exe	:  b_micro_lib.a  sce_code \
+        osnf_code main.$(OBJ) bin_microphysics_module.$(OBJ) 
 	$(FOR2) $(FFLAGS2)main.exe main.$(OBJ) bin_microphysics_module.$(OBJ) \
-	        -lm b_micro_lib.a $(OSNF_DIR)/osnf_lib.a \
+	        -lm b_micro_lib.a $(OSNF_DIR)/osnf_lib.a $(SCE_DIR)/sce_micro_lib.a \
+	        $(SCE_DIR)/sce_module.$(OBJ) \
 		${NETCDFLIB} -I ${NETCDFMOD} ${NETCDF_LIB} $(DEBUG)
 b_micro_lib.a	:  osnf_code 
 	cp $(OSNF_DIR)/osnf_lib.a b_micro_lib.a 
 bin_microphysics_module.$(OBJ)	: bin_microphysics_module.f90
-	$(FOR) bin_microphysics_module.f90 -I ${NETCDFMOD} -I${OSNF_DIR}\
+	$(FOR) bin_microphysics_module.f90 -I ${NETCDFMOD} -I${OSNF_DIR} -I${SCE_DIR}\
 	     $(FFLAGS)bin_microphysics_module.$(OBJ)
-main.$(OBJ)   : main.f90 bin_microphysics_module.$(OBJ) 
-	$(FOR)  main.f90 -I ${NETCDFMOD}  -I${OSNF_DIR} $(FFLAGS)main.$(OBJ) 
+main.$(OBJ)   : main.f90 bin_microphysics_module.$(OBJ) $(SCE_DIR)/sce_module.$(OBJ) 
+	$(FOR)  main.f90 -I ${NETCDFMOD}  -I${OSNF_DIR} -I${SCE_DIR} $(FFLAGS)main.$(OBJ) 
 	
 osnf_code:
 	$(MAKE) -C $(OSNF_DIR)
+sce_code:
+	$(MAKE) -C $(SCE_DIR)
 clean :
 	rm *.exe *.o *.mod *~ \
 	*.a;rm -R *.dSYM

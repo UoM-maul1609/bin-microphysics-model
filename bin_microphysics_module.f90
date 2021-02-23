@@ -25,7 +25,7 @@
         type parcel
             ! variables for bin model
             integer(i4b) :: n_bins1,n_modes,n_comps, n_bin_mode, n_bin_modew, n_bin_mode1, &
-                            n_sound, ice_flag
+                            n_sound, ice_flag, sce_flag
             real(wp) :: dt
             real(wp), dimension(:,:), allocatable :: q_sound
             real(wp), dimension(:), allocatable :: t_sound, z_sound, rh_sound, &
@@ -37,8 +37,8 @@
                         
             ! liquid water
             real(wp), dimension(:), allocatable :: d, maer, npart, rho_core, &
-                            rh_eq, rhoat, dw, da_dt, ndrop
-            real(wp), dimension(:,:), allocatable :: mbin, rhobin, &
+                            rh_eq, rhoat, dw, da_dt, ndrop, npartall
+            real(wp), dimension(:,:), allocatable :: mbin, mbinall, rhobin, &
                                         nubin,molwbin,kappabin ! all bins x all comps                                
             ! variables for ODE:                    
             integer(i4b) :: neq, itol, ipr, ite, iz, iw, irh, &
@@ -58,9 +58,10 @@
                                         
             ! general
             integer(i4b) :: imoms
-            real(wp), allocatable, dimension(:,:) :: moments
+            real(wp), allocatable, dimension(:,:) :: moments, mbinedges,ecoll,ecoal
             real(wp), allocatable, dimension(:) :: momtemp
             integer(i4b), allocatable, dimension(:) :: momenttype
+            integer(i4b), dimension(:,:), allocatable :: indexc                            
                                           
             ! variables for ODE:                    
             integer(i4b) :: neqice, itolice, ipri, itei, izi, iwi, irhi, &
@@ -107,7 +108,7 @@
         real(wp) :: zinit,tpert,winit,tinit,pinit,rhinit,z_ctop, alpha_therm, alpha_cond, &
                     alpha_therm_ice, alpha_dep
         integer(i4b) :: microphysics_flag=0, kappa_flag,updraft_type, vent_flag, &
-                        ice_flag=0, bin_scheme_flag=1
+                        sce_flag=0,ice_flag=0, bin_scheme_flag=1
         logical :: use_prof_for_tprh
         real(wp) :: dz,dt, runtime
         ! sounding spec
@@ -148,7 +149,7 @@
                                                     8.274747821396463_wp]
 
 
-        character (len=200) :: outputfile='output'
+        character (len=200) :: outputfile='output', scefile='input'
 
 	!private 
 	!public :: read_in_bmm_namelist, initialise_bmm_arrays, bmm_driver, io1
@@ -267,9 +268,9 @@
         namelist /sounding_spec/ psurf, tsurf,  &
                     q_read, theta_read, rh_read, z_read
         ! define namelists for environment
-        namelist /run_vars/ outputfile, runtime, dt, &
+        namelist /run_vars/ outputfile, scefile,runtime, dt, &
                     zinit,tpert,use_prof_for_tprh,winit,tinit,pinit,rhinit, &
-                    microphysics_flag, ice_flag, bin_scheme_flag, vent_flag, &
+                    microphysics_flag, ice_flag, bin_scheme_flag, sce_flag,vent_flag, &
                     kappa_flag, updraft_type,adiabatic_prof, vert_ent, &
                     z_ctop, ent_rate,n_levels_s, &
                     alpha_therm,alpha_cond,alpha_therm_ice,alpha_dep
@@ -321,11 +322,39 @@
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
 	!>interpolates the sounding to the grid
-    subroutine initialise_bmm_arrays()
+    subroutine initialise_bmm_arrays(psurf, tsurf, q_read, theta_read, rh_read, z_read, &
+                    runtime, dt, zinit, tpert, use_prof_for_tprh, winit, tinit, pinit, &
+                    rhinit, microphysics_flag, ice_flag, bin_scheme_flag, vent_flag, &
+                    kappa_flag, updraft_type, adiabatic_prof, vert_ent, z_ctop, &
+                    ent_rate, n_levels_s, alpha_therm, alpha_cond, alpha_therm_ice, &
+                    alpha_dep, n_intern, n_mode, n_sv, sv_flag, n_bins, n_comps, &
+                    n_aer1,d_aer1,sig_aer1,dmina,dmaxa,mass_frac_aer1,molw_core1, &
+                    density_core1, nu_core1, kappa_core1, org_content1, molw_org1, &
+                    kappa_org1, density_org1, delta_h_vap1,nu_org1, log_c_star1, &
+                    sce_flag)
     use numerics_type
     use numerics, only : find_pos, poly_int, zeroin, fmin,vode_integrate
 
     implicit none
+    logical, intent(in) :: use_prof_for_tprh, adiabatic_prof, vert_ent
+    integer(i4b), intent(in) :: microphysics_flag, ice_flag, bin_scheme_flag, vent_flag, &
+                    kappa_flag, updraft_type, n_levels_s,n_intern, n_mode, n_sv, &
+                    sv_flag, n_bins, n_comps, sce_flag
+    real(wp), intent(in) :: psurf, tsurf, runtime, dt, zinit, tpert, winit, tinit, &
+                    pinit, rhinit, alpha_therm, alpha_cond, alpha_therm_ice, &
+                    alpha_dep, dmina,dmaxa, z_ctop, ent_rate
+    real(wp), dimension(1:n_levels_s), intent(in) :: theta_read, rh_read, z_read
+    real(wp), dimension(1:nq,1:n_levels_s), intent(in) :: q_read
+    real(wp), dimension(1:n_intern,1:n_mode), intent(in) :: n_aer1,d_aer1,sig_aer1
+    real(wp), dimension(1:n_mode,1:n_comps), intent(in) :: mass_frac_aer1
+    real(wp), dimension(1:n_comps), intent(in) :: molw_core1, density_core1, &
+                                                nu_core1, kappa_core1
+    real(wp), dimension(1:n_sv), intent(in) :: org_content1, molw_org1, kappa_org1, &
+                                density_org1, delta_h_vap1, nu_org1, log_c_star1
+    
+    
+    
+    
     real(wp) :: num, ntot, number_per_bin, test, var1, &
                 eps2, z1, z2, htry, hmin, var, dummy
     real(wp), dimension(1) :: p1, z11
@@ -355,11 +384,18 @@
     
     allocate( parcel1%d(1:parcel1%n_bin_mode1), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+    ! same bin edges used for ice
+    allocate( parcel1%mbinedges(1:parcel1%n_bins1+1,1:parcel1%n_modes), STAT = AllocateStatus)
+    if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
     allocate( parcel1%maer(1:parcel1%n_bin_modew), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
     allocate( parcel1%npart(1:parcel1%n_bin_modew), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+    allocate( parcel1%npartall(1:parcel1%n_bin_mode), STAT = AllocateStatus)
+    if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
     allocate( parcel1%mbin(1:parcel1%n_bin_modew,1:n_comps+1), STAT = AllocateStatus)
+    if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+    allocate( parcel1%mbinall(1:parcel1%n_bin_mode,1:n_comps+1), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
     allocate( parcel1%rho_core(1:parcel1%n_modes), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
@@ -394,6 +430,13 @@
     allocate( parcel1%ndrop(1:parcel1%n_bin_modew), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
 
+    allocate( parcel1%ecoal(1:parcel1%n_bin_mode,1:parcel1%n_bin_mode), STAT = AllocateStatus)
+    if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+    allocate( parcel1%ecoll(1:parcel1%n_bin_mode,1:parcel1%n_bin_mode), STAT = AllocateStatus)
+    if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+    allocate( parcel1%indexc(1:parcel1%n_bin_mode,1:parcel1%n_bin_mode), STAT = AllocateStatus)
+    if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+
     allocate( parcel1%q_sound(1:parcel1%n_sound,1:nq), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
     allocate( parcel1%z_sound(1:parcel1%n_sound), STAT = AllocateStatus)
@@ -407,7 +450,7 @@
     allocate( parcel1%theta_q_sound(1:parcel1%n_sound), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    
+
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! calculate the density of aerosol particles within a mode                     !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -899,6 +942,56 @@
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! MAP SCE                                                                      !
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>maps the sce variables onto BMM
+    subroutine write_sce_to_bmm(n_bin_mode,n_bin_modew,n_binst,n_mode, n_comps, n_moments, &
+                    ice_flag, &
+                    npart, moments, mbin, indexc,ecoll,mbinedges)
+    implicit none
+    integer(i4b), intent(in) :: n_bin_mode, n_bin_modew, &
+        n_binst, n_mode, n_comps, n_moments, ice_flag
+    real(wp), dimension(n_bin_mode), intent(in) :: npart
+    real(wp), dimension(n_bin_mode,n_moments), intent(in) :: moments
+    real(wp), dimension(n_bin_mode,n_comps+1), intent(in) :: mbin
+    real(wp), dimension(n_binst+1,n_mode), intent(in) :: mbinedges
+    integer(i4b), dimension(n_bin_mode,n_bin_mode), intent(in) :: indexc
+    real(wp), dimension(n_bin_mode,n_bin_mode), intent(in) :: ecoll
+
+
+    
+    parcel1%moments=moments
+    parcel1%npart=npart(1:n_bin_modew)
+    parcel1%npartall=npart
+    parcel1%y(1:n_bin_modew)=mbin(1:n_bin_modew,n_comps+1)
+    parcel1%maer=sum(mbin(1:n_bin_modew,1:n_comps),2)
+    parcel1%mbin=mbin(1:n_bin_modew,1:n_comps+1)
+    parcel1%mbinedges=mbinedges
+    parcel1%mbinall(:,:)=mbin
+    
+    parcel1%indexc=indexc
+    parcel1%ecoll=ecoll
+
+    if(ice_flag.eq.1) then
+        parcel1%npartice=npart(n_bin_modew+1:2*n_bin_modew)
+        parcel1%yice(1:n_bin_modew)=mbin(n_bin_modew+1:2*n_bin_modew,n_comps+1)
+        parcel1%maerice=sum(mbin(1+n_bin_modew:2*n_bin_modew,1:n_comps),2)
+        parcel1%mbinice=mbin(1+n_bin_modew:2*n_bin_modew,1:n_comps+1)
+        
+        ! starting, so no need to set ice moments here
+        
+        ! other aerosol properties were set in set-up
+    endif
+        
+    end subroutine write_sce_to_bmm
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+
 
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 	! integrate lognormal                                                          !
@@ -913,6 +1006,7 @@
 	!>@param[inout] num: number of aerosol particles
     subroutine lognormal_n_between_limits(n_aer1,d_aer1,sig_aer1,n_intern,dmin,dmax, &
                                         num)
+    implicit none
     real(wp), intent(in) :: dmin,dmax
     real(wp), intent(in), dimension(n_intern) :: n_aer1,d_aer1,sig_aer1
     integer(i4b), intent(in) :: n_intern
@@ -2573,6 +2667,104 @@
     end subroutine chen_and_lamb_prop
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! moving centre binning                                                              !
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief rebins according to the moving centre scheme - Jacobson's book
+    subroutine moving_centre_liquid(n_bin_mode,n_bin_modew,n_binst,n_mode, &
+                    n_comps, n_moments, &
+                    npart, masses, moments, mbin,mbinedges) 
+        implicit none
+        integer(i4b), intent(in) :: n_bin_mode, n_bin_modew, n_binst, n_mode, &
+                                n_comps, n_moments
+        real(wp), dimension(n_binst+1,n_mode), intent(in) :: mbinedges
+        real(wp), dimension(n_bin_modew), intent(inout) :: npart, masses
+        real(wp), dimension(n_bin_modew,n_moments), intent(inout) :: moments
+        real(wp), dimension(n_bin_modew,n_comps+1), intent(inout) :: mbin
+        
+        logical, dimension(n_bin_modew) :: moment_exists
+        integer(i4b) :: i,j,thismode, thisbin,newplace
+        real(wp), dimension(n_bin_modew,n_moments) :: momtemp
+        real(wp), dimension(n_bin_modew) :: nparttemp, totmass
+        
+        momtemp=0._wp ! zero
+        nparttemp=0._wp ! zero
+        totmass=0._wp ! zero
+
+
+        ! loop over the "warm" moments
+        do i=1,n_bin_modew
+            thismode=(i-1)/n_binst+1
+            thisbin=modulo(i-1,n_binst)+1
+            
+            if(npart(i).gt.0._wp) then
+                moment_exists(i)=.true.
+                ! this one does not change
+                if ((masses(i).gt.mbinedges(thisbin,thismode)).and. &
+                    (masses(i).le.mbinedges(thisbin+1,thismode))) then
+
+                    momtemp(i,:)=momtemp(i,:)+moments(i,:)
+                    nparttemp(i)=nparttemp(i)+npart(i)
+                    totmass(i)=totmass(i)+npart(i)*masses(i)
+                else
+                
+                    ! find the bin it should be in
+                    do j=1,n_binst
+                        if ((masses(i).gt.mbinedges(j,thismode)).and. &
+                            (masses(i).le.mbinedges(j+1,thismode))) then
+                        
+                            newplace=(thismode-1)*n_binst+j
+                            ! add the moment from i to newplace
+                            momtemp(newplace,:)=momtemp(newplace,:)+moments(i,:)
+                            nparttemp(newplace)=nparttemp(newplace)+npart(i)
+                            totmass(newplace)=totmass(newplace)+masses(i)*npart(i)
+                            
+                        endif
+                    enddo
+                    
+                endif                
+                
+            endif
+        
+        enddo
+        
+        
+        ! now, set the masses, moments in second loop
+        do i=1,n_bin_modew
+            thismode=(i-1)/n_binst+1
+            thisbin=modulo(i-1,n_binst)+1
+
+            if(nparttemp(i).gt.0._wp) then
+                moments(i,:)=momtemp(i,:)
+                npart(i)=nparttemp(i)
+                masses(i)=totmass(i) / npart(i)
+                if ((masses(i).gt.mbinedges(thisbin,thismode)).and. &
+                    (masses(i).le.mbinedges(thisbin+1,thismode))) then
+                    
+                    masses(i)=0.5_wp*(mbinedges(thisbin,thismode)+ &
+                                    mbinedges(thisbin+1,thismode))
+                    npart(i)=totmass(i) / masses(i)
+                endif                
+                mbin(i,1:n_comps)=moments(i,1:n_comps)/npart(i)
+                mbin(i,n_comps+1)=masses(i)
+            else
+                moments(i,:)=0._wp
+                npart(i)=0._wp
+                masses(i)=0.5_wp*(mbinedges(thisbin,thismode)+ &
+                                    mbinedges(thisbin+1,thismode))
+                mbin(i,1:n_comps)=0._wp
+                mbin(i,n_comps+1)=masses(i)
+            endif
+        enddo
+        
+        
+        
+        
+    end subroutine moving_centre_liquid
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
 
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 	! Chen and Lamb (1994) ancillary variables                                           !
@@ -2744,15 +2936,21 @@
                    parcel1%rwork,parcel1%lrw,&
                    parcel1%iwork,parcel1%liw,jparcelwarm, &
                    parcel1%mf,parcel1%rpar,parcel1%ipar)
-        ! check there are no negative values
-!         where(parcel1%y(1:parcel1%n_bin_modew).lt.0._wp)
-!             parcel1%y(1:parcel1%n_bin_modew)=1.e-22_wp
-!         end where
     enddo
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-
-
+    if (sce_flag.eq.1) then
+        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        ! Moving Centre binning                                            !
+        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        call moving_centre_liquid(parcel1%n_bin_mode,parcel1%n_bin_modew,&
+                parcel1%n_bins1,parcel1%n_modes, parcel1%n_comps, &
+                parcel1%imoms+parcel1%n_comps, parcel1%npart, &
+                parcel1%y(1:parcel1%n_bin_modew), &
+                parcel1%moments(1:parcel1%n_bin_modew,:), &
+                parcel1%mbin,parcel1%mbinedges)
+        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    endif
 
     if(ice_flag .eq. 1) then
         ! ice part of the parcel model
@@ -2819,11 +3017,8 @@
                            parcel1%rworkice,parcel1%lrwice,&
                            parcel1%iworkice,parcel1%liwice,jparcelwarm, &
                            parcel1%mfice,parcel1%rparice,parcel1%iparice)
-            ! check there are no negative values
-            where(parcel1%yice(1:parcel1%n_bin_modew).le.0.e1_wp)
-                parcel1%yice(1:parcel1%n_bin_modew)=1.e-22_wp
-            end where
         enddo
+
         parcel1%y(parcel1%ipr)=parcel1%yice(parcel1%ipri)
         parcel1%y(parcel1%ite)=parcel1%yice(parcel1%itei)
         parcel1%y(parcel1%irh)=parcel1%yice(parcel1%irhi)
@@ -2850,8 +3045,25 @@
         parcel1%moments(parcel1%n_bin_modew+1:parcel1%n_bin_mode,parcel1%n_comps+3)= &
             parcel1%momtemp(1:parcel1%n_bin_modew)
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    endif
 
+        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        ! Moving Centre binning                                                !
+        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        if (sce_flag.eq.1) then
+            !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            ! Moving Centre binning                                            !
+            !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            call moving_centre_liquid(parcel1%n_bin_mode,parcel1%n_bin_modew,&
+                    parcel1%n_bins1,parcel1%n_modes, parcel1%n_comps, &
+                    parcel1%imoms+parcel1%n_comps, parcel1%npartice, &
+                    parcel1%yice(1:parcel1%n_bin_modew), &
+                    parcel1%moments(1+parcel1%n_bin_modew:parcel1%n_bin_mode,:), &
+                    parcel1%mbinice,parcel1%mbinedges)
+            !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        endif
+        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+    endif
 
 
 
@@ -2871,30 +3083,43 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     if(vert_ent .and. (.not. adiabatic_prof) .and. &
         (parcel1%y(parcel1%iz) .gt. parcel1%z_cbase) ) then
-        ! vapour mass:
+        ! vapour mass in the parcel:
         vapour_mass=parcel1%y(parcel1%irh)*eps1* &
             svp_liq(parcel1%y(parcel1%ite)) / &
             (parcel1%y(parcel1%ipr)-svp_liq(parcel1%y(parcel1%ite)))
 
-        ! liquid mass:
+        ! liquid mass in the parcel:
         liquid_mass=sum(parcel1%npart*parcel1%y(1:parcel1%n_bin_modew))
-        ! total water:
+        ! total water in the parcel:
         mass2=liquid_mass+ vapour_mass
 
+        ! this is the theta q at cloud base, given the total water content
         if (set_theta_q_cb_flag) then
             parcel1%theta_q_cbase=calc_theta_q3(parcel1%y(parcel1%ite), &
                                     parcel1%y(parcel1%ipr), mass2)
-            parcel1%q_cbase=mass2
-            if(parcel1%y(parcel1%irh) .gt. 1._wp) then
+                                    
+            ! locate position
+            iloc=find_pos(parcel1%z_sound(1:n_levels_s),parcel1%y(parcel1%iz))
+            iloc=min(n_levels_s-1,iloc)
+            iloc=max(1,iloc)
+            ! linear interp theta_q
+            call poly_int(parcel1%z_sound(iloc:iloc+1), parcel1%theta_q_sound(iloc:iloc+1), &
+                    min(parcel1%y(parcel1%iz),parcel1%z_sound(n_levels_s)), var,dummy)        
+            parcel1%theta_q_cbase=var
+
+                                    
+            parcel1%q_cbase=mass2 ! total water is all vapour at cloud base
+            if(parcel1%y(parcel1%iz) .gt. parcel1%z_cbase) then
                 set_theta_q_cb_flag=.false.
             endif
         endif
-
+        
         if(.not. set_theta_q_cb_flag) then
             cpm=cp+vapour_mass*cpv+liquid_mass*cpw
         
-!             parcel1%theta_q=calc_theta_q3(parcel1%y(parcel1%ite), &
-!                                         parcel1%y(parcel1%ipr), mass2)
+            ! the new value of theta_q
+            parcel1%theta_q=calc_theta_q3(parcel1%y(parcel1%ite), &
+                                         parcel1%y(parcel1%ipr), mass2)
             ! locate position
             iloc=find_pos(parcel1%z_sound(1:n_levels_s),parcel1%y(parcel1%iz))
             iloc=min(n_levels_s-1,iloc)
@@ -2909,13 +3134,14 @@
                     (parcel1%theta_q_ctop-parcel1%theta_q_cbase)
             x1=min(max(parcel1%x_ent,0._wp),1._wp)
             x2=1._wp-x1
-
+            
+            !print *,parcel1%theta_q,parcel1%theta_q_cbase,parcel1%theta_q_ctop
             ! entrainment of vapour:
             vapour_mass= &!vapour_mass+&
                 x1*(parcel1%q_ctop)+&
                 x2*(parcel1%q_cbase)-liquid_mass
             ! entrainment of liquid:
-            parcel1%npart=parcel1%npart*x2/x2old
+            !parcel1%npart=parcel1%npart*x2/x2old
 
             ! entrainment of theta_q (equation 4, Sanchez et al, 2017, ACP):
             parcel1%theta_q=x1*parcel1%theta_q_ctop + &
@@ -2931,11 +3157,10 @@
             parcel1%y(parcel1%irh)=vapour_mass / &
                  ( eps1*svp_liq(parcel1%y(parcel1%ite)) / &
                  (parcel1%y(parcel1%ipr)-svp_liq(parcel1%y(parcel1%ite))) )
-            x2old=x2
+            x2old=max(x2,1.e-20_wp)
         endif
     endif
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
 
 
 
@@ -3287,9 +3512,11 @@
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
 	!>driver for the bin-microphysics module
-    subroutine bmm_driver()
+    subroutine bmm_driver(sce_flag)
     use numerics_type
+    use sce, only : sce_microphysics
     implicit none
+    integer(i4b), intent(in) :: sce_flag
     integer(i4b) :: i, nt
     
     
@@ -3302,7 +3529,48 @@
         ! one time-step of model
         call bin_microphysics(fparcelwarm, fparcelcold, icenucleation)
         
+        if(sce_flag.eq.1) then
         
+        
+            ! map BMM to SCE
+            parcel1%npartall(1:parcel1%n_bin_modew)=parcel1%npart
+            parcel1%mbinall(1:parcel1%n_bin_modew,:)=parcel1%mbin
+            parcel1%mbinall(1:parcel1%n_bin_modew,parcel1%n_comps+1)= &
+                parcel1%y(1:parcel1%n_bin_modew)
+            if(ice_flag.eq.1) then
+                parcel1%npartall(1+parcel1%n_bin_modew:parcel1%n_bin_mode)= &
+                    parcel1%npartice           
+                parcel1%mbinall(1+parcel1%n_bin_modew:parcel1%n_bin_mode,:)= &
+                    parcel1%mbinice
+                parcel1%mbinall(1+parcel1%n_bin_modew:parcel1%n_bin_mode, &
+                                parcel1%n_comps+1)= &
+                    parcel1%yice(1:parcel1%n_bin_modew)
+            endif      
+            
+            
+              
+            ! one time-step of sce model
+            call sce_microphysics(parcel1%n_bins1,parcel1%n_bin_mode,parcel1%n_comps+&
+                            parcel1%imoms,&
+                            parcel1%npartall,parcel1%moments,parcel1%momenttype, &
+                            parcel1%ecoll,parcel1%indexc, &
+                            parcel1%mbinall(:,n_comps+1),parcel1%dt)
+                            
+            ! map SCE to BMM
+            parcel1%npart=parcel1%npartall(1:parcel1%n_bin_modew)
+            parcel1%mbin=parcel1%mbinall(1:parcel1%n_bin_modew,:)
+            parcel1%y(1:parcel1%n_bin_modew)=parcel1%mbin(:,parcel1%n_comps+1)
+            if(ice_flag.eq.1) then
+                parcel1%npartice= &
+                    parcel1%npartall(1+parcel1%n_bin_modew:parcel1%n_bin_mode)         
+                parcel1%mbin= &
+                    parcel1%mbinall(1+parcel1%n_bin_modew:parcel1%n_bin_mode,:) 
+                parcel1%yice(1:parcel1%n_bin_modew)=parcel1%mbinice(:,parcel1%n_comps+1)
+                                
+                
+            endif
+            
+        endif    
              
         ! break-out if flag has been set 
         if(parcel1%break_flag) exit
