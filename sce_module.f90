@@ -90,7 +90,7 @@
         real(wp) :: mult, rh_act
 
         ! aerosol setup
-        integer(i4b) :: n_intern, n_mode,n_sv,sv_flag,n_bins,n_binsc,n_comps,kfac
+        integer(i4b) :: n_intern, n_mode,n_sv,sv_flag,n_bins,n_binsc,n_binst,n_comps,kfac
         ! aerosol_spec
         real(wp), allocatable, dimension(:,:) :: n_aer1,d_aer1,sig_aer1, mass_frac_aer1
         real(wp), allocatable, dimension(:) ::  molw_core1,density_core1,nu_core1, &
@@ -241,6 +241,7 @@
         read(8,nml=aerosol_spec)
         read(8,nml=cloud_spec)
         close(8)
+        n_binst=n_bins+n_binsc
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 	end subroutine read_in_sce_namelist
 
@@ -258,11 +259,23 @@
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
 	!>interpolates the sounding to the grid
-    subroutine initialise_sce_arrays()
+    subroutine initialise_sce_arrays(n_bins, n_binsc,n_mode, n_comps, n_intern, &
+                    ice_flag, &
+                    pinit,tinit,rhinit,dt,dmina,dmaxa,dminc,dmaxc,&
+                    mass_frac_aer1,density_core1,nu_core1,molw_core1, kappa_core1, &
+                    n_aer1,d_aer1,sig_aer1)
     use numerics_type
     use numerics, only : find_pos, poly_int, zeroin, fmin,vode_integrate
 
     implicit none
+    integer(i4b), intent(in) :: n_bins, n_binsc, n_mode, n_comps, n_intern, ice_flag
+    real(wp), intent(in) :: pinit, tinit, rhinit,dt, dmina, dmaxa,dminc,dmaxc
+    real(wp), dimension(1:n_mode,1:n_comps), intent(in) :: mass_frac_aer1
+    real(wp), dimension(1:n_comps), intent(in) :: molw_core1, density_core1, &
+                                                nu_core1, kappa_core1
+    real(wp), dimension(1:n_intern,1:n_mode), intent(in) :: n_aer1,d_aer1,sig_aer1
+    
+    
     real(wp) :: num, ntot, number_per_bin, test, var1, &
                 eps2, z1, z2, htry, hmin, var, dummy, mass, vol, rho
     real(wp), dimension(1) :: p1, z11
@@ -513,6 +526,7 @@
             enddo
         case(1)
             do i=1,parcel1%n_bin_mode
+                ! only call if in aerosol mode (ie.1:n_bins1)
                 if ((modulo(i,parcel1%n_binst).le.parcel1%n_bins1).and.&
                     (modulo(i,parcel1%n_binst).gt.0)) then
                     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -2072,11 +2086,11 @@
         call check( nf90_create(outputfile, NF90_CLOBBER, io1%ncid) )
         ! define dimensions (netcdf hands back a handle)
         call check( nf90_def_dim(io1%ncid, "times", NF90_UNLIMITED, io1%x_dimid) )
-        call check( nf90_def_dim(io1%ncid, "nbins", n_bins, io1%bin_dimid) )
+        call check( nf90_def_dim(io1%ncid, "nbins", parcel1%n_bins1, io1%bin_dimid) )
         call check( nf90_def_dim(io1%ncid, "nbinst", parcel1%n_binst, io1%bin2_dimid) )
         call check( nf90_def_dim(io1%ncid, "nbinsedge", parcel1%n_binst+1, io1%bin3_dimid) )
-        call check( nf90_def_dim(io1%ncid, "nmodes", n_mode, io1%mode_dimid) )
-        call check( nf90_def_dim(io1%ncid, "ncomps", n_comps, io1%comp_dimid) )
+        call check( nf90_def_dim(io1%ncid, "nmodes", parcel1%n_modes, io1%mode_dimid) )
+        call check( nf90_def_dim(io1%ncid, "ncomps", parcel1%n_comps, io1%comp_dimid) )
         
         ! close the file, freeing up any internal netCDF resources
         ! associated with the file, and flush any buffers
@@ -2339,23 +2353,23 @@
         call check( nf90_inq_varid(io1%ncid, "mwatedge", io1%varid ) )
         call check( nf90_put_var(io1%ncid, io1%varid, &
             reshape(parcel1%mbinedges(1:parcel1%n_binst+1,1:parcel1%n_modes), &
-            (/parcel1%n_binst+1,n_mode/)), start = (/1,1/)))
+            (/parcel1%n_binst+1,parcel1%n_modes/)), start = (/1,1/)))
     endif
 
     call check( nf90_inq_varid(io1%ncid, "mwat", io1%varid ) )
     call check( nf90_put_var(io1%ncid, io1%varid, &
         reshape(parcel1%mbin(1:parcel1%n_bin_modew,parcel1%n_comps+1), &
-        (/parcel1%n_binst,n_mode/)), start = (/1,1,io1%icur/)))
+        (/parcel1%n_binst,parcel1%n_modes/)), start = (/1,1,io1%icur/)))
 
     call check( nf90_inq_varid(io1%ncid, "nwat", io1%varid ) )
     call check( nf90_put_var(io1%ncid, io1%varid, &
         reshape(parcel1%npart(1:parcel1%n_bin_modew), &
-        (/parcel1%n_binst,n_mode/)), start = (/1,1,io1%icur/)))
+        (/parcel1%n_binst,parcel1%n_modes/)), start = (/1,1,io1%icur/)))
 
     call check( nf90_inq_varid(io1%ncid, "maer", io1%varid ) )
     call check( nf90_put_var(io1%ncid, io1%varid, &
         reshape(parcel1%mbin(1:parcel1%n_bin_modew,1:parcel1%n_comps), &
-        (/parcel1%n_binst,n_mode,n_comps/)), start = (/1,1,1,io1%icur/)))
+        (/parcel1%n_binst,parcel1%n_modes,parcel1%n_comps/)), start = (/1,1,1,io1%icur/)))
 
 
     if(ice_flag .eq. 1) then
@@ -2371,19 +2385,19 @@
         call check( nf90_put_var(io1%ncid, io1%varid, &
             reshape(parcel1%mbin(parcel1%n_bin_modew+1:parcel1%n_bin_mode,&
                 parcel1%n_comps+1), &
-            (/parcel1%n_binst,n_mode/)), start = (/1,1,io1%icur/)))
+            (/parcel1%n_binst,parcel1%n_modes/)), start = (/1,1,io1%icur/)))
 
         ! write variable: number concentration of ice crystals
         call check( nf90_inq_varid(io1%ncid, "nice", io1%varid ) )
         call check( nf90_put_var(io1%ncid, io1%varid, &
             reshape(parcel1%npart(parcel1%n_bin_modew+1:parcel1%n_bin_mode), &
-            (/parcel1%n_binst,n_mode/)), start = (/1,1,io1%icur/)))
+            (/parcel1%n_binst,parcel1%n_modes/)), start = (/1,1,io1%icur/)))
     
         call check( nf90_inq_varid(io1%ncid, "maeri", io1%varid ) )
         call check( nf90_put_var(io1%ncid, io1%varid, &
             reshape(parcel1%mbin(parcel1%n_bin_modew+1:parcel1%n_bin_mode,&
                 1:parcel1%n_comps), &
-            (/parcel1%n_binst,n_mode,n_comps/)), start = (/1,1,1,io1%icur/)))
+            (/parcel1%n_binst,parcel1%n_modes,parcel1%n_comps/)), start = (/1,1,1,io1%icur/)))
 
 
     endif

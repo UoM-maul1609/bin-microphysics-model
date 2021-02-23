@@ -28,7 +28,12 @@
 
     program main
         use numerics_type
-        use sce, only : read_in_sce_namelist, initialise_sce_arrays, sce_driver, io1
+        use sce, only : read_in_sce_namelist, initialise_sce_arrays, sce_driver, io1, &
+                    n_bins, n_binsc,n_mode, n_comps, n_intern, &
+                    ice_flag, &
+                    pinit,tinit,rhinit,dt,dmina,dmaxa,dminc,dmaxc,&
+                    mass_frac_aer1,density_core1,nu_core1,molw_core1, kappa_core1, &
+                    n_aer1,d_aer1,sig_aer1
         implicit none
 
         character (len=200) :: nmlfile = ' '
@@ -49,7 +54,11 @@
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         ! allocate and initialise the grid                                     !
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        call initialise_sce_arrays()
+        call initialise_sce_arrays(n_bins, n_binsc,n_mode, n_comps, n_intern, &
+                    ice_flag, &
+                    pinit,tinit,rhinit,dt,dmina,dmaxa,dminc,dmaxc,&
+                    mass_frac_aer1,density_core1,nu_core1,molw_core1, kappa_core1, &
+                    n_aer1,d_aer1,sig_aer1)
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
