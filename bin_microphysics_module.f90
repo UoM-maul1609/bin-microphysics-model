@@ -2673,7 +2673,7 @@
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief rebins according to the moving centre scheme - Jacobson's book
-    subroutine moving_centre_liquid(n_bin_mode,n_bin_modew,n_binst,n_mode, &
+    subroutine moving_centre(n_bin_mode,n_bin_modew,n_binst,n_mode, &
                     n_comps, n_moments, &
                     npart, masses, moments, mbin,mbinedges) 
         implicit none
@@ -2762,7 +2762,7 @@
         
         
         
-    end subroutine moving_centre_liquid
+    end subroutine moving_centre
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
@@ -2842,7 +2842,244 @@
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
     
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! perform mass balance                                                         !
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>calculate current mass
+    subroutine mass_balance(neq,neqice,y,yice,npart,npartice, &
+                        mass1,n_bin_modew,irh,ite,ipr,ice_flag)
+    implicit none
+    integer(i4b), intent(in) :: neq,neqice,n_bin_modew,irh,ite,ipr,ice_flag
+    real(wp), dimension(neq), intent(in) :: y
+    real(wp), dimension(n_bin_modew), intent(in) :: npart, npartice
+    real(wp), dimension(neqice), intent(in) :: yice
+    real(wp), intent(inout) :: mass1
     
+        ! total water before:
+        mass1=sum(npart*y(1:n_bin_modew))+ &
+            y(irh)*eps1* &
+            svp_liq(y(ite)) / &
+            (y(ipr)-svp_liq(y(ite)))
+        if(ice_flag .eq. 1) then
+            mass1=mass1+sum(npartice*yice(1:n_bin_modew))
+        endif
+        
+    end subroutine mass_balance 
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+       
+       
+       
+       
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! adjust the relative humidity for mass balance                                !
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>subtract the difference from the water vapour and compute new RH
+    subroutine adjust_relative_humidity(mass1,mass2,vapour_mass,t,p, rh)
+        implicit none
+        real(wp), intent(in) :: mass1, mass2, t, p
+        real(wp), intent(inout) :: vapour_mass, rh
+        
+        real(wp) :: deltam
+
+        deltam=mass2-mass1
+        vapour_mass=rh*eps1*svp_liq(t) / (p-svp_liq(t))
+        ! adjust to conserve:
+        vapour_mass=vapour_mass-deltam
+        rh=vapour_mass / ( eps1*svp_liq(t) / (p-svp_liq(t)) )
+            
+    end subroutine adjust_relative_humidity
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! calculate the ice properties and vapour growth conditions                    !
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>using moments, calculate the ice growth properties
+    subroutine ice_vapour_growth_properties(rhoa,qvsat,qv,&
+        neqice,yice,n_bin_modew,npartice,phi,nump,rhoi, &
+        n_bin_mode,n_moms,n_comps,moments, &
+        gamma_t,dep_density,t,p,rhi)
+    
+        implicit none
+        real(wp), intent(in) :: t,p,rhi
+        real(wp), intent(inout) :: rhoa, qvsat,qv,gamma_t,dep_density
+        integer(i4b), intent(in) :: neqice,n_bin_modew,n_bin_mode,n_moms,n_comps
+        real(wp), dimension(neqice), intent(in) :: yice
+        real(wp), dimension(n_bin_modew), intent(inout) :: npartice, phi, nump, rhoi
+        real(wp), dimension(n_bin_mode,n_moms), intent(in) :: moments
+        
+        
+        rhoa = p / (ra*t)                             ! density of air
+        qvsat = rhi * svp_liq(t) / (p-svp_liq(t))        ! qv_sat
+        qv = qvsat * rhi
+        call chen_and_lamb_anc(t, &
+                qv,qvsat,rhoa,gamma_t, dep_density) ! set the deposition density
+        
+        phi=moments(n_bin_modew+1:n_bin_mode,n_comps+1) &
+            / moments(n_bin_modew+1:n_bin_mode,n_comps+2)
+        
+        nump=moments(n_bin_modew+1:n_bin_mode,n_comps+2) &
+            / npartice
+
+        rhoi=(npartice*yice(1:n_bin_modew)-&
+            moments(n_bin_modew+1:n_bin_mode,n_comps+4)) &
+            / moments(n_bin_modew+1:n_bin_mode,n_comps+3)
+
+    end subroutine ice_vapour_growth_properties         
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+       
+ 
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! Cloud-top entrainment according to sanchez et al 2017                        !
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>using moments, calculate the ice growth properties
+    subroutine cloud_top_entrainment(n_levels_s, n_sound, neq, n_bin_modew, &
+            rh, t, p, z, z_cbase, theta_q_ctop, q_ctop, theta_q_cbase, q_cbase, theta_q, &
+            x_ent, y, npart, z_sound, theta_q_sound, set_theta_q_cb_flag)   
+        use numerics, only : zeroin, dvode
+        implicit none
+        integer(i4b), intent(in) :: n_levels_s, n_sound, neq, n_bin_modew
+        real(wp), intent(in) :: p,z, z_cbase, theta_q_ctop, q_ctop
+        real(wp), intent(inout) :: theta_q_cbase, q_cbase, theta_q, x_ent, rh, t
+        real(wp), dimension(neq), intent(in) :: y
+        real(wp), dimension(n_bin_modew), intent(in) :: npart
+        real(wp), dimension(n_sound), intent(in) :: z_sound, theta_q_sound
+        logical, intent(inout) :: set_theta_q_cb_flag
+        
+        real(wp) :: vapour_mass, liquid_mass, mass2, var, dummy, cpm, x1, x2, x2old
+        integer(i4b) :: iloc
+        
+        ! vapour mass in the parcel:
+        vapour_mass=rh*eps1* svp_liq(t) / (p-svp_liq(t))
+
+        ! liquid mass in the parcel:
+        liquid_mass=sum(npart*y(1:n_bin_modew))
+        ! total water in the parcel:
+        mass2=liquid_mass+ vapour_mass
+
+        ! this is the theta q at cloud base, given the total water content
+        if (set_theta_q_cb_flag) then
+            theta_q_cbase=calc_theta_q3(t, p, mass2)
+                                    
+            ! locate position
+            iloc=find_pos(z_sound(1:n_levels_s),z)
+            iloc=min(n_levels_s-1,iloc)
+            iloc=max(1,iloc)
+            ! linear interp theta_q
+            call poly_int(z_sound(iloc:iloc+1), theta_q_sound(iloc:iloc+1), &
+                    min(z,z_sound(n_levels_s)), var,dummy)        
+            theta_q_cbase=var
+
+                                    
+            q_cbase=mass2 ! total water is all vapour at cloud base
+            if(z .gt. z_cbase) then
+                set_theta_q_cb_flag=.false.
+            endif
+        endif
+        
+        if(.not. set_theta_q_cb_flag) then
+            cpm=cp+vapour_mass*cpv+liquid_mass*cpw
+        
+            ! the new value of theta_q
+            theta_q=calc_theta_q3(t,  p, mass2)
+            ! locate position
+            iloc=find_pos(z_sound(1:n_levels_s),z)
+            iloc=min(n_levels_s-1,iloc)
+            iloc=max(1,iloc)
+            ! linear interp theta_q
+            call poly_int(z_sound(iloc:iloc+1), theta_q_sound(iloc:iloc+1), &
+                    min(z,z_sound(n_levels_s)), var,dummy)        
+            theta_q=var
+                                        
+            ! equation 5 (Sanchez et al, 2017, acp)
+            x_ent=(theta_q-theta_q_cbase) / &
+                    (theta_q_ctop-theta_q_cbase)
+            x1=min(max(x_ent,0._wp),1._wp)
+            x2=1._wp-x1
+            
+            !print *,parcel1%theta_q,parcel1%theta_q_cbase,parcel1%theta_q_ctop
+            ! entrainment of vapour:
+            vapour_mass= &!vapour_mass+&
+                x1*(q_ctop)+&
+                x2*(q_cbase)-liquid_mass
+            ! entrainment of liquid:
+            !parcel1%npart=parcel1%npart*x2/x2old
+
+            ! entrainment of theta_q (equation 4, Sanchez et al, 2017, ACP):
+            theta_q=x1*theta_q_ctop + &
+                x2*theta_q_cbase
+            
+            p111=p
+            theta_q_sat=theta_q
+            t=zeroin(150._wp, theta_q_sat, calc_theta_q,1.e-30_wp)
+
+            ! rh
+            rh=vapour_mass / &
+                 ( eps1*svp_liq(t) / &
+                 (p-svp_liq(t)) )
+            x2old=max(x2,1.e-20_wp)
+            print *,x1,x2
+        endif
+        
+        
+    end subroutine cloud_top_entrainment        
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                   
+           
+                
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! update volume and shape in moments                                           !
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>update volume and shape of each crystal
+    subroutine update_volume_and_shape(n_bin_modew,n_bin_mode,n_moments,n_comps, &
+        momtemp,moments,neqice,yice,yoldice,gamma_t,dep_density,npartice)
+    
+        implicit none
+        integer(i4b), intent(in) :: n_bin_modew,n_bin_mode,n_moments,n_comps, neqice
+        real(wp), intent(in) :: gamma_t, dep_density
+        real(wp), dimension(neqice), intent(in) :: yice, yoldice
+        real(wp), dimension(n_bin_mode,n_moments), intent(inout) :: moments
+        real(wp), dimension(n_bin_mode), intent(inout) :: momtemp
+        real(wp), dimension(n_bin_modew), intent(in) :: npartice
+        
+        integer(i4b) :: i
+                
+        do i=1,n_bin_modew
+            ! new total volume
+            momtemp(i)= &
+                moments(n_bin_modew+i,n_comps+3)+ &
+                    (yice(i)-yoldice(i))/dep_density*npartice(i)
+            ! new phi
+            if (momtemp(i)> 0._wp) then
+                moments(n_bin_modew+i,n_comps+1)= moments(n_bin_modew+i,n_comps+1)*&
+                    exp((gamma_t-1._wp)/(gamma_t+2._wp)*&
+                        log(momtemp(i) / moments(n_bin_modew+i,n_comps+3)))
+            else
+                moments(n_bin_modew+i,n_comps+1)= npartice(i)
+            endif
+        enddo
+        ! save new volume
+        moments(n_bin_modew+1:n_bin_mode,n_comps+3)= momtemp(1:n_bin_modew)                
+    end subroutine update_volume_and_shape         
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                
+                
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! one time-step of the bin-microphysics                                        !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -2908,14 +3145,10 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     if(adiabatic_prof) then
         parcel1%yold=parcel1%y ! store old
-        ! total water before:
-        mass1=sum(parcel1%npart*parcel1%y(1:parcel1%n_bin_modew))+ &
-            parcel1%y(parcel1%irh)*eps1* &
-            svp_liq(parcel1%y(parcel1%ite)) / &
-            (parcel1%y(parcel1%ipr)-svp_liq(parcel1%y(parcel1%ite)))
-        if(ice_flag .eq. 1) then
-            mass1=mass1+sum(parcel1%npartice*parcel1%yice(1:parcel1%n_bin_modew))
-        endif
+        call mass_balance(parcel1%neq,parcel1%neqice,parcel1%y,&
+                    parcel1%yice,parcel1%npart,parcel1%npartice, &
+                        mass1,parcel1%n_bin_modew,&
+                        parcel1%irh,parcel1%ite,parcel1%ipr,ice_flag)
     endif    
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
@@ -2943,7 +3176,7 @@
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         ! Moving Centre binning                                            !
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        call moving_centre_liquid(parcel1%n_bin_mode,parcel1%n_bin_modew,&
+        call moving_centre(parcel1%n_bin_mode,parcel1%n_bin_modew,&
                 parcel1%n_bins1,parcel1%n_modes, parcel1%n_comps, &
                 parcel1%imoms+parcel1%n_comps, parcel1%npart, &
                 parcel1%y(1:parcel1%n_bin_modew), &
@@ -2990,24 +3223,17 @@
         ! needed for ice crystal shape                                                   !
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         parcel1%yoldice=parcel1%yice                            ! set the old value of ice
-        rhoa = parcel1%yice(parcel1%ipri) / &
-                (ra*parcel1%y(parcel1%ite))                             ! density of air
-        qvsat = parcel1%yice(parcel1%irhi) * svp_liq(parcel1%y(parcel1%ite)) / &
-            (parcel1%yice(parcel1%ipri)-svp_liq(parcel1%y(parcel1%ite)))        ! qv_sat
-        qv = qvsat * parcel1%yice(parcel1%irhi)
-        call chen_and_lamb_anc(parcel1%yice(parcel1%itei), &
-                qv,qvsat,rhoa,gamma_t, dep_density) ! set the deposition density
         
-        parcel1%phi=parcel1%moments(parcel1%n_bin_modew+1:parcel1%n_bin_mode,n_comps+1) &
-            / parcel1%moments(parcel1%n_bin_modew+1:parcel1%n_bin_mode,n_comps+2)
-        
-        parcel1%nump=parcel1%moments(parcel1%n_bin_modew+1:parcel1%n_bin_mode,n_comps+2) &
-            / parcel1%npartice
-
-        parcel1%rhoi=(parcel1%npartice*parcel1%yice(1:parcel1%n_bin_modew)-&
-            parcel1%moments(parcel1%n_bin_modew+1:parcel1%n_bin_mode,n_comps+4)) &
-            / parcel1%moments(parcel1%n_bin_modew+1:parcel1%n_bin_mode,n_comps+3)
+        call ice_vapour_growth_properties(rhoa,qvsat,qv,&
+            parcel1%neqice,parcel1%yice,parcel1%n_bin_modew,parcel1%npartice,&
+            parcel1%phi,parcel1%nump,parcel1%rhoi, &
+            parcel1%n_bin_mode,parcel1%n_comps+parcel1%imoms,&
+            parcel1%n_comps,parcel1%moments, &
+            gamma_t,dep_density,parcel1%y(parcel1%ite),parcel1%yice(parcel1%ipri),&
+            parcel1%yice(parcel1%irhi))
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        
+        
         
         do while (parcel1%ttice .lt. parcel1%toutice)
             parcel1%istateice=1
@@ -3023,27 +3249,12 @@
         parcel1%y(parcel1%ite)=parcel1%yice(parcel1%itei)
         parcel1%y(parcel1%irh)=parcel1%yice(parcel1%irhi)
         
-        do i=1,parcel1%n_bin_modew
-            ! new total volume
-            parcel1%momtemp(i)= &
-                parcel1%moments(parcel1%n_bin_modew+i,parcel1%n_comps+3)+&
-                (parcel1%yice(i)-parcel1%yoldice(i))/&
-                dep_density*parcel1%npartice(i)
-            ! new phi
-            if (parcel1%momtemp(i)> 0._wp) then
-                parcel1%moments(parcel1%n_bin_modew+i,parcel1%n_comps+1)= &
-                 parcel1%moments(parcel1%n_bin_modew+i,parcel1%n_comps+1)*&
-                    exp((gamma_t-1._wp)/(gamma_t+2._wp)*&
-                        log(parcel1%momtemp(i) / &
-                    parcel1%moments(parcel1%n_bin_modew+i,parcel1%n_comps+3)))
-            else
-                parcel1%moments(parcel1%n_bin_modew+i,parcel1%n_comps+1)= &
-                    parcel1%npartice(i)
-            endif
-        enddo
-        ! save new volume
-        parcel1%moments(parcel1%n_bin_modew+1:parcel1%n_bin_mode,parcel1%n_comps+3)= &
-            parcel1%momtemp(1:parcel1%n_bin_modew)
+        
+        ! update volume, and shape
+        call update_volume_and_shape(parcel1%n_bin_modew,parcel1%n_bin_mode,&
+            parcel1%n_comps+parcel1%imoms,parcel1%n_comps, &
+            parcel1%momtemp,parcel1%moments,parcel1%neqice, &
+            parcel1%yice,parcel1%yoldice,gamma_t,dep_density,parcel1%npartice)
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -3053,7 +3264,7 @@
             !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
             ! Moving Centre binning                                            !
             !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-            call moving_centre_liquid(parcel1%n_bin_mode,parcel1%n_bin_modew,&
+            call moving_centre(parcel1%n_bin_mode,parcel1%n_bin_modew,&
                     parcel1%n_bins1,parcel1%n_modes, parcel1%n_comps, &
                     parcel1%imoms+parcel1%n_comps, parcel1%npartice, &
                     parcel1%yice(1:parcel1%n_bin_modew), &
@@ -3080,85 +3291,21 @@
     
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! vertical entrainment outside of solver (see Sanchez et al, 2017, ACP)!
+    ! (lateral entrainment is inside solver)                               !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     if(vert_ent .and. (.not. adiabatic_prof) .and. &
         (parcel1%y(parcel1%iz) .gt. parcel1%z_cbase) ) then
-        ! vapour mass in the parcel:
-        vapour_mass=parcel1%y(parcel1%irh)*eps1* &
-            svp_liq(parcel1%y(parcel1%ite)) / &
-            (parcel1%y(parcel1%ipr)-svp_liq(parcel1%y(parcel1%ite)))
-
-        ! liquid mass in the parcel:
-        liquid_mass=sum(parcel1%npart*parcel1%y(1:parcel1%n_bin_modew))
-        ! total water in the parcel:
-        mass2=liquid_mass+ vapour_mass
-
-        ! this is the theta q at cloud base, given the total water content
-        if (set_theta_q_cb_flag) then
-            parcel1%theta_q_cbase=calc_theta_q3(parcel1%y(parcel1%ite), &
-                                    parcel1%y(parcel1%ipr), mass2)
-                                    
-            ! locate position
-            iloc=find_pos(parcel1%z_sound(1:n_levels_s),parcel1%y(parcel1%iz))
-            iloc=min(n_levels_s-1,iloc)
-            iloc=max(1,iloc)
-            ! linear interp theta_q
-            call poly_int(parcel1%z_sound(iloc:iloc+1), parcel1%theta_q_sound(iloc:iloc+1), &
-                    min(parcel1%y(parcel1%iz),parcel1%z_sound(n_levels_s)), var,dummy)        
-            parcel1%theta_q_cbase=var
-
-                                    
-            parcel1%q_cbase=mass2 ! total water is all vapour at cloud base
-            if(parcel1%y(parcel1%iz) .gt. parcel1%z_cbase) then
-                set_theta_q_cb_flag=.false.
-            endif
-        endif
+        call cloud_top_entrainment(n_levels_s, parcel1%n_sound, parcel1%neq, &
+            parcel1%n_bin_modew, &
+            parcel1%y(parcel1%irh), parcel1%y(parcel1%ite), &
+            parcel1%y(parcel1%ipr), parcel1%y(parcel1%iz), parcel1%z_cbase, &
+            parcel1%theta_q_ctop, parcel1%q_ctop, parcel1%theta_q_cbase, &
+            parcel1%q_cbase, parcel1%theta_q, &
+            parcel1%x_ent, parcel1%y, parcel1%npart, &
+            parcel1%z_sound, parcel1%theta_q_sound, set_theta_q_cb_flag)   
         
-        if(.not. set_theta_q_cb_flag) then
-            cpm=cp+vapour_mass*cpv+liquid_mass*cpw
+
         
-            ! the new value of theta_q
-            parcel1%theta_q=calc_theta_q3(parcel1%y(parcel1%ite), &
-                                         parcel1%y(parcel1%ipr), mass2)
-            ! locate position
-            iloc=find_pos(parcel1%z_sound(1:n_levels_s),parcel1%y(parcel1%iz))
-            iloc=min(n_levels_s-1,iloc)
-            iloc=max(1,iloc)
-            ! linear interp theta_q
-            call poly_int(parcel1%z_sound(iloc:iloc+1), parcel1%theta_q_sound(iloc:iloc+1), &
-                    min(parcel1%y(parcel1%iz),parcel1%z_sound(n_levels_s)), var,dummy)        
-            parcel1%theta_q=var
-                                        
-            ! equation 5 (Sanchez et al, 2017, acp)
-            parcel1%x_ent=(parcel1%theta_q-parcel1%theta_q_cbase) / &
-                    (parcel1%theta_q_ctop-parcel1%theta_q_cbase)
-            x1=min(max(parcel1%x_ent,0._wp),1._wp)
-            x2=1._wp-x1
-            
-            !print *,parcel1%theta_q,parcel1%theta_q_cbase,parcel1%theta_q_ctop
-            ! entrainment of vapour:
-            vapour_mass= &!vapour_mass+&
-                x1*(parcel1%q_ctop)+&
-                x2*(parcel1%q_cbase)-liquid_mass
-            ! entrainment of liquid:
-            !parcel1%npart=parcel1%npart*x2/x2old
-
-            ! entrainment of theta_q (equation 4, Sanchez et al, 2017, ACP):
-            parcel1%theta_q=x1*parcel1%theta_q_ctop + &
-                x2*parcel1%theta_q_cbase
-            
-            p111=parcel1%y(parcel1%ipr)
-            theta_q_sat=parcel1%theta_q
-            parcel1%y(parcel1%ite)=zeroin(150._wp, &
-                 theta_q_sat, calc_theta_q,1.e-30_wp)
-            print *,x1,x2
-
-            ! rh
-            parcel1%y(parcel1%irh)=vapour_mass / &
-                 ( eps1*svp_liq(parcel1%y(parcel1%ite)) / &
-                 (parcel1%y(parcel1%ipr)-svp_liq(parcel1%y(parcel1%ite))) )
-            x2old=max(x2,1.e-20_wp)
-        endif
     endif
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
@@ -3170,23 +3317,16 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     if(adiabatic_prof) then
         ! total water after:
-        mass2=sum(parcel1%npart*parcel1%y(1:parcel1%n_bin_modew))+ &
-            parcel1%y(parcel1%irh)*eps1* &
-            svp_liq(parcel1%y(parcel1%ite)) / &
-            (parcel1%y(parcel1%ipr)-svp_liq(parcel1%y(parcel1%ite)))
-        if(ice_flag .eq. 1) then
-            mass2=mass2+sum(parcel1%npartice*parcel1%yice(1:parcel1%n_bin_modew))
-        endif
+        call mass_balance(parcel1%neq,parcel1%neqice,parcel1%y,&
+                    parcel1%yice,parcel1%npart,parcel1%npartice, &
+                        mass2,parcel1%n_bin_modew,&
+                        parcel1%irh,parcel1%ite,parcel1%ipr,ice_flag)
         
-        deltam=mass2-mass1
-        vapour_mass=parcel1%y(parcel1%irh)*eps1* &
-            svp_liq(parcel1%y(parcel1%ite)) / &
-            (parcel1%y(parcel1%ipr)-svp_liq(parcel1%y(parcel1%ite)))
-        ! adjust to conserve:
-        vapour_mass=vapour_mass-deltam
-        parcel1%y(parcel1%irh)=vapour_mass / &
-            ( eps1*svp_liq(parcel1%y(parcel1%ite)) / &
-            (parcel1%y(parcel1%ipr)-svp_liq(parcel1%y(parcel1%ite))) )
+        ! adjust the humidity - could also adjust temperature - not currently done
+        call adjust_relative_humidity(mass1,mass2,vapour_mass, &
+            parcel1%y(parcel1%ite), parcel1%y(parcel1%ipr), &
+            parcel1%y(parcel1%irh))
+        
     endif    
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
@@ -3499,7 +3639,67 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! map to sce                                                                   !
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>map the BMM to the SCE variables
+	!>@param[in] ice_flag - flag to say if we are computing ice
+	subroutine map_to_sce(ice_flag)
+	implicit none
+	integer(i4b), intent(in) :: ice_flag
+	
+	
+    ! map BMM to SCE
+    parcel1%npartall(1:parcel1%n_bin_modew)=parcel1%npart
+    parcel1%mbinall(1:parcel1%n_bin_modew,:)=parcel1%mbin
+    parcel1%mbinall(1:parcel1%n_bin_modew,parcel1%n_comps+1)= &
+        parcel1%y(1:parcel1%n_bin_modew)
+    if(ice_flag.eq.1) then
+        parcel1%npartall(1+parcel1%n_bin_modew:parcel1%n_bin_mode)= &
+            parcel1%npartice           
+        parcel1%mbinall(1+parcel1%n_bin_modew:parcel1%n_bin_mode,:)= &
+            parcel1%mbinice
+        parcel1%mbinall(1+parcel1%n_bin_modew:parcel1%n_bin_mode, &
+                        parcel1%n_comps+1)= &
+            parcel1%yice(1:parcel1%n_bin_modew)
+    endif      
+	
+	
+    end subroutine map_to_sce
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! map to bmm                                                                   !
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>map the SCE to the BMM variables
+	!>@param[in] ice_flag - flag to say if we are computing ice
+	subroutine map_to_bmm(ice_flag)
+	implicit none
+	integer(i4b), intent(in) :: ice_flag
+	
+	
+    parcel1%npart=parcel1%npartall(1:parcel1%n_bin_modew)
+    parcel1%mbin=parcel1%mbinall(1:parcel1%n_bin_modew,:)
+    parcel1%y(1:parcel1%n_bin_modew)=parcel1%mbin(:,parcel1%n_comps+1)
+    if(ice_flag.eq.1) then
+        parcel1%npartice= &
+            parcel1%npartall(1+parcel1%n_bin_modew:parcel1%n_bin_mode)         
+        parcel1%mbin= &
+            parcel1%mbinall(1+parcel1%n_bin_modew:parcel1%n_bin_mode,:) 
+        parcel1%yice(1:parcel1%n_bin_modew)=parcel1%mbinice(:,parcel1%n_comps+1)
+                        
+        
+    endif 
+	
+	
+    end subroutine map_to_bmm
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
 
@@ -3512,6 +3712,7 @@
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
 	!>driver for the bin-microphysics module
+	!>@param[in] sce_flag - flag to say if we are computing the SCE
     subroutine bmm_driver(sce_flag)
     use numerics_type
     use sce, only : sce_microphysics
@@ -3530,24 +3731,11 @@
         call bin_microphysics(fparcelwarm, fparcelcold, icenucleation)
         
         if(sce_flag.eq.1) then
-        
-        
-            ! map BMM to SCE
-            parcel1%npartall(1:parcel1%n_bin_modew)=parcel1%npart
-            parcel1%mbinall(1:parcel1%n_bin_modew,:)=parcel1%mbin
-            parcel1%mbinall(1:parcel1%n_bin_modew,parcel1%n_comps+1)= &
-                parcel1%y(1:parcel1%n_bin_modew)
-            if(ice_flag.eq.1) then
-                parcel1%npartall(1+parcel1%n_bin_modew:parcel1%n_bin_mode)= &
-                    parcel1%npartice           
-                parcel1%mbinall(1+parcel1%n_bin_modew:parcel1%n_bin_mode,:)= &
-                    parcel1%mbinice
-                parcel1%mbinall(1+parcel1%n_bin_modew:parcel1%n_bin_mode, &
-                                parcel1%n_comps+1)= &
-                    parcel1%yice(1:parcel1%n_bin_modew)
-            endif      
             
-            
+            ! Map the BMM variables to the SCE variables
+            call map_to_sce(ice_flag)
+              
+              
               
             ! one time-step of sce model
             call sce_microphysics(parcel1%n_bins1,parcel1%n_bin_mode,parcel1%n_comps+&
@@ -3556,19 +3744,10 @@
                             parcel1%ecoll,parcel1%indexc, &
                             parcel1%mbinall(:,n_comps+1),parcel1%dt)
                             
+                            
+                            
             ! map SCE to BMM
-            parcel1%npart=parcel1%npartall(1:parcel1%n_bin_modew)
-            parcel1%mbin=parcel1%mbinall(1:parcel1%n_bin_modew,:)
-            parcel1%y(1:parcel1%n_bin_modew)=parcel1%mbin(:,parcel1%n_comps+1)
-            if(ice_flag.eq.1) then
-                parcel1%npartice= &
-                    parcel1%npartall(1+parcel1%n_bin_modew:parcel1%n_bin_mode)         
-                parcel1%mbin= &
-                    parcel1%mbinall(1+parcel1%n_bin_modew:parcel1%n_bin_mode,:) 
-                parcel1%yice(1:parcel1%n_bin_modew)=parcel1%mbinice(:,parcel1%n_comps+1)
-                                
-                
-            endif
+            call map_to_bmm(ice_flag)
             
         endif    
              
