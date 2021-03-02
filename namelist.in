@@ -5,17 +5,17 @@
 	dt=10.,
 	zinit=450.,
 	tpert=0.0,
-	use_prof_for_tprh=.true.,
-	winit=6.,
-	tinit=244,
+	use_prof_for_tprh=.false.,
+	winit=.6,
+	tinit=244.,
 	pinit=90000,
 	rhinit=0.95,
 	microphysics_flag=1, ! flag for microphysics: 0 (no micro); 
 	                     ! 1 (microphysics on)
-	ice_flag=0,          ! flag for ice-microphysics: 0 (no ice);
+	ice_flag=1,          ! flag for ice-microphysics: 0 (no ice);
 	                     ! 1 (ice on)
 	bin_scheme_flag=0,   ! flag for bin-scheme: 0 (full moving);
-	sce_flag = 1,        ! 0=don't call SCE; 1=call SCE
+	sce_flag = 0,        ! 0=don't call SCE; 1=call SCE
 	vent_flag=1,
 	kappa_flag=1,
 	updraft_type=1,

@@ -2608,17 +2608,17 @@
           moments(i+sz2,sz+2) = moments(i+sz2,sz+2)+dn01(i) 
           ! volume is number concentration times volume of these crystals
           if (m01(i) .gt. 0._wp) then
-              moments(i+sz2,sz+3) = moments(i+sz2,sz+3)+dn01(i)*m01(i)/rhoice
+              moments(i+sz2,sz+3) = moments(i+sz2,sz+3)+dn01(i)*mwat(i)/rhoice
           else
               moments(i+sz2,sz+3)=0._wp
           endif
       enddo
       !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
       
-      where(m01.gt.0._wp.and.npartice.gt.0._wp)
+      where((m01.gt.0._wp).and.(npartice.gt.0._wp))
         yice=m01
-      elsewhere
-        yice=yice
+!       elsewhere
+!         yice=yice
       end where
       
       ! aerosol mass in ice bins
@@ -2693,29 +2693,28 @@
         nparttemp=0._wp ! zero
         totmass=0._wp ! zero
 
-
         ! loop over the "warm" moments
         do i=1,n_bin_modew
-            thismode=(i-1)/n_binst+1
-            thisbin=modulo(i-1,n_binst)+1
-            
+            thismode=(i-1)/n_binst+1                ! this is the mode of i
+            thisbin=modulo(i-1,n_binst)+1           ! this is the bin
             if(npart(i).gt.0._wp) then
                 moment_exists(i)=.true.
-                ! this one does not change
+                ! if the mass is in the right bin, just add it
                 if ((masses(i).gt.mbinedges(thisbin,thismode)).and. &
                     (masses(i).le.mbinedges(thisbin+1,thismode))) then
-
                     momtemp(i,:)=momtemp(i,:)+moments(i,:)
                     nparttemp(i)=nparttemp(i)+npart(i)
                     totmass(i)=totmass(i)+npart(i)*masses(i)
                 else
-                
+                    ! if the current mass is not in the correct bin
                     ! find the bin it should be in
                     do j=1,n_binst
                         if ((masses(i).gt.mbinedges(j,thismode)).and. &
                             (masses(i).le.mbinedges(j+1,thismode))) then
                         
                             newplace=(thismode-1)*n_binst+j
+!                             print *,newplace, j, i,thisbin,thismode,masses(i), mbinedges(j,thismode), &
+!                                 mbinedges(j+1,thismode)
                             ! add the moment from i to newplace
                             momtemp(newplace,:)=momtemp(newplace,:)+moments(i,:)
                             nparttemp(newplace)=nparttemp(newplace)+npart(i)
@@ -2733,28 +2732,28 @@
         
         ! now, set the masses, moments in second loop
         do i=1,n_bin_modew
-            thismode=(i-1)/n_binst+1
-            thisbin=modulo(i-1,n_binst)+1
+            thismode=(i-1)/n_binst+1                ! this is the mode of i
+            thisbin=modulo(i-1,n_binst)+1           ! this is the bin
 
             if(nparttemp(i).gt.0._wp) then
                 moments(i,:)=momtemp(i,:)
                 npart(i)=nparttemp(i)
-                masses(i)=totmass(i) / npart(i)
-                if ((masses(i).gt.mbinedges(thisbin,thismode)).and. &
-                    (masses(i).le.mbinedges(thisbin+1,thismode))) then
+                !masses(i)=totmass(i) / npart(i)
+                mbin(i,1:n_comps)=moments(i,1:n_comps)/npart(i)
+                if (.not.((masses(i).gt.mbinedges(thisbin,thismode)).and. &
+                    (masses(i).le.mbinedges(thisbin+1,thismode)))) then
                     
                     masses(i)=0.5_wp*(mbinedges(thisbin,thismode)+ &
                                     mbinedges(thisbin+1,thismode))
                     npart(i)=totmass(i) / masses(i)
                 endif                
-                mbin(i,1:n_comps)=moments(i,1:n_comps)/npart(i)
                 mbin(i,n_comps+1)=masses(i)
             else
                 moments(i,:)=0._wp
                 npart(i)=0._wp
                 masses(i)=0.5_wp*(mbinedges(thisbin,thismode)+ &
                                     mbinedges(thisbin+1,thismode))
-                mbin(i,1:n_comps)=0._wp
+                !mbin(i,1:n_comps)=0._wp
                 mbin(i,n_comps+1)=masses(i)
             endif
         enddo
@@ -2920,8 +2919,9 @@
         
         
         rhoa = p / (ra*t)                             ! density of air
-        qvsat = rhi * svp_liq(t) / (p-svp_liq(t))        ! qv_sat
-        qv = qvsat * rhi
+        qv = rhi*eps1*svp_liq(t) / (p-svp_liq(t))        ! qv_sat
+        qvsat = (eps1*svp_ice(t) / (p-svp_ice(t)))
+
         call chen_and_lamb_anc(t, &
                 qv,qvsat,rhoa,gamma_t, dep_density) ! set the deposition density
         
@@ -3255,6 +3255,11 @@
             parcel1%n_comps+parcel1%imoms,parcel1%n_comps, &
             parcel1%momtemp,parcel1%moments,parcel1%neqice, &
             parcel1%yice,parcel1%yoldice,gamma_t,dep_density,parcel1%npartice)
+        ! set number of monomers to come from liquid too?            
+        !parcel1%moments(1:parcel1%n_bin_modew,n_comps+2)=parcel1%npart
+        ! set mass to come from liquid
+        parcel1%moments(1:parcel1%n_bin_modew,n_comps+4)=parcel1%npart* &
+            parcel1%y(1:parcel1%n_bin_modew)
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -3374,6 +3379,7 @@
     implicit none
     logical, intent(inout) :: new_file
     character (len=*),intent(in) :: outputfile
+    real(sp) :: phi
     ! output to netcdf file
     if(new_file) then
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -3527,6 +3533,34 @@
             call check( nf90_put_att(io1%ncid, io1%a_dimid, &
                        "units", "kg") )
                    
+            ! define variable: phi
+            call check( nf90_def_var(io1%ncid, "phi", NF90_DOUBLE, &
+                        (/io1%x_dimid/), io1%varid) )
+            ! get id to a_dimid
+            call check( nf90_inq_varid(io1%ncid, "phi", io1%a_dimid) )
+            ! units
+            call check( nf90_put_att(io1%ncid, io1%a_dimid, &
+                       "units", "") )  
+                        
+            ! define variable: nmon
+            call check( nf90_def_var(io1%ncid, "nmon", NF90_DOUBLE, &
+                        (/io1%x_dimid/), io1%varid) )
+            ! get id to a_dimid
+            call check( nf90_inq_varid(io1%ncid, "nmon", io1%a_dimid) )
+            ! units
+            call check( nf90_put_att(io1%ncid, io1%a_dimid, &
+                       "units", "") )  
+                        
+            ! define variable: rhoi
+            call check( nf90_def_var(io1%ncid, "rhoi", NF90_DOUBLE, &
+                        (/io1%x_dimid/), io1%varid) )
+            ! get id to a_dimid
+            call check( nf90_inq_varid(io1%ncid, "rhoi", io1%a_dimid) )
+            ! units
+            call check( nf90_put_att(io1%ncid, io1%a_dimid, &
+                       "units", "kg/m3") )  
+                        
+                   
                    
         endif
         
@@ -3628,6 +3662,32 @@
             reshape(parcel1%yice(1:parcel1%n_bin_modew),(/n_bins,n_mode/)), &
              start = (/1,1,io1%icur/)))
 
+        ! write variable: phi
+        phi=sum(parcel1%moments(parcel1%n_bin_modew+1:parcel1%n_bin_mode, &
+            parcel1%n_comps+1)) / sum(parcel1%moments(parcel1%n_bin_modew+1:parcel1%n_bin_mode, &
+            parcel1%n_comps+2))
+        call check( nf90_inq_varid(io1%ncid, "phi", io1%varid ) )
+        call check( nf90_put_var(io1%ncid, io1%varid, &
+            phi, start = (/io1%icur/)))
+    
+        ! write variable: nmon
+        phi=sum(parcel1%moments(parcel1%n_bin_modew+1:parcel1%n_bin_mode, &
+            parcel1%n_comps+2)) / sum(parcel1%npartice)
+        call check( nf90_inq_varid(io1%ncid, "nmon", io1%varid ) )
+        call check( nf90_put_var(io1%ncid, io1%varid, &
+            phi, start = (/io1%icur/)))
+    
+        ! write variable: rhoi
+        phi=sum(parcel1%yice(1:parcel1%n_bin_modew)* &
+                parcel1%npartice(1:parcel1%n_bin_modew) - &
+                parcel1%moments(parcel1%n_bin_modew+1:parcel1%n_bin_mode, &
+            parcel1%n_comps+4)) / &
+                sum(parcel1%moments(parcel1%n_bin_modew+1:parcel1%n_bin_mode, &
+                parcel1%n_comps+3))
+        call check( nf90_inq_varid(io1%ncid, "rhoi", io1%varid ) )
+        call check( nf90_put_var(io1%ncid, io1%varid, &
+            phi, start = (/io1%icur/)))
+    
     endif
     
 
@@ -3715,10 +3775,10 @@
 	!>@param[in] sce_flag - flag to say if we are computing the SCE
     subroutine bmm_driver(sce_flag)
     use numerics_type
-    use sce, only : sce_microphysics
+    use sce, only : sce_microphysics, qsmall
     implicit none
     integer(i4b), intent(in) :: sce_flag
-    integer(i4b) :: i, nt
+    integer(i4b) :: i, j, nt
     
     
     nt=ceiling(runtime / real(dt,kind=wp))
@@ -3744,7 +3804,12 @@
                             parcel1%ecoll,parcel1%indexc, &
                             parcel1%mbinall(:,n_comps+1),parcel1%dt)
                             
-                            
+            ! redefine the mass of each component of aerosol
+            do j=1,parcel1%n_comps
+                where (parcel1%npartall(:).gt.qsmall)
+                    parcel1%mbinall(:,j)=parcel1%moments(:,j)/parcel1%npartall(:)
+                end where
+            enddo                             
                             
             ! map SCE to BMM
             call map_to_bmm(ice_flag)
