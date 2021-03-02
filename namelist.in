@@ -5,8 +5,8 @@
 	dt=10.,
 	zinit=450.,
 	tpert=0.0,
-	use_prof_for_tprh=.false.,
-	winit=.6,
+	use_prof_for_tprh=.true.,
+	winit=2.,
 	tinit=244.,
 	pinit=90000,
 	rhinit=0.95,
@@ -19,8 +19,8 @@
 	vent_flag=1,
 	kappa_flag=1,
 	updraft_type=1,
- 	adiabatic_prof=.true.,
-    vert_ent=.true., ! entrain in vertical (.true.); or laterally (.false.)
+ 	adiabatic_prof=.true., ! to have entrainment on, set this flag to false
+    vert_ent=.false., ! entrain in vertical (.true.); or laterally (.false.)
     z_ctop=1200., ! height of cloud-top for vertical entrainment
  	ent_rate=1.e-3, 
  	n_levels_s = 151,

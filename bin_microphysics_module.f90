@@ -2994,6 +2994,7 @@
             endif
         endif
         
+        ! do the entrainment only above cloud-base
         if(.not. set_theta_q_cb_flag) then
             cpm=cp+vapour_mass*cpv+liquid_mass*cpw
         
