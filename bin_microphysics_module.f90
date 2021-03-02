@@ -86,7 +86,8 @@
 
         type io
             ! variables for io
-            integer(i4b) :: ncid, varid, x_dimid, bin_dimid, mode_dimid, y_dimid, z_dimid, &
+            integer(i4b) :: ncid, varid, x_dimid, bin_dimid, bin2_dimid, bin3_dimid, &
+                            mode_dimid, comp_dimid, y_dimid, z_dimid, &
                             dimids(2), a_dimid, xx_dimid, yy_dimid, &
                             zz_dimid, i_dimid, j_dimid, k_dimid, nq_dimid, nprec_dimid
             integer(i4b) :: icur=1
@@ -2496,13 +2497,15 @@
       real(wp), intent(in) :: p,rh,dt
       real(wp), dimension(sz2), intent(inout) :: npart,npartice
       real(wp), dimension(sz2), intent(in) :: mwat
-      real(wp), dimension(sz2,sz), intent(in) :: mbin2, &
+      real(wp), dimension(sz2,sz), intent(in) :: &
                                               rhobin,nubin,kappabin,molwbin
       real(wp), dimension(2*sz2,sz3), intent(inout) :: moments
       integer(i4b), intent(in) :: sz,sz2, sz3
+      real(wp), dimension(sz2,sz), intent(in) :: mbin2
+      real(wp), dimension(sz2,sz+1), intent(inout) :: mbin2_ice
+
       real(wp), dimension(sz2) :: nw,aw,jw,dn01,m01,ns,dw,dd,kappa,rhoat
       real(wp), dimension(sz2,sz) :: dmaer01
-      real(wp), dimension(sz2,sz), intent(inout) :: mbin2_ice
       
       real(wp), intent(inout), dimension(sz2) :: yice
       
@@ -2580,7 +2583,7 @@
       endif
       !!!!
       ! total aerosol mass in each bin added together:
-      dmaer01(:,:)=(mbin2_ice(:,:)*(spread(npartice(:),2,sz)+1.e-50_wp)+ &
+      dmaer01(:,:)=(mbin2_ice(:,1:sz)*(spread(npartice(:),2,sz)+1.e-50_wp)+ &
                       mbin2(:,:)*spread(dn01(:),2,sz) ) 
       ! total water mass that will be in the ice bins:
       m01=(yice*npartice+mwat(:)*dn01(:)) 
@@ -2622,8 +2625,9 @@
       end where
       
       ! aerosol mass in ice bins
-      mbin2_ice(:,:)=dmaer01(:,:)/(1.e-50_wp+spread(npartice,2,sz))
-
+      mbin2_ice(:,1:sz)=dmaer01(:,:)/(1.e-50_wp+spread(npartice,2,sz))
+      moments(1+sz2:2*sz2,1:sz)=dmaer01(:,:)
+      mbin2_ice(:,sz+1)=yice
       ! latent heat of fusion:
       t=t+lf/cp*sum(mwat(:)*dn01(:))
     end subroutine icenucleation
@@ -2738,7 +2742,7 @@
             if(nparttemp(i).gt.0._wp) then
                 moments(i,:)=momtemp(i,:)
                 npart(i)=nparttemp(i)
-                !masses(i)=totmass(i) / npart(i)
+                masses(i)=totmass(i) / npart(i)
                 mbin(i,1:n_comps)=moments(i,1:n_comps)/npart(i)
                 if (.not.((masses(i).gt.mbinedges(thisbin,thismode)).and. &
                     (masses(i).le.mbinedges(thisbin+1,thismode)))) then
@@ -2753,7 +2757,7 @@
                 npart(i)=0._wp
                 masses(i)=0.5_wp*(mbinedges(thisbin,thismode)+ &
                                     mbinedges(thisbin+1,thismode))
-                !mbin(i,1:n_comps)=0._wp
+                mbin(i,1:n_comps)=0._wp
                 mbin(i,n_comps+1)=masses(i)
             endif
         enddo
@@ -3135,7 +3139,7 @@
                                                   rhobin,nubin,kappabin,molwbin
             real(wp), dimension(2*sz2,sz3), intent(inout) :: moments
             integer(i4b), intent(in) :: sz,sz2, sz3
-            real(wp), dimension(sz2,sz), intent(inout) :: mbin2_ice
+            real(wp), dimension(sz2,sz+1), intent(inout) :: mbin2_ice
             real(wp), intent(inout), dimension(sz2) :: yice
         end subroutine func3
     end interface
@@ -3196,7 +3200,7 @@
                 parcel1%npartice(1:parcel1%n_bin_modew), &
                 parcel1%y(1:parcel1%n_bin_modew), &
                 parcel1%mbin(:,1:n_comps), &
-                parcel1%mbinice(:,1:n_comps), &
+                parcel1%mbinice(:,1:n_comps+1), &
                 parcel1%rhobin(:,1:n_comps), &
                 parcel1%nubin(:,1:n_comps), &
                 parcel1%kappabin(:,1:n_comps), &
@@ -3389,7 +3393,9 @@
         ! define dimensions (netcdf hands back a handle)
         call check( nf90_def_dim(io1%ncid, "times", NF90_UNLIMITED, io1%x_dimid) )
         call check( nf90_def_dim(io1%ncid, "nbins", n_bins, io1%bin_dimid) )
-        call check( nf90_def_dim(io1%ncid, "nmodes", n_mode, io1%mode_dimid) )
+        call check( nf90_def_dim(io1%ncid, "nbinst", parcel1%n_bins1, io1%bin2_dimid) )
+        call check( nf90_def_dim(io1%ncid, "nmodes", parcel1%n_modes, io1%mode_dimid) )
+        call check( nf90_def_dim(io1%ncid, "ncomps", parcel1%n_comps, io1%comp_dimid) )
         
         ! close the file, freeing up any internal netCDF resources
         ! associated with the file, and flush any buffers
@@ -3502,6 +3508,25 @@
         call check( nf90_put_att(io1%ncid, io1%a_dimid, &
                    "units", "kg") )
                    
+        ! define variable: nwat
+        call check( nf90_def_var(io1%ncid, "nwat", NF90_DOUBLE, &
+                    (/io1%bin2_dimid,io1%mode_dimid, io1%x_dimid/), io1%varid) )
+        ! get id to a_dimid
+        call check( nf90_inq_varid(io1%ncid, "nwat", io1%a_dimid) )
+        ! units
+        call check( nf90_put_att(io1%ncid, io1%a_dimid, &
+                   "units", "#/kg") )
+
+        ! define variable: maer
+        call check( nf90_def_var(io1%ncid, "maer", NF90_DOUBLE, &
+                    (/io1%bin2_dimid,io1%mode_dimid,io1%comp_dimid, io1%x_dimid/), &
+                        io1%varid) )
+        ! get id to a_dimid
+        call check( nf90_inq_varid(io1%ncid, "maer", io1%a_dimid) )
+        ! units
+        call check( nf90_put_att(io1%ncid, io1%a_dimid, &
+                   "units", "kg") )
+                   
                    
                    
         if(ice_flag .eq. 1) then
@@ -3560,6 +3585,25 @@
             call check( nf90_put_att(io1%ncid, io1%a_dimid, &
                        "units", "kg/m3") )  
                         
+            ! define variable: nicem
+            call check( nf90_def_var(io1%ncid, "nicem", NF90_DOUBLE, &
+                        (/io1%bin2_dimid,io1%mode_dimid, io1%x_dimid/), io1%varid) )
+            ! get id to a_dimid
+            call check( nf90_inq_varid(io1%ncid, "nicem", io1%a_dimid) )
+            ! units
+            call check( nf90_put_att(io1%ncid, io1%a_dimid, &
+                       "units", "#/kg") )
+
+
+            ! define variable: maeri
+            call check( nf90_def_var(io1%ncid, "maeri", NF90_DOUBLE, &
+                        (/io1%bin2_dimid,io1%mode_dimid,io1%comp_dimid, io1%x_dimid/), &
+                            io1%varid) )
+            ! get id to a_dimid
+            call check( nf90_inq_varid(io1%ncid, "maeri", io1%a_dimid) )
+            ! units
+            call check( nf90_put_att(io1%ncid, io1%a_dimid, &
+                       "units", "kg") ) 
                    
                    
         endif
@@ -3643,6 +3687,18 @@
     call check( nf90_put_var(io1%ncid, io1%varid, &
         reshape(parcel1%y(1:parcel1%n_bin_modew),(/n_bins,n_mode/)), start = (/1,1,io1%icur/)))
 
+    call check( nf90_inq_varid(io1%ncid, "nwat", io1%varid ) )
+    call check( nf90_put_var(io1%ncid, io1%varid, &
+        reshape(parcel1%npart(1:parcel1%n_bin_modew), &
+        (/parcel1%n_bins1,parcel1%n_modes/)), start = (/1,1,io1%icur/)))
+
+
+    call check( nf90_inq_varid(io1%ncid, "maer", io1%varid ) )
+    call check( nf90_put_var(io1%ncid, io1%varid, &
+        reshape(parcel1%mbin(1:parcel1%n_bin_modew,&
+            1:parcel1%n_comps), &
+        (/parcel1%n_bins1,parcel1%n_modes,parcel1%n_comps/)), start = (/1,1,1,io1%icur/)))
+
     if(ice_flag .eq. 1) then
         ! write variable: qi
         call check( nf90_inq_varid(io1%ncid, "qi", io1%varid ) )
@@ -3687,7 +3743,20 @@
         call check( nf90_inq_varid(io1%ncid, "rhoi", io1%varid ) )
         call check( nf90_put_var(io1%ncid, io1%varid, &
             phi, start = (/io1%icur/)))
-    
+            
+        call check( nf90_inq_varid(io1%ncid, "nicem", io1%varid ) )
+        call check( nf90_put_var(io1%ncid, io1%varid, &
+            reshape(parcel1%npartice(1:parcel1%n_bin_modew), &
+            (/parcel1%n_bins1,parcel1%n_modes/)), start = (/1,1,io1%icur/)))
+
+        call check( nf90_inq_varid(io1%ncid, "maeri", io1%varid ) )
+        call check( nf90_put_var(io1%ncid, io1%varid, &
+            reshape(parcel1%mbinice(:,&
+                1:parcel1%n_comps), &
+            (/parcel1%n_bins1,parcel1%n_modes,parcel1%n_comps/)), start = (/1,1,1,io1%icur/)))
+
+            
+            
     endif
     
 
@@ -3750,7 +3819,7 @@
     if(ice_flag.eq.1) then
         parcel1%npartice= &
             parcel1%npartall(1+parcel1%n_bin_modew:parcel1%n_bin_mode)         
-        parcel1%mbin= &
+        parcel1%mbinice= &
             parcel1%mbinall(1+parcel1%n_bin_modew:parcel1%n_bin_mode,:) 
         parcel1%yice(1:parcel1%n_bin_modew)=parcel1%mbinice(:,parcel1%n_comps+1)
                         

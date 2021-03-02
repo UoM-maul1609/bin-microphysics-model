@@ -15,7 +15,7 @@
 	ice_flag=1,          ! flag for ice-microphysics: 0 (no ice);
 	                     ! 1 (ice on)
 	bin_scheme_flag=0,   ! flag for bin-scheme: 0 (full moving);
-	sce_flag = 0,        ! 0=don't call SCE; 1=call SCE
+	sce_flag = 1,        ! 0=don't call SCE; 1=call SCE
 	vent_flag=1,
 	kappa_flag=1,
 	updraft_type=1,
@@ -69,7 +69,7 @@
 ! 	                        0., 
 ! 	                        0., 
 ! 	                        0., 	                        
-!     ! internal modes X external mixture modes 
+     ! internal modes X external mixture modes 
 !  	n_aer1(1:2,1:3)        = 1000.e6, 1000.e6, 
 !  	                         500.e6, 500.e6, 
 !  	                         1.e6, 1.e6, 
