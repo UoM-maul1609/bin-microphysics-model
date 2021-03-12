@@ -7,7 +7,7 @@
 	!>param[inout] y,dy: value of y and error in y
 	subroutine poly_int(xarr,yarr,x,y,dy)
 	    use numerics_type
-        use numerics, only : assert_eq,imaxloc,numerics_error
+        use numerics, only : assert_eq,iminloc,numerics_error
         implicit none
         real(wp), dimension(:), intent(in) :: xarr,yarr
         real(wp), intent(in) :: x
@@ -18,7 +18,7 @@
         c=yarr
         d=yarr
         dx=xarr-x
-        ns=imaxloc(abs(dx))
+        ns=iminloc(abs(dx))
         y=yarr(ns) ! nearest neighbour
         ns=ns-1
         do m=1,n-1 ! there are n-1 additional terms
