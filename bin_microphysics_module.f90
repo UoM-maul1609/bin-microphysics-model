@@ -19,7 +19,10 @@
         						lv=2.5e6_wp, ls=2.837e6_wp, lf=ls-lv, ttr=273.15_wp, &
         						joules_in_an_erg=1.0e-7_wp,joules_in_a_cal=4.187e0_wp, &
         						rhow=1000._wp, ra=r_gas/molw_a,rv=r_gas/molw_water , &
-        						eps1=ra/rv, rhoice=910._wp
+        						eps1=ra/rv, rhoice=910._wp, &
+        						mass_fragment1=pi/6._wp*rhoice*10.e-6_wp**3._wp, &
+        						mass_fragment2=mass_fragment1, &
+        						mass_fragment3=mass_fragment1
         						
 
         type parcel
@@ -59,7 +62,7 @@
             ! general
             integer(i4b) :: imoms
             real(wp), allocatable, dimension(:,:) :: moments, mbinedges,ecoll,ecoal
-            real(wp), allocatable, dimension(:) :: momtemp
+            real(wp), allocatable, dimension(:) :: momtemp, vel
             integer(i4b), allocatable, dimension(:) :: momenttype
             integer(i4b), dimension(:,:), allocatable :: indexc                            
                                           
@@ -437,6 +440,8 @@
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
     allocate( parcel1%indexc(1:parcel1%n_bin_mode,1:parcel1%n_bin_mode), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+    allocate( parcel1%vel(1:parcel1%n_bin_mode), STAT = AllocateStatus)
+    if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
 
     allocate( parcel1%q_sound(1:parcel1%n_sound,1:nq), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
@@ -464,7 +469,6 @@
 
 
 
-
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! set-up size distribution                                                     !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -481,14 +485,13 @@
         parcel1%d(1+(k-1)*(n_bins+1))=dmina
         do i=1,n_bins
             d_dummy=parcel1%d(i+(k-1)*(n_bins+1))
-            n_dummy=number_per_bin*(1._wp-1.e-15_wp)
+            n_dummy=number_per_bin*(1._wp-1.e-5_wp)
             parcel1%d(i+1+(k-1)*(n_bins+1))= zeroin(&
                         d_dummy*0.9_wp,dmaxa*2._wp,find_upper_diameter, 1.e-30_wp)
         enddo
         parcel1%d((k)*(n_bins+1))=dmaxa ! nail it to end point - round off
     enddo
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    
     
     
 
@@ -952,11 +955,11 @@
 	!>maps the sce variables onto BMM
     subroutine write_sce_to_bmm(n_bin_mode,n_bin_modew,n_binst,n_mode, n_comps, n_moments, &
                     ice_flag, &
-                    npart, moments, mbin, indexc,ecoll,mbinedges)
+                    npart, moments, mbin, vel, indexc,ecoll,mbinedges)
     implicit none
     integer(i4b), intent(in) :: n_bin_mode, n_bin_modew, &
         n_binst, n_mode, n_comps, n_moments, ice_flag
-    real(wp), dimension(n_bin_mode), intent(in) :: npart
+    real(wp), dimension(n_bin_mode), intent(in) :: npart,vel
     real(wp), dimension(n_bin_mode,n_moments), intent(in) :: moments
     real(wp), dimension(n_bin_mode,n_comps+1), intent(in) :: mbin
     real(wp), dimension(n_binst+1,n_mode), intent(in) :: mbinedges
@@ -976,6 +979,7 @@
     
     parcel1%indexc=indexc
     parcel1%ecoll=ecoll
+    parcel1%vel=vel
 
     if(ice_flag.eq.1) then
         parcel1%npartice=npart(n_bin_modew+1:2*n_bin_modew)
@@ -986,6 +990,9 @@
         ! starting, so no need to set ice moments here
         
         ! other aerosol properties were set in set-up
+        ! if drops create ice crystals we need to add phi and nmon
+        parcel1%moments(1:n_bin_modew,n_comps+1)=npart(1:n_bin_modew)
+        parcel1%moments(1:n_bin_modew,n_comps+2)=npart(1:n_bin_modew)
     endif
         
     end subroutine write_sce_to_bmm
@@ -2561,10 +2568,11 @@
       nprimary=demott_2010(t,naer05)
       ! ensure the number nucleated is less than the number that can nucleate
       nprimary=min(naer05,nprimary) 
+      nprimary=max(nprimary-sum(dn01+moments(sz2+1:2*sz2,sz+2)),0._wp)
       !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
       ! deplete the aerosols larger than 0.5 microns
       ! maybe in future will want to deplete the largest first
-      do i=1,sz2
+      do i=sz2,1,-1
         if (nprimary.le.0._wp) exit
         if ((dd(i).gt.0.5e-6_wp).and.(rh.ge.1._wp)) then
             ! it can nucleate
@@ -3845,7 +3853,7 @@
 	!>@param[in] sce_flag - flag to say if we are computing the SCE
     subroutine bmm_driver(sce_flag)
     use numerics_type
-    use sce, only : sce_microphysics, qsmall
+    use sce, only : sce_microphysics, sce_sip_microphysics, qsmall
     implicit none
     integer(i4b), intent(in) :: sce_flag
     integer(i4b) :: i, j, nt
@@ -3866,13 +3874,19 @@
             call map_to_sce(ice_flag)
               
               
-              
             ! one time-step of sce model
             call sce_microphysics(parcel1%n_bins1,parcel1%n_bin_mode,parcel1%n_comps+&
                             parcel1%imoms,&
                             parcel1%npartall,parcel1%moments,parcel1%momenttype, &
                             parcel1%ecoll,parcel1%indexc, &
                             parcel1%mbinall(:,n_comps+1),parcel1%dt)
+!             call sce_sip_microphysics(parcel1%n_bins1,parcel1%n_bin_mode,parcel1%n_comps+&
+!                             parcel1%imoms,&
+!                             parcel1%npartall,parcel1%moments,parcel1%momenttype, &
+!                             parcel1%ecoll,parcel1%indexc, &
+!                             parcel1%mbinall(:,n_comps+1),parcel1%vel,parcel1%dt, &
+!                             parcel1%y(parcel1%ite), &
+!                             mass_fragment1, mass_fragment2, mass_fragment3 )
                             
             ! redefine the mass of each component of aerosol
             do j=1,parcel1%n_comps
