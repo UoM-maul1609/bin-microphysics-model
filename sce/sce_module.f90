@@ -21,7 +21,8 @@
         						rhow=1000._wp, ra=r_gas/molw_a,rv=r_gas/molw_water , &
         						eps1=ra/rv, rhoice=910._wp, n_avo=6.02e23_wp, &
         						kboltz=r_gas/n_avo, epsilond=2000.e-4_wp, &
-        						qsmall=1.e-30_wp
+        						qsmall=1.e-60_wp
+        						
         						
 
         type parcel
@@ -48,7 +49,7 @@
             ! ice water
             real(wp), dimension(:), allocatable :: dice, maerice, npartice, rho_coreice, &
                             rh_eqice, rhoatice, dwice, da_dtice, nice, &
-                            phi, rhoi, nump, rime
+                            phi, rhoi, nump, rime, vel
             real(wp), dimension(:,:), allocatable :: mbinice, rhobinice, &
                                         nubinice,molwbinice,kappabinice ! all bins x all comps                                
 
@@ -100,6 +101,23 @@
         real(wp), allocatable, dimension(:,:) :: lwc, dbar, iwc, dbari
         
         
+
+        ! Vardiman (1978) fits to figure 6 - note delta M in units on g cm s-1
+        real(sp), dimension(3), parameter :: vard01=[0.000495314304309_wp, &
+                                                 0.281199363154805_wp, &
+                                                 3.380130133900658_wp], &
+                                         vard02=[0.304288838581395_wp, &
+                                                 4.452491028368538_wp, &
+                                                 17.511640705855431_wp], &
+                                         vard03=[1.549508244781713_wp, &
+                                                 21.756014605694737_wp, &
+                                                 77.539493556502251_wp], &
+                                         vard04=[0.924318964759507_wp, &
+                                                 15.774108106443462_wp, &
+                                                 68.805308506959534_wp], &
+                                         vard05=[0.162609020092783_wp, &
+                                                 3.031949785103254_wp, &
+                                                 15.296369750198556_wp]
 
         ! variables for model
         real(wp) :: n_dummy, d_dummy
@@ -263,7 +281,7 @@
                     ice_flag, &
                     pinit,tinit,rhinit,dt,dmina,dmaxa,dminc,dmaxc,&
                     mass_frac_aer1,density_core1,nu_core1,molw_core1, kappa_core1, &
-                    n_aer1,d_aer1,sig_aer1)
+                    n_aer2,d_aer2,sig_aer2)
     use numerics_type
     use numerics, only : find_pos, poly_int, zeroin, fmin,vode_integrate
 
@@ -273,7 +291,7 @@
     real(wp), dimension(1:n_mode,1:n_comps), intent(in) :: mass_frac_aer1
     real(wp), dimension(1:n_comps), intent(in) :: molw_core1, density_core1, &
                                                 nu_core1, kappa_core1
-    real(wp), dimension(1:n_intern,1:n_mode), intent(in) :: n_aer1,d_aer1,sig_aer1
+    real(wp), dimension(1:n_intern,1:n_mode), intent(in) :: n_aer2,d_aer2,sig_aer2
     
     
     real(wp) :: num, ntot, number_per_bin, test, var1, &
@@ -362,6 +380,8 @@
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
     allocate( parcel1%ecoll(1:parcel1%n_bin_mode,1:parcel1%n_bin_mode), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+    allocate( parcel1%vel(1:parcel1%n_bin_mode), STAT = AllocateStatus)
+    if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
     allocate( parcel1%indexc(1:parcel1%n_bin_mode,1:parcel1%n_bin_mode), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -382,26 +402,32 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! set-up size distribution                                                     !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! set local PSD parameters
+    n_aer1(1:n_intern,1:n_mode)=n_aer2
+    d_aer1(1:n_intern,1:n_mode)=d_aer2
+    sig_aer1(1:n_intern,1:n_mode)=sig_aer2
     do k=1,n_mode
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         ! Aerosol                                                                  !
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         idum=k ! this is sent through to zbrent to select the correct mode
         ! find total number in mode between dmina and dmaxa:
-        call lognormal_n_between_limits(n_aer1(:,k),d_aer1(:,k),sig_aer1(:,k), &
+        call lognormal_n_between_limits(n_aer2(:,k),d_aer2(:,k),sig_aer2(:,k), &
                                         n_intern,dmina,dmaxa, num)
-        !print *,num
+        
         ! set up variables for parcel model
         ntot=num
         number_per_bin=ntot/real(parcel1%n_bins1,wp)
+        
         parcel1%npart(1+(k-1)*parcel1%n_binst:(k-1)*parcel1%n_binst+parcel1%n_bins1)=&
             number_per_bin
         parcel1%d(1+(k-1)*(parcel1%n_binst+1))=dmina
         do i=1,parcel1%n_bins1
             d_dummy=parcel1%d(i+(k-1)*(parcel1%n_binst+1))
-            n_dummy=number_per_bin*(1._wp-1.e-15_wp)
+            n_dummy=number_per_bin *(1._wp-1.e-5_wp)
+            
             parcel1%d(i+1+(k-1)*(parcel1%n_binst+1))= zeroin(&
-                        d_dummy*0.9_wp,dmaxa*2._wp,find_upper_diameter, 1.e-30_wp)
+                        d_dummy,dmaxa*2._wp,find_upper_diameter, 1.e-30_wp)
         enddo
         parcel1%d((parcel1%n_bins1+1)+ &
             (k-1)*(parcel1%n_binst+1))=dmaxa ! nail it to end point - round off
@@ -677,7 +703,7 @@
     ! collision efficiency - gravitational settling                                !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     call ecollision(parcel1%t,parcel1%p, &
-        parcel1%dw,sum(parcel1%mbin,2),parcel1%n_bin_mode,parcel1%ecoll) 
+        parcel1%dw,sum(parcel1%mbin,2),parcel1%n_bin_mode,parcel1%ecoll,parcel1%vel) 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -725,11 +751,12 @@
 	!>@param[in] t, p - temperature and pressure
 	!>@param[in] dw, mw - diameters and masses of droplets
 	!>@param[in] sz - size of array
-	!>@param[inout] ecoll: collision efficiency
-    subroutine ecollision(t, p,dw,mw,sz,ecoll) 
+	!>@param[inout] ecoll: collision efficiency, vel: terminal fall-speed
+    subroutine ecollision(t, p,dw,mw,sz,ecoll,vel) 
     real(wp), intent(in) :: t, p
     integer(i4b), intent(in) :: sz
     real(wp), intent(in), dimension(sz) :: dw, mw
+    real(wp), intent(inout), dimension(sz) :: vel
     real(wp), intent(inout), dimension(sz,sz) :: ecoll
     
     integer(i4b) :: i,j
@@ -737,7 +764,7 @@
                 visc_air, rhoa, va, nu_air1, nu_air2, &
                 lambda1, lambda2, knud1,knud2, prefac, g1,g2, d1, d2, &
                 delta1sq, delta2sq, kbrown, kde, kti, kts, sc1, re1, re2
-    real(wp), dimension(sz) :: rhoat, vel, nre, cd
+    real(wp), dimension(sz) :: rhoat, nre, cd
     
     ! for brownian kernel
     visc_air=viscosity_air(t)
@@ -852,7 +879,7 @@
     real(wp), intent(inout) :: num
     
     integer(i4b) :: i
-       
+
     num=0._wp                                 
     do i=1,n_intern
         num=num+n_aer1(i)*(0.5_wp*erfc(-log(dmax/d_aer1(i))/sqrt(2._wp)/sig_aer1(i) ) - &
@@ -1826,6 +1853,31 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
     
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! Vardiman 1978 collisional breakup                                            !
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>calculates break up of ice particles during collisions according to vardiman (1978)
+	!>@param[in] m1,m2,v1,v2
+	!>@return nfrag: number of fragments
+    function vardiman_br(m1,m2,v1,v2)
+        use numerics_type
+        implicit none
+        real(wp), intent(in) :: m1,m2,v1,v2
+        real(wp) :: delm
+        real(wp) :: vardiman_br
+      
+        ! calculate the change in momentum - equation 7
+        ! assume a coefficient of restitution of 0.5?
+        ! units are g cm s-1
+        delm = 0.25_sp*pi*m1*m2/(m1+m2)*(1._sp+0.5_sp)* &
+            abs(v1-v2)*1.e5_sp 
+        vardiman_br = vard02(1)*(log(delm)**2)+vard02(2)*log(delm)+vard02(3)
+
+    end function vardiman_br
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
     
         
@@ -1853,7 +1905,7 @@
     real(wp) :: remove1,remove2,massn,massaddto,nnew,gk,beta1,cw,fk05, &
                 frac1, frac2, fracl, fracadj1, fracadj2, totloss
     real(wp), dimension(n_moments) :: momtemp
-    integer(i4b) :: i,j,k,l,il,ih,jl,jh, modeinto, phase
+    integer(i4b) :: i,j,k,l,il,ih,jl,jh, modeinto, phase, phase1,phase2
     
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Find the min and max bins to do computations on                                    !
@@ -1887,6 +1939,269 @@
             massaddto=xn(i)*remove1+xn(j)*remove2
             ! number to add to new bin:
             nnew = massaddto/massn
+
+            
+            if (nnew.lt.qsmall) cycle
+            
+            !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            ! now, which bin does the new particle go into?
+            !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            phase1=(i-1)/parcel1%n_bin_modew
+            phase2=(j-1)/parcel1%n_bin_modew
+            phase=(j-1)/parcel1%n_bin_modew
+            modeinto=indexc(j,i)
+            jl=(modeinto-1)*n_binst+1+  phase*parcel1%n_bin_modew
+            jh=(modeinto)*n_binst+      phase*parcel1%n_bin_modew
+            do k=jl,jh
+                if (xn(k).gt.massn) exit
+            enddo
+            l=k-1
+            if (l.eq.jh) cycle
+            !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            if(j==l) cycle
+
+
+            !*****
+            ! fraction to be removed from both bins
+            frac1=remove1/(npart(i))
+            frac2=remove2/(npart(j))
+            !*****
+            
+            
+            
+            
+            !*****
+            ! the moments that need to be transferred out
+            momtemp=moments(i,:)*frac1+moments(j,:)*frac2
+
+            ! remove the moments from the colliding bins
+            moments(i,:)=moments(i,:)*(1._wp-frac1)
+            moments(j,:)=moments(j,:)*(1._wp-frac2)
+          
+            !*****
+            ! remove the particles from the colliding bins
+            npart(i)=npart(i)-remove1
+            npart(j)=npart(j)-remove2  
+            
+
+            ! add the mass into the new bin:
+            gk=npart(l)*xn(l)+massaddto
+            
+            ! now for the flux, equation 6 of Bott 2000, but wrong in paper!:
+            if(j==l) then
+                beta1=log((npart(l+1)+remove2)*xn(l+1)/gk+qsmall)
+            else
+                beta1=log(npart(l+1)*xn(l+1)/gk+qsmall)
+            endif
+            ! courant number - equation 8 of Bott 2000
+            cw=(log(massn)-log(xn(l))) / (log(xn(l+1))-log(xn(l)))
+            ! exponential flux - equation 7 of Bott 2000, but wrong in paper!
+            fk05=massaddto/beta1*(exp(beta1*0.5_wp)-exp(beta1*(0.5_wp-cw)))
+            fk05=min(fk05,gk,massaddto)
+            
+            
+            ! now apply the flux:
+            fracadj1=(massaddto-fk05)/xn(l)
+            fracadj2=(fk05)/xn(l+1)
+!             npart(l)=npart(l)+fracadj1
+!             npart(l+1)=npart(l+1)+fracadj2
+
+!             fk05=1._wp- &
+!                 (massaddto/(massn)*xn(l+1)-massaddto) / (xn(l+1)-xn(l)) / &
+!                 (massaddto/(massn))
+            !print *,fk05
+            !*****
+            ! the partitioning between bin l and l+1 is by mass fraction
+            ! for mass variables. Fraction of total going into l:
+            totloss=remove1+remove2
+            fracadj1=fracadj1/(totloss)
+            fracadj2=fracadj2/(totloss)
+            fracl=(massaddto-fk05)/(massaddto)
+            ! add the 'loss' moments to the new bin
+            do k=1,n_moments
+                if (momtype(k).eq.2) then    ! number-based
+                    moments(l,k)=moments(l,k)+momtemp(k)*fracadj1
+                    moments(l+1,k)=moments(l+1,k)+momtemp(k)*fracadj2
+                elseif(momtype(k).eq.1) then ! mass-based
+                    moments(l,k)=moments(l,k)+momtemp(k)*fracl
+                    moments(l+1,k)=moments(l+1,k)+momtemp(k)*(1._wp-fracl)
+                endif
+            enddo
+            !*****
+!             npart(l)=npart(l)+massaddto*frac1/xn(l)
+!             npart(l+1)=npart(l+1)+massaddto*(1._wp-frac1)/xn(l+1)
+            npart(l)=npart(l)+(massaddto-fk05)/xn(l)
+            npart(l+1)=npart(l+1)+fk05/xn(l+1)
+            
+
+        enddo
+    enddo    
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    
+
+
+
+    
+    end subroutine sce_microphysics
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    
+    
+    
+
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! one time-step of the bin-microphysics                                        !
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>calculates one time-step of sce-sip_microphysics
+    subroutine sce_sip_microphysics(n_binst,n_bin_mode,n_moments,npart,moments,momtype, &
+                                ecoll,indexc,xn,vel,dt,t, &
+                                mass_hm_splinter, mass_coll_splinter, &
+                                mass_mode2_frag)
+    use numerics_type
+    use numerics, only : zeroin, dvode
+    implicit none
+    integer(i4b), intent(in) :: n_binst,n_bin_mode, n_moments
+    real(wp), dimension(n_bin_mode,n_bin_mode), intent(in) :: ecoll
+    integer(i4b), dimension(n_bin_mode,n_bin_mode), intent(in) :: indexc
+    real(wp), dimension(n_bin_mode), intent(inout) :: npart,xn,vel
+    real(wp), dimension(n_bin_mode,n_moments), intent(inout) :: moments
+    integer(i4b), dimension(n_moments), intent(in) :: momtype
+    real(wp), intent(in) :: dt,t, mass_hm_splinter, mass_coll_splinter, &
+                                mass_mode2_frag
+    
+    real(wp) :: remove1,remove2,massn,massaddto,nnew,gk,beta1,cw,fk05, &
+                frac1, frac2, fracl1,fracl2, fracadj1, fracadj2, totloss, &
+                nfrag, mass_s, mass_stot, masstot
+    real(wp), dimension(n_moments) :: momtemp
+    integer(i4b) :: i,j,k,l,il,ih,jl,jh, modeinto, phase, phase1, phase2, lf1
+    
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! Find the min and max bins to do computations on                                    !
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    il=n_bin_mode
+    ih=1
+    do i=1,n_bin_mode
+        if (npart(i).gt.qsmall) ih=i            
+    enddo
+    do i=n_bin_mode,1,-1
+        if (npart(i).gt.qsmall) il=i            
+    enddo
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! Main loop                                                                          !
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    do i=il,ih
+        if (npart(i).lt.qsmall) cycle
+        do j=i+1,ih
+            
+            ! numbers removed from each bin:
+            remove1=min(npart(i)*ecoll(j,i)*npart(j)*dt,npart(i))
+            remove2=min(npart(i)*ecoll(j,i)*npart(j)*dt,npart(j))
+            
+            ! interaction creates a drops of this mass:
+            massn = xn(i) + xn(j)
+            ! total mass removed (i.e. added to new bin):
+            massaddto=xn(i)*remove1+xn(j)*remove2
+            
+            !+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+            ! if ice-ice adjust this mass and reduce massaddto - do some limiting.
+            ! original goes to ice as do fragments
+            ! put the new ice particles in correct bin
+            
+            ! if mode2 adjust this mass and reduce massaddto - do some limiting.
+            ! original goes to ice, but fragments
+            ! creates both liquid and ice particles
+            
+            ! if HM adjust this mass and reduce massaddto - do some limiting.
+            ! original goes to ice as do fragments
+            
+            ! aerosol moments come from the interaction, but ice moments like 
+            ! phi, nmon, vol, rime are redefined as new ice particles
+            !-----------------------------------------------------------------------------
+ 
+            phase1=(i-1)/parcel1%n_bin_modew
+            phase2=(j-1)/parcel1%n_bin_modew
+            masstot=massaddto
+            mass_stot=0._wp
+            ! if both are ice phase
+            if((phase1.eq.1).and.(phase2.eq.1).and.(t.lt.ttr)) then
+                ! vardiman (1978) number of fragments+++++++++++++++++++++++++++++++++++++
+                nfrag=vardiman_br(xn(i),xn(j),vel(i),vel(j))
+                !-------------------------------------------------------------------------
+                
+                ! this is the mode that new ice fragments enter
+                modeinto=indexc(j,i)
+                ! 1. find the bin that the fragments will go into
+                jl=(modeinto-1)*n_binst+1+  parcel1%n_bin_modew
+                jh=(modeinto)*n_binst+      parcel1%n_bin_modew
+                
+                ! 2. reduce massn and massaddto (limit)
+                ! this would be the number of new categories - assume it is the same
+                ! we assume the "big" particle mostly remains
+                nnew=massaddto/massn
+                ! the mass of splinters in one collision between i+j
+                mass_s=min(mass_coll_splinter*nfrag,0.5_wp*massn)
+                nfrag=mass_s/mass_coll_splinter ! scaled
+                massn=massn-mass_s ! the mass of the new category (after adjustment)
+                
+                do k=jl,jh
+                    if (xn(k).gt.mass_s) exit
+                enddo
+                lf1=k-1
+                ! total mass of splinters
+                mass_stot=massaddto-nnew*massn
+                ! total mass of new category
+                massaddto=massaddto-mass_stot ! the mass produced in collision
+
+            endif            
+            !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+            
+            ! if one liquid and two ice
+            if((phase1.eq.0).and.(phase2.eq.1).and.(t.lt.ttr).and.&
+                (xn(i)>7.2382e-12_wp)) then
+                
+                ! HM (1974) number of fragments+++++++++++++++++++++++++++++++++++++++++++
+                nfrag=remove1*xn(i) /350.e-6 *max(0._wp,(1._wp-abs(t-268._wp)/2.5_wp))
+                !-------------------------------------------------------------------------
+                
+                ! this is the mode that new ice fragments enter
+                modeinto=indexc(j,i)
+                ! 1. find the bin that the fragments will go into
+                jl=(modeinto-1)*n_binst+1+  parcel1%n_bin_modew
+                jh=(modeinto)*n_binst+      parcel1%n_bin_modew
+                
+                ! 2. reduce massn and massaddto (limit)
+                ! this would be the number of new categories - assume it is the same
+                ! we assume the "big" particle mostly remains
+                nnew=massaddto/massn
+                ! the mass of splinters in one collision between i+j
+                mass_s=min(mass_hm_splinter*nfrag,0.5_wp*massn)
+                nfrag=mass_s/mass_hm_splinter ! scaled
+                massn=massn-mass_s ! the mass of the new category (after adjustment)
+                
+                do k=jl,jh
+                    if (xn(k).gt.mass_s) exit
+                enddo
+                lf1=k-1
+                ! total mass of splinters
+                mass_stot=massaddto-nnew*massn
+                ! total mass of new category
+                massaddto=massaddto-mass_stot ! the mass produced in collision
+
+            endif            
+            !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+            
+            
+            
+            ! number to add to new bin:
+            nnew = massaddto/massn
             
             if (nnew.lt.qsmall) cycle
             
@@ -1901,11 +2216,15 @@
                 if (xn(k).gt.massn) exit
             enddo
             l=k-1
-            if (l.eq.jh) cycle
+            if (l.eq.jh) cycle ! this means do not do the interaction (as goes off grid)
             !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
 
+
+
+            ! the loss integral is the same as before
+            ! Loss integral+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
             !*****
             ! fraction to be removed from both bins
             frac1=remove1/npart(i)
@@ -1921,52 +2240,64 @@
             
             !*****
             ! the moments that need to be transferred out
-            momtemp=moments(i,:)*frac1+moments(j,:)*frac2
+            momtemp=moments(i,:)*frac1+moments(j,:)*frac2  ! total moment coming out
             ! remove the moments from the colliding bins
             moments(i,:)=moments(i,:)*(1._wp-frac1)
             moments(j,:)=moments(j,:)*(1._wp-frac2)
             !*****
+            !-----------------------------------------------------------------------------
             
             
+            
+            
+            
+            
+            ! gain integral bit+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+            call add_moments_to_new_bin(l,n_moments, n_bin_mode, &
+                    massaddto, massn, masstot, remove1, remove2, momtype, xn, &
+                    momtemp, npart, moments)
 
-            ! add the mass into the new bin:
-            gk=npart(l)*xn(l)+massaddto
-            
-            ! now for the flux:
-            beta1=log(npart(l+1)*xn(l+1)/gk+qsmall)
-            ! courant number
-            cw=(log(massn)-log(xn(l))) / (log(xn(l+1))-log(xn(l)))
-            ! exponential flux
-            fk05=massaddto/beta1*(exp(beta1*0.5_wp)-exp(beta1*(0.5_wp-cw)))
-            fk05=min(fk05,massaddto)
-            
-            
-            ! now apply the flux:
-            fracadj1=(massaddto-fk05)/xn(l)
-            fracadj2=(fk05)/xn(l+1)
-            npart(l)=npart(l)+fracadj1
-            npart(l+1)=npart(l+1)+fracadj2
+            !-----------------------------------------------------------------------------
 
 
+
+
+            ! Now for "splinter" category for ice-ice collisions           
+            ! if both are ice phase
+!             if((phase1.eq.1).and.(phase2.eq.1).and.(t.lt.ttr).and.(mass_stot>0._wp)) then
+!                 ! redefine moments
+!                 call set_ice_moments(momtemp,n_moments,&
+!                     parcel1%n_comps+1,parcel1%n_comps+2,parcel1%n_comps+3, &
+!                     parcel1%n_comps+4,parcel1%n_comps+5,mass_stot,mass_s)
+!             
+!                 ! gain integral bit+++++++++++++++++++++++++++++++++++++++++++++++++++++++
+!                 call add_moments_to_new_bin(lf1,n_moments, n_bin_mode, &
+! 	                    mass_stot, mass_s, masstot, remove1, remove2, momtype, xn, &
+! 	                    momtemp, npart, moments)
+!                 !-------------------------------------------------------------------------
+!             endif            
+!             
+!             
+!             ! Now for "splinter" category for H-M collisions           
+!             ! if one liquid and two ice
+!             if((phase1.eq.0).and.(phase2.eq.1).and.(t.lt.ttr).and.(mass_stot>0._wp)) then
+!                 ! redefine moments
+!                 call set_ice_moments(momtemp,n_moments,&
+!                     parcel1%n_comps+1,parcel1%n_comps+2,parcel1%n_comps+3, &
+!                     parcel1%n_comps+4,parcel1%n_comps+5,mass_stot,mass_s)
+!             
+!                 ! gain integral bit+++++++++++++++++++++++++++++++++++++++++++++++++++++++
+!                 call add_moments_to_new_bin(lf1,n_moments, n_bin_mode, &
+! 	                    mass_stot, mass_s, masstot, remove1, remove2, momtype, xn, &
+! 	                    momtemp, npart, moments)
+!                 !-------------------------------------------------------------------------
+!             endif            
             
-            !*****
-            ! the partitioning between bin l and l+1 is by mass fraction
-            ! for mass variables. Fraction of total going into l:
-            totloss=remove1+remove2
-            fracadj1=fracadj1/(totloss)
-            fracadj2=fracadj2/(totloss)
-            fracl=(massaddto-fk05)/massaddto
-            ! add the 'loss' moments to the new bin
-            do k=1,n_moments
-                if (momtype(k).eq.2) then
-                    moments(l,k)=moments(l,k)+momtemp(k)*fracadj1
-                    moments(l+1,k)=moments(l+1,k)+momtemp(k)*fracadj2
-                elseif(momtype(k).eq.1) then
-                    moments(l,k)=moments(l,k)+momtemp(k)*fracl
-                    moments(l+1,k)=moments(l+1,k)+momtemp(k)*(1._wp-fracl)
-                endif
-            enddo
-            !*****
+            
+            
+            
+            
+            
         enddo
     enddo    
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -1975,11 +2306,108 @@
 
 
     
-    end subroutine sce_microphysics
+    end subroutine sce_sip_microphysics
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    
+    
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! gain integral                                                                !
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>gain integral
+	subroutine add_moments_to_new_bin(lf1,n_moments, n_bin_mode, &
+	    mass_stot, mass_s, masstot, remove1, remove2, momtype, xn, &
+	    momtemp, npart, moments)
+	use numerics_type
+	implicit none
+	integer(i4b), intent(in) :: lf1, n_moments, n_bin_mode
+	real(wp), intent(in) :: mass_stot, mass_s, remove1,remove2, masstot
+	integer(i4b), intent(in), dimension(n_moments) :: momtype
+	real(wp), intent(in), dimension(n_bin_mode) :: xn
+	real(wp), intent(in), dimension(n_moments) :: momtemp
+	real(wp), intent(inout), dimension(n_bin_mode) :: npart
+	real(wp), intent(inout), dimension(n_bin_mode,n_moments) :: moments
+	
+	integer(i4b) :: k
+	real(wp) :: gk,beta1,cw,fk05,fracadj1,fracadj2,totloss,fracl1,fracl2
+	
+    ! Defining courant number, etc++++++++++++++++++++++++++++++++++++++++++++
+    ! add the mass into the new bin:
+    gk=npart(lf1)*xn(lf1)+mass_stot
+
+    ! now for the flux:
+    beta1=log(npart(lf1+1)*xn(lf1+1)/gk+qsmall)
+    ! courant number
+    cw=(log(mass_s)-log(xn(lf1))) / (log(xn(lf1+1))-log(xn(lf1)))
+    ! exponential flux
+    fk05=mass_stot/beta1*(exp(beta1*0.5_wp)-exp(beta1*(0.5_wp-cw)))
+    fk05=min(fk05,mass_stot)
+    !-------------------------------------------------------------------------
+
+    ! this puts the correct number in new "small" category - same+++++++++++++
+    ! now apply the flux:
+    fracadj1=(mass_stot-fk05)/xn(lf1)     ! number in bin k
+    fracadj2=(fk05)/xn(lf1+1)             ! number in bin k+1
+!     npart(lf1)=npart(lf1)+fracadj1
+!     npart(lf1+1)=npart(lf1+1)+fracadj2
+    !-------------------------------------------------------------------------
+
+    ! for the "small" category++++++++++++++++++++++++++++++++++++++++++++++++
+    ! the partitioning between bin l and l+1 is by mass fraction
+    ! for mass variables. Fraction of total going into l:
+    totloss=remove1+remove2             ! total number lost from bins
+    fracadj1=fracadj1/(totloss)         ! number going into new bin k
+    fracadj2=fracadj2/(totloss)         ! number going into new bin k+1
+    fracl1=(mass_stot-fk05)/(masstot)   ! fraction into k
+    fracl2=(fk05)/(masstot)             ! fraction into k+1
+!                 print *,fracl1,fracl2
+    ! add the 'loss' moments to the new bin
+    do k=1,n_moments
+        if (momtype(k).eq.2) then       ! number based        
+            moments(lf1,k)=moments(lf1,k)+momtemp(k)*fracadj1
+            moments(lf1+1,k)=moments(lf1+1,k)+momtemp(k)*fracadj2
+        elseif(momtype(k).eq.1) then    ! mass based (this is what they all are)
+            moments(lf1,k)=moments(lf1,k)+momtemp(k)*fracl1
+            moments(lf1+1,k)=moments(lf1+1,k)+momtemp(k)*fracl2
+        endif
+    enddo
+    !*****
+    npart(lf1)=npart(lf1)+mass_stot*fracl1/xn(lf1)
+    npart(lf1+1)=npart(lf1+1)+mass_stot*(1._wp-fracl1)/xn(lf1+1)
+	
+	
+    end subroutine add_moments_to_new_bin
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
     
     
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! set the ice moments for creating new categories                              !
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>set ice moments
+    subroutine set_ice_moments(moments,n_moments,pm,nm,vm,rm,um,mass_stot,mass_s)
+    use numerics_type
+    implicit none
+    integer(i4b), intent(in) :: n_moments, pm,nm,vm,rm,um
+    real(wp), intent(in) :: mass_stot, mass_s
+    real(wp), dimension(n_moments), intent(inout) :: moments
+    
+    ! redefine moments
+    ! phi, nmon, vol, rim, unfr
+    moments(pm)=mass_stot/mass_s
+    moments(nm)=mass_stot/mass_s
+    moments(vm)=mass_stot/rhoice
+    moments(rm)=0._wp
+    moments(um)=0._wp
+    
+    
+    end subroutine set_ice_moments
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
 
