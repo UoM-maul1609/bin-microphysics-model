@@ -21,7 +21,7 @@
         						rhow=1000._wp, ra=r_gas/molw_a,rv=r_gas/molw_water , &
         						eps1=ra/rv, rhoice=910._wp, n_avo=6.02e23_wp, &
         						kboltz=r_gas/n_avo, epsilond=2000.e-4_wp, &
-        						qsmall=1.e-60_wp
+        						qsmall=1.e-60_wp, qsmall2=1.e-20_wp
         						
         						
 
@@ -785,14 +785,19 @@
             as=x1/2._wp
             al=x2/2._wp
             
-            r = max(x2*1.e6_wp,x1*1.e6_wp) ! microns
+            r = max(x2*0.5e6_wp,x1*0.5e6_wp) ! microns
             u = 4._wp/3._wp*pi*al**3*1.e6_wp    ! cm^3
             v = 4._wp/3._wp*pi*as**3*1.e6_wp    ! cm^3
             if(r<=50._wp) then
-                ecoll(i,j) = 9.44e9_wp*(u**2+v**2)/1.e6_wp
+!                 ecoll(i,j) = 9.44e9_wp*(u**2+v**2)/1.e6_wp
+                ecoll(i,j) = 4.5e-4_wp*r*r*(1._wp-3._wp/r)
             else
-                ecoll(i,j) = 5.78e3_wp*(u+v)/1.e6_wp
+!                 ecoll(i,j) = 5.78e3_wp*(u+v)/1.e6_wp
+                ecoll(i,j) = 1._wp
             endif
+
+            
+            ecoll(i,j)=pi*(x1+x2)*(x1+x2)*ecoll(i,j)*abs(vel(j)-vel(i))*0.25_wp
             !------------------------------------------------
             
             
@@ -1904,7 +1909,7 @@
     
     real(wp) :: remove1,remove2,massn,massaddto,nnew,gk,beta1,cw,fk05, &
                 frac1, frac2, fracl, fracadj1, fracadj2, totloss
-    real(wp), dimension(n_moments) :: momtemp
+    real(wp), dimension(n_moments) :: momtemp, oldprop
     integer(i4b) :: i,j,k,l,il,ih,jl,jh, modeinto, phase, phase1,phase2
     
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -1913,10 +1918,10 @@
     il=n_bin_mode
     ih=1
     do i=1,n_bin_mode
-        if (npart(i).gt.qsmall) ih=i            
+        if (npart(i).gt.qsmall2) ih=i            
     enddo
     do i=n_bin_mode,1,-1
-        if (npart(i).gt.qsmall) il=i            
+        if (npart(i).gt.qsmall2) il=i            
     enddo
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
@@ -1926,13 +1931,17 @@
     ! Main loop                                                                          !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     do i=il,ih
-        if (npart(i).lt.qsmall) cycle
+        if (npart(i).lt.qsmall2) cycle
         do j=i+1,ih
-            
+            phase1=(i-1)/parcel1%n_bin_modew
+            phase2=(j-1)/parcel1%n_bin_modew
+
             ! numbers removed from each bin:
-            remove1=min(npart(i)*ecoll(j,i)*npart(j)*dt,npart(i))
-            remove2=min(npart(i)*ecoll(j,i)*npart(j)*dt,npart(j))
-            
+!             remove1=min(npart(i)*ecoll(j,i)*npart(j)*dt,npart(i))
+            remove2=min(npart(i)*ecoll(j,i)*npart(j)*dt,npart(j),npart(i))*0.5_wp
+            remove1=remove2
+            totloss=remove1+remove2
+
             ! interaction creates a drops of this mass:
             massn = xn(i) + xn(j)
             ! total mass removed (i.e. added to new bin):
@@ -1941,13 +1950,11 @@
             nnew = massaddto/massn
 
             
-            if (nnew.lt.qsmall) cycle
+            if (nnew.lt.qsmall2) cycle
             
             !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
             ! now, which bin does the new particle go into?
             !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-            phase1=(i-1)/parcel1%n_bin_modew
-            phase2=(j-1)/parcel1%n_bin_modew
             phase=(j-1)/parcel1%n_bin_modew
             modeinto=indexc(j,i)
             jl=(modeinto-1)*n_binst+1+  phase*parcel1%n_bin_modew
@@ -1958,9 +1965,7 @@
             l=k-1
             if (l.eq.jh) cycle
             !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-            if(j==l) cycle
-
-
+!             if(j==1) cycle
             !*****
             ! fraction to be removed from both bins
             frac1=remove1/(npart(i))
@@ -1968,12 +1973,11 @@
             !*****
             
             
-            
-            
             !*****
             ! the moments that need to be transferred out
+            oldprop=moments(j,:)/npart(j)
             momtemp=moments(i,:)*frac1+moments(j,:)*frac2
-
+            
             ! remove the moments from the colliding bins
             moments(i,:)=moments(i,:)*(1._wp-frac1)
             moments(j,:)=moments(j,:)*(1._wp-frac2)
@@ -1986,52 +1990,49 @@
 
             ! add the mass into the new bin:
             gk=npart(l)*xn(l)+massaddto
-            
             ! now for the flux, equation 6 of Bott 2000, but wrong in paper!:
-            if(j==l) then
-                beta1=log((npart(l+1)+remove2)*xn(l+1)/gk+qsmall)
-            else
-                beta1=log(npart(l+1)*xn(l+1)/gk+qsmall)
-            endif
+            beta1=log(npart(l+1)*xn(l+1)/gk+qsmall)
+
             ! courant number - equation 8 of Bott 2000
             cw=(log(massn)-log(xn(l))) / (log(xn(l+1))-log(xn(l)))
+       
+
             ! exponential flux - equation 7 of Bott 2000, but wrong in paper!
             fk05=massaddto/beta1*(exp(beta1*0.5_wp)-exp(beta1*(0.5_wp-cw)))
             fk05=min(fk05,gk,massaddto)
-            
-            
+
             ! now apply the flux:
             fracadj1=(massaddto-fk05)/xn(l)
             fracadj2=(fk05)/xn(l+1)
-!             npart(l)=npart(l)+fracadj1
-!             npart(l+1)=npart(l+1)+fracadj2
 
-!             fk05=1._wp- &
-!                 (massaddto/(massn)*xn(l+1)-massaddto) / (xn(l+1)-xn(l)) / &
-!                 (massaddto/(massn))
-            !print *,fk05
             !*****
             ! the partitioning between bin l and l+1 is by mass fraction
             ! for mass variables. Fraction of total going into l:
-            totloss=remove1+remove2
             fracadj1=fracadj1/(totloss)
             fracadj2=fracadj2/(totloss)
             fracl=(massaddto-fk05)/(massaddto)
             ! add the 'loss' moments to the new bin
+
+
+
+            
             do k=1,n_moments
-                if (momtype(k).eq.2) then    ! number-based
-                    moments(l,k)=moments(l,k)+momtemp(k)*fracadj1
-                    moments(l+1,k)=moments(l+1,k)+momtemp(k)*fracadj2
-                elseif(momtype(k).eq.1) then ! mass-based
-                    moments(l,k)=moments(l,k)+momtemp(k)*fracl
-                    moments(l+1,k)=moments(l+1,k)+momtemp(k)*(1._wp-fracl)
+                if ((momtype(k).eq.2).and.(j==l).and. &
+                    ((phase1==0).and.(phase2==1))) then    ! number-based
+                    momtemp(k)=oldprop(k)*(massaddto*fracl/xn(l)+ &
+                        massaddto*(1._wp-fracl)/xn(l+1))
                 endif
+                moments(l,k)=moments(l,k)+momtemp(k)*fracl
+                moments(l+1,k)=moments(l+1,k)+momtemp(k)*(1._wp-fracl)
             enddo
             !*****
-!             npart(l)=npart(l)+massaddto*frac1/xn(l)
-!             npart(l+1)=npart(l+1)+massaddto*(1._wp-frac1)/xn(l+1)
-            npart(l)=npart(l)+(massaddto-fk05)/xn(l)
-            npart(l+1)=npart(l+1)+fk05/xn(l+1)
+            npart(l)=npart(l)+massaddto*fracl/xn(l)
+            npart(l+1)=npart(l+1)+massaddto*(1._wp-fracl)/xn(l+1)
+            
+!             npart(l)=npart(l)+(massaddto-fk05)/xn(l)
+!             npart(l+1)=npart(l+1)+fk05/xn(l+1)
+
+
             
 
         enddo
