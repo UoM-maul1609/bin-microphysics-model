@@ -937,7 +937,7 @@
             parcel1%moments(i,parcel1%n_comps+5)=parcel1%npart(i)* &
                 parcel1%mbin(i,parcel1%n_comps+1)
         enddo        
-        parcel1%momenttype(parcel1%n_comps+1:parcel1%n_comps+parcel1%imoms)=[1,1,1,1,1]
+        parcel1%momenttype(parcel1%n_comps+1:parcel1%n_comps+parcel1%imoms)=[2,2,1,1,1]
     endif
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
@@ -3864,7 +3864,7 @@
         ! output to file
         call output(io1%new_file,outputfile)
         
-        
+!         if (parcel1%TT>250._wp) parcel1%y(parcel1%iw)=0._wp
         ! one time-step of model
         call bin_microphysics(fparcelwarm, fparcelcold, icenucleation)
         
