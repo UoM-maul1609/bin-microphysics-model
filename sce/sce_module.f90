@@ -780,6 +780,9 @@
         do i=1,sz ! left-most should vary quickest
         
             ! Long kernel for gravitational settling+++++++++
+            ! AB Long, 1974
+            ! Solutions to the Droplet Collection Equation for Polynomial Kernels
+            ! https://doi.org/10.1175/1520-0469(1974)031<1040:STTDCE>2.0.CO;2
             x1=min(dw(i),dw(j))
             x2=max(dw(i),dw(j))
             as=x1/2._wp
@@ -1879,7 +1882,8 @@
         ! units are g cm s-1
         delm = 0.25_sp*pi*m1*m2/(m1+m2)*(1._sp+0.5_sp)* &
             abs(v1-v2)*1.e5_sp 
-        vardiman_br = vard02(1)*(log(delm)**2)+vard02(2)*log(delm)+vard02(3)
+        vardiman_br = max(vard01(1)*(log(delm)**2)+vard01(2)*log(delm)+vard01(3),0._wp)
+        vardiman_br = min(vardiman_br,1.e3_wp)
 
     end function vardiman_br
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -1937,7 +1941,6 @@
             phase2=(j-1)/parcel1%n_bin_modew
 
             ! numbers removed from each bin:
-!             remove1=min(npart(i)*ecoll(j,i)*npart(j)*dt,npart(i))
             remove2=min(npart(i)*ecoll(j,i)*npart(j)*dt,npart(j),npart(i))*0.5_wp
             remove1=remove2
             totloss=remove1+remove2
@@ -2017,7 +2020,7 @@
 
             
             do k=1,n_moments
-                if ((momtype(k).eq.2).and.(j==l).and. &
+                if ((momtype(k).eq.2).and. &
                     ((phase1==0).and.(phase2==1))) then    ! number-based
                     momtemp(k)=oldprop(k)*(massaddto*fracl/xn(l)+ &
                         massaddto*(1._wp-fracl)/xn(l+1))
@@ -2075,7 +2078,7 @@
     real(wp) :: remove1,remove2,massn,massaddto,nnew,gk,beta1,cw,fk05, &
                 frac1, frac2, fracl1,fracl2, fracadj1, fracadj2, totloss, &
                 nfrag, mass_s, mass_stot, masstot
-    real(wp), dimension(n_moments) :: momtemp
+    real(wp), dimension(n_moments) :: momtemp, oldprop
     integer(i4b) :: i,j,k,l,il,ih,jl,jh, modeinto, phase, phase1, phase2, lf1
     
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -2097,12 +2100,13 @@
     ! Main loop                                                                          !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     do i=il,ih
-        if (npart(i).lt.qsmall) cycle
+        if (npart(i).lt.qsmall2) cycle
         do j=i+1,ih
             
             ! numbers removed from each bin:
-            remove1=min(npart(i)*ecoll(j,i)*npart(j)*dt,npart(i))
-            remove2=min(npart(i)*ecoll(j,i)*npart(j)*dt,npart(j))
+            remove2=min(npart(i)*ecoll(j,i)*npart(j)*dt,npart(j),npart(i))*0.5_wp
+            remove1=remove2
+            totloss=remove1+remove2
             
             ! interaction creates a drops of this mass:
             massn = xn(i) + xn(j)
@@ -2129,7 +2133,7 @@
             phase2=(j-1)/parcel1%n_bin_modew
             masstot=massaddto
             mass_stot=0._wp
-            ! if both are ice phase
+            ! if both are ice phase - fragmentation
             if((phase1.eq.1).and.(phase2.eq.1).and.(t.lt.ttr)) then
                 ! vardiman (1978) number of fragments+++++++++++++++++++++++++++++++++++++
                 nfrag=vardiman_br(xn(i),xn(j),vel(i),vel(j))
@@ -2145,7 +2149,7 @@
                 ! this would be the number of new categories - assume it is the same
                 ! we assume the "big" particle mostly remains
                 nnew=massaddto/massn
-                ! the mass of splinters in one collision between i+j
+                ! the mass of fragments in one collision between i+j
                 mass_s=min(mass_coll_splinter*nfrag,0.5_wp*massn)
                 nfrag=mass_s/mass_coll_splinter ! scaled
                 massn=massn-mass_s ! the mass of the new category (after adjustment)
@@ -2155,9 +2159,10 @@
                 enddo
                 lf1=k-1
                 ! total mass of splinters
-                mass_stot=massaddto-nnew*massn
+                mass_stot=max(massaddto-nnew*massn,0._wp)
                 ! total mass of new category
                 massaddto=massaddto-mass_stot ! the mass produced in collision
+                print *,mass_s,xn(1),mass_stot
 
             endif            
             !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -2181,6 +2186,13 @@
                 ! this would be the number of new categories - assume it is the same
                 ! we assume the "big" particle mostly remains
                 nnew=massaddto/massn
+                
+                ! (1) from xn(i) and xn(j) work out how many splash fragments there are
+                ! according to Phillips et al.
+                ! (2) from the size of splash fragments work out how much rime mass there
+                !    is and do H-M
+                ! (3) calculate mode 2 also
+                
                 ! the mass of splinters in one collision between i+j
                 mass_s=min(mass_hm_splinter*nfrag,0.5_wp*massn)
                 nfrag=mass_s/mass_hm_splinter ! scaled
@@ -2204,7 +2216,7 @@
             ! number to add to new bin:
             nnew = massaddto/massn
             
-            if (nnew.lt.qsmall) cycle
+            if (nnew.lt.qsmall2) cycle
             
             !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
             ! now, which bin does the new particle go into?
@@ -2232,15 +2244,12 @@
             frac2=remove2/npart(j)
             !*****
             
-            
-            ! remove the particles from the colliding bins
-            npart(i)=npart(i)-remove1
-            npart(j)=npart(j)-remove2  
-            
+                        
             
             
             !*****
             ! the moments that need to be transferred out
+            oldprop=moments(j,:)/npart(j)
             momtemp=moments(i,:)*frac1+moments(j,:)*frac2  ! total moment coming out
             ! remove the moments from the colliding bins
             moments(i,:)=moments(i,:)*(1._wp-frac1)
@@ -2249,6 +2258,9 @@
             !-----------------------------------------------------------------------------
             
             
+            ! remove the particles from the colliding bins
+            npart(i)=npart(i)-remove1
+            npart(j)=npart(j)-remove2  
             
             
             
@@ -2256,43 +2268,43 @@
             ! gain integral bit+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
             call add_moments_to_new_bin(l,n_moments, n_bin_mode, &
                     massaddto, massn, masstot, remove1, remove2, momtype, xn, &
-                    momtemp, npart, moments)
+                    momtemp, oldprop, npart, moments, phase1, phase2)
 
             !-----------------------------------------------------------------------------
 
 
 
 
-            ! Now for "splinter" category for ice-ice collisions           
+            ! Now for "fragment" category for ice-ice collisions           
             ! if both are ice phase
-!             if((phase1.eq.1).and.(phase2.eq.1).and.(t.lt.ttr).and.(mass_stot>0._wp)) then
-!                 ! redefine moments
-!                 call set_ice_moments(momtemp,n_moments,&
-!                     parcel1%n_comps+1,parcel1%n_comps+2,parcel1%n_comps+3, &
-!                     parcel1%n_comps+4,parcel1%n_comps+5,mass_stot,mass_s)
-!             
-!                 ! gain integral bit+++++++++++++++++++++++++++++++++++++++++++++++++++++++
-!                 call add_moments_to_new_bin(lf1,n_moments, n_bin_mode, &
-! 	                    mass_stot, mass_s, masstot, remove1, remove2, momtype, xn, &
-! 	                    momtemp, npart, moments)
-!                 !-------------------------------------------------------------------------
-!             endif            
-!             
-!             
-!             ! Now for "splinter" category for H-M collisions           
-!             ! if one liquid and two ice
-!             if((phase1.eq.0).and.(phase2.eq.1).and.(t.lt.ttr).and.(mass_stot>0._wp)) then
-!                 ! redefine moments
-!                 call set_ice_moments(momtemp,n_moments,&
-!                     parcel1%n_comps+1,parcel1%n_comps+2,parcel1%n_comps+3, &
-!                     parcel1%n_comps+4,parcel1%n_comps+5,mass_stot,mass_s)
-!             
-!                 ! gain integral bit+++++++++++++++++++++++++++++++++++++++++++++++++++++++
-!                 call add_moments_to_new_bin(lf1,n_moments, n_bin_mode, &
-! 	                    mass_stot, mass_s, masstot, remove1, remove2, momtype, xn, &
-! 	                    momtemp, npart, moments)
-!                 !-------------------------------------------------------------------------
-!             endif            
+            if((phase1.eq.1).and.(phase2.eq.1).and.(t.lt.ttr).and.(mass_stot>0._wp)) then
+                ! redefine moments
+                call set_ice_moments(momtemp,n_moments,&
+                    parcel1%n_comps+1,parcel1%n_comps+2,parcel1%n_comps+3, &
+                    parcel1%n_comps+4,parcel1%n_comps+5,mass_stot,mass_s)
+            
+                ! gain integral bit+++++++++++++++++++++++++++++++++++++++++++++++++++++++
+                call add_moments_to_new_bin(lf1,n_moments, n_bin_mode, &
+	                    mass_stot, mass_s, masstot, remove1, remove2, momtype, xn, &
+	                    momtemp, oldprop, npart, moments,phase1,phase2)
+                !-------------------------------------------------------------------------
+            endif            
+            
+            
+            ! Now for "splinter" category for H-M collisions           
+            ! if one liquid and two ice
+            if((phase1.eq.0).and.(phase2.eq.1).and.(t.lt.ttr).and.(mass_stot>0._wp)) then
+                ! redefine moments
+                call set_ice_moments(momtemp,n_moments,&
+                    parcel1%n_comps+1,parcel1%n_comps+2,parcel1%n_comps+3, &
+                    parcel1%n_comps+4,parcel1%n_comps+5,mass_stot,mass_s)
+                
+                ! gain integral bit+++++++++++++++++++++++++++++++++++++++++++++++++++++++
+                call add_moments_to_new_bin(lf1,n_moments, n_bin_mode, &
+	                    mass_stot, mass_s, masstot, remove1, remove2, momtype, xn, &
+	                    momtemp, oldprop, npart, moments, phase1,phase2)
+                !-------------------------------------------------------------------------
+            endif            
             
             
             
@@ -2320,29 +2332,30 @@
 	!>gain integral
 	subroutine add_moments_to_new_bin(lf1,n_moments, n_bin_mode, &
 	    mass_stot, mass_s, masstot, remove1, remove2, momtype, xn, &
-	    momtemp, npart, moments)
+	    momtemp, oldprop, npart, moments, phase1,phase2)
 	use numerics_type
 	implicit none
-	integer(i4b), intent(in) :: lf1, n_moments, n_bin_mode
+	integer(i4b), intent(in) :: lf1, n_moments, n_bin_mode, phase1,phase2
 	real(wp), intent(in) :: mass_stot, mass_s, remove1,remove2, masstot
 	integer(i4b), intent(in), dimension(n_moments) :: momtype
 	real(wp), intent(in), dimension(n_bin_mode) :: xn
-	real(wp), intent(in), dimension(n_moments) :: momtemp
+	real(wp), intent(inout), dimension(n_moments) :: momtemp
+	real(wp), intent(in), dimension(n_moments) :: oldprop
 	real(wp), intent(inout), dimension(n_bin_mode) :: npart
 	real(wp), intent(inout), dimension(n_bin_mode,n_moments) :: moments
 	
 	integer(i4b) :: k
-	real(wp) :: gk,beta1,cw,fk05,fracadj1,fracadj2,totloss,fracl1,fracl2
+	real(wp) :: gk,beta1,cw,fk05,fracadj1,fracadj2,totloss,fracl, temp
 	
     ! Defining courant number, etc++++++++++++++++++++++++++++++++++++++++++++
     ! add the mass into the new bin:
     gk=npart(lf1)*xn(lf1)+mass_stot
 
-    ! now for the flux:
+    ! now for the flux, equation 6 of Bott 2000, but wrong in paper!:
     beta1=log(npart(lf1+1)*xn(lf1+1)/gk+qsmall)
-    ! courant number
+    ! courant number - equation 8 of Bott 2000
     cw=(log(mass_s)-log(xn(lf1))) / (log(xn(lf1+1))-log(xn(lf1)))
-    ! exponential flux
+    ! exponential flux - equation 7 of Bott 2000, but wrong in paper!
     fk05=mass_stot/beta1*(exp(beta1*0.5_wp)-exp(beta1*(0.5_wp-cw)))
     fk05=min(fk05,mass_stot)
     !-------------------------------------------------------------------------
@@ -2358,25 +2371,24 @@
     ! for the "small" category++++++++++++++++++++++++++++++++++++++++++++++++
     ! the partitioning between bin l and l+1 is by mass fraction
     ! for mass variables. Fraction of total going into l:
-    totloss=remove1+remove2             ! total number lost from bins
     fracadj1=fracadj1/(totloss)         ! number going into new bin k
     fracadj2=fracadj2/(totloss)         ! number going into new bin k+1
-    fracl1=(mass_stot-fk05)/(masstot)   ! fraction into k
-    fracl2=(fk05)/(masstot)             ! fraction into k+1
-!                 print *,fracl1,fracl2
+    fracl=(mass_stot-fk05)/(masstot)   ! fraction into k
+
     ! add the 'loss' moments to the new bin
     do k=1,n_moments
-        if (momtype(k).eq.2) then       ! number based        
-            moments(lf1,k)=moments(lf1,k)+momtemp(k)*fracadj1
-            moments(lf1+1,k)=moments(lf1+1,k)+momtemp(k)*fracadj2
-        elseif(momtype(k).eq.1) then    ! mass based (this is what they all are)
-            moments(lf1,k)=moments(lf1,k)+momtemp(k)*fracl1
-            moments(lf1+1,k)=moments(lf1+1,k)+momtemp(k)*fracl2
+        temp=momtemp(k)
+        if ((momtype(k).eq.2).and. &
+            ((phase1==0).and.(phase2==1))) then       ! number based  
+            temp=oldprop(k)*(mass_stot*fracl/xn(lf1)+ &
+                mass_stot*(1._wp-fracl)/xn(lf1+1))
         endif
+        moments(lf1,k)=moments(lf1,k)+temp*fracl
+        moments(lf1+1,k)=moments(lf1+1,k)+temp*(1._wp-fracl)
     enddo
     !*****
-    npart(lf1)=npart(lf1)+mass_stot*fracl1/xn(lf1)
-    npart(lf1+1)=npart(lf1+1)+mass_stot*(1._wp-fracl1)/xn(lf1+1)
+    npart(lf1)=npart(lf1)+mass_stot*fracl/xn(lf1)
+    npart(lf1+1)=npart(lf1+1)+mass_stot*(1._wp-fracl)/xn(lf1+1)
 	
 	
     end subroutine add_moments_to_new_bin
@@ -2402,7 +2414,7 @@
     ! phi, nmon, vol, rim, unfr
     moments(pm)=mass_stot/mass_s
     moments(nm)=mass_stot/mass_s
-    moments(vm)=mass_stot/rhoice
+!     moments(vm)=mass_stot/rhoice
     moments(rm)=0._wp
     moments(um)=0._wp
     
