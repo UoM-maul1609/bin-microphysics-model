@@ -2210,7 +2210,7 @@
                 ! we assume the "big" particle mostly remains
                 nnew=massaddto/massn
                 
-                
+                mass_remain=xn(i)
                 if(mode2_flag) then
                     ! (1) from xn(i) and xn(j) work out how many splash fragments there are
                     ! according to Phillips et al.
@@ -2222,7 +2222,7 @@
                     mass_dm=min(nfrag_drops*mass_mode2_frag, 0.75_wp*xn(i))
                     !mass_dm=0._wp
                     nfrag_drops = mass_dm / mass_mode2_frag
-                    mass_remain=xn(i)-mass_dm
+                    mass_remain=mass_remain-mass_dm
                     ! (3) calculate mode 2 also
                     mass_sm=mass_dm*frac_i
                     mass_dm=mass_dm-mass_sm ! just the drops
@@ -2312,9 +2312,12 @@
             ! the moments that need to be transferred out
             oldprop=moments(j,:)/(npart(j)+1.e-60_wp)
             momtemp=moments(i,:)*frac1+moments(j,:)*frac2  ! total moment coming out
-            if(phase1==0) then
+            if((phase1==0).and.(phase2==1)) then
                 momtemp(parcel1%n_comps+1)=moments(j,parcel1%n_comps+1)*frac2
                 momtemp(parcel1%n_comps+2)=moments(j,parcel1%n_comps+2)*frac2                
+            elseif((phase1==0).and.(phase2==0)) then
+                momtemp(parcel1%n_comps+1)=0._wp
+                momtemp(parcel1%n_comps+2)=0._wp          
             endif
             ! remove the moments from the colliding bins
             moments(i,:)=moments(i,:)*(1._wp-frac1)
@@ -2357,6 +2360,7 @@
             
             ! Now for "splinter" category for H-M collisions           
             ! if one liquid and two ice
+            oldprop=1._wp
             if((phase1.eq.0).and.(phase2.eq.1).and.(t.lt.ttr).and.(mass_stot>qsmall2) &
                 .and. (xn(i)>7.2382e-12_wp)) then
                 ! redefine moments
@@ -2373,7 +2377,6 @@
             
             if (.not.mode2_flag) cycle
             
-            oldprop=1._wp
             if((phase1.eq.0).and.(phase2.eq.1).and.(t.lt.ttr).and.(mass_mtot>qsmall2) &
                 .and. (xn(i)>7.2382e-12_wp)) then
                 ! drops - mode 2
