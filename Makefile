@@ -1,8 +1,9 @@
 OSNF_DIR = osnf
 SCE_DIR = sce
+SCE_OSNF_DIR = sce/osnf
 
 .PHONY: osnf_code sce_code cleanall
-CLEANDIRS = $(OSNF_DIR) $(SCE_DIR) ./
+CLEANDIRS = $(OSNF_DIR) $(SCE_DIR)  $(SCE_OSNF_DIR) ./
 
 
 DEBUG = -fbounds-check -g

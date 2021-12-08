@@ -113,8 +113,8 @@
                     alpha_therm_ice, alpha_dep
         integer(i4b) :: microphysics_flag=0, kappa_flag,updraft_type, vent_flag, &
                         sce_flag=0,ice_flag=0, bin_scheme_flag=1
-        logical :: use_prof_for_tprh
-        real(wp) :: dz,dt, runtime
+        logical :: use_prof_for_tprh, hm_flag, break_flag, mode2_flag
+        real(wp) :: dz,dt, runtime, t_thresh
         ! sounding spec
         real(wp) :: psurf, tsurf
         integer(i4b), parameter :: nlevels_r=1000
@@ -274,8 +274,9 @@
         ! define namelists for environment
         namelist /run_vars/ outputfile, scefile,runtime, dt, &
                     zinit,tpert,use_prof_for_tprh,winit,tinit,pinit,rhinit, &
-                    microphysics_flag, ice_flag, bin_scheme_flag, sce_flag,vent_flag, &
-                    kappa_flag, updraft_type,adiabatic_prof, vert_ent, &
+                    microphysics_flag, ice_flag, bin_scheme_flag, sce_flag, &
+                    hm_flag, break_flag, mode2_flag, vent_flag, &
+                    kappa_flag, updraft_type,t_thresh, adiabatic_prof, vert_ent, &
                     z_ctop, ent_rate,n_levels_s, &
                     alpha_therm,alpha_cond,alpha_therm_ice,alpha_dep
         namelist /aerosol_setup/ n_intern,n_mode,n_sv,sv_flag, n_bins,n_comps
@@ -3185,7 +3186,7 @@
     enddo
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-    if (sce_flag.eq.1) then
+    if (sce_flag.gt.0) then
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         ! Moving Centre binning                                            !
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -3278,7 +3279,7 @@
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         ! Moving Centre binning                                                !
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        if (sce_flag.eq.1) then
+        if (sce_flag.gt.0) then
             !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
             ! Moving Centre binning                                            !
             !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -3851,43 +3852,54 @@
 	!>@brief
 	!>driver for the bin-microphysics module
 	!>@param[in] sce_flag - flag to say if we are computing the SCE
-    subroutine bmm_driver(sce_flag)
+    subroutine bmm_driver(sce_flag,hm_flag,break_flag,mode2_flag)
     use numerics_type
     use sce, only : sce_microphysics, sce_sip_microphysics, qsmall
     implicit none
     integer(i4b), intent(in) :: sce_flag
+    logical, intent(in) :: hm_flag, break_flag, mode2_flag
     integer(i4b) :: i, j, nt
-    
     
     nt=ceiling(runtime / real(dt,kind=wp))
     do i=1,nt
         ! output to file
         call output(io1%new_file,outputfile)
         
-!         if (parcel1%TT>250._wp) parcel1%y(parcel1%iw)=0._wp
+        
+        if ((updraft_type==2).and.(parcel1%TT>t_thresh)) parcel1%y(parcel1%iw)=0._wp
         ! one time-step of model
         call bin_microphysics(fparcelwarm, fparcelcold, icenucleation)
         
-        if(sce_flag.eq.1) then
+        if(sce_flag.gt.0) then
             
             ! Map the BMM variables to the SCE variables
             call map_to_sce(ice_flag)
               
               
             ! one time-step of sce model
-            call sce_microphysics(parcel1%n_bins1,parcel1%n_bin_mode,parcel1%n_comps+&
-                            parcel1%imoms,&
-                            parcel1%npartall,parcel1%moments,parcel1%momenttype, &
-                            parcel1%ecoll,parcel1%indexc, &
-                            parcel1%mbinall(:,n_comps+1),parcel1%dt)
-!             call sce_sip_microphysics(parcel1%n_bins1,parcel1%n_bin_mode,parcel1%n_comps+&
-!                             parcel1%imoms,&
-!                             parcel1%npartall,parcel1%moments,parcel1%momenttype, &
-!                             parcel1%ecoll,parcel1%indexc, &
-!                             parcel1%mbinall(:,n_comps+1),parcel1%vel,parcel1%dt, &
-!                             parcel1%y(parcel1%ite), &
-!                             mass_fragment1, mass_fragment2, mass_fragment3 )
-                            
+            if(sce_flag.eq.1) then
+                call sce_microphysics(parcel1%n_bins1,parcel1%n_bin_mode,parcel1%n_comps+&
+                                parcel1%imoms,&
+                                parcel1%npartall,parcel1%moments,parcel1%momenttype, &
+                                parcel1%ecoll,parcel1%indexc, &
+                                parcel1%mbinall(:,n_comps+1),parcel1%dt, &
+                                parcel1%y(parcel1%ite))
+                ! latent heat of fusion
+                parcel1%yice(parcel1%itei)=parcel1%y(parcel1%ite)
+            elseif(sce_flag.eq.2) then
+                call sce_sip_microphysics(parcel1%n_bins1,parcel1%n_bin_mode,&
+                                parcel1%n_comps+&
+                                parcel1%imoms,&
+                                parcel1%npartall,parcel1%moments,parcel1%momenttype, &
+                                parcel1%ecoll,parcel1%indexc, &
+                                parcel1%mbinall(:,n_comps+1),parcel1%vel,parcel1%dt, &
+                                parcel1%y(parcel1%ite), &
+                                mass_fragment1, mass_fragment2, mass_fragment3, &
+                                hm_flag,break_flag,mode2_flag )
+                ! latent heat of fusion
+                parcel1%yice(parcel1%itei)=parcel1%y(parcel1%ite)
+            endif
+                                        
             ! redefine the mass of each component of aerosol
             do j=1,parcel1%n_comps
                 where (parcel1%npartall(:).gt.qsmall)
