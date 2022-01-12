@@ -39,6 +39,7 @@ DT=10e-6
 # change diameter to that of interest
 D=0.06e-3 # diameter of freezing drop
 D=2.6e-3 # diameter of freezing drop
+
 m=rhow*np.pi*D**3/6.
 
 t=np.linspace(273.15,243.15,100)-ttr

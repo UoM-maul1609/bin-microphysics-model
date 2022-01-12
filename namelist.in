@@ -7,7 +7,7 @@
 	tpert=0.0,
 	use_prof_for_tprh=.false.,
 	winit=2.,
-	tinit=280.,
+	tinit=275.,
 	pinit=90000,
 	rhinit=0.95,
 	microphysics_flag=1, ! flag for microphysics: 0 (no micro); 
@@ -29,9 +29,10 @@
  	alpha_cond=1.0,
  	alpha_therm_ice=1.0,
  	alpha_dep=1.0,
- 	hm_flag=.false,
+ 	hm_flag=.true.,
  	break_flag=.false.,
- 	mode2_flag=.false./
+ 	mode1_flag=.true., ! at the moment it is only coded up for collision-freezing
+ 	mode2_flag=.true./
 &aerosol_setup
     n_mode            = 2,
     n_intern          = 3,

@@ -25,7 +25,7 @@
         use numerics_type
         use bmm, only : read_in_bmm_namelist, initialise_bmm_arrays, bmm_driver, io1, &
                         write_sce_to_bmm, &
-                        scefile, sce_flag, hm_flag, break_flag, mode2_flag, &
+                        scefile, sce_flag, hm_flag, break_flag, mode1_flag,mode2_flag, &
                         psurf, tsurf, q_read, theta_read, rh_read, z_read, &
                         runtime, dt, zinit, tpert, use_prof_for_tprh, winit, tinit, pinit, &
                         rhinit, microphysics_flag, ice_flag, bin_scheme_flag, vent_flag, &
@@ -106,7 +106,7 @@
         ! run the model                                                        !
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         io1%new_file=.true.
-        call bmm_driver(sce_flag,hm_flag,break_flag,mode2_flag) 
+        call bmm_driver(sce_flag,hm_flag,break_flag,mode1_flag,mode2_flag) 
                 !(nq,nprec,kp,ord,o_halo,runtime,dt,updraft_type,t_thresh,w_peak, &
         				! 	grid1%q,grid1%precip,grid1%theta, &
 !                             grid1%p,dz,grid1%z,grid1%t,grid1%rho,grid1%u,io1%new_file, &

@@ -113,7 +113,7 @@
                     alpha_therm_ice, alpha_dep
         integer(i4b) :: microphysics_flag=0, kappa_flag,updraft_type, vent_flag, &
                         sce_flag=0,ice_flag=0, bin_scheme_flag=1
-        logical :: use_prof_for_tprh, hm_flag, break_flag, mode2_flag
+        logical :: use_prof_for_tprh, hm_flag, break_flag, mode1_flag, mode2_flag
         real(wp) :: dz,dt, runtime, t_thresh
         ! sounding spec
         real(wp) :: psurf, tsurf
@@ -275,7 +275,7 @@
         namelist /run_vars/ outputfile, scefile,runtime, dt, &
                     zinit,tpert,use_prof_for_tprh,winit,tinit,pinit,rhinit, &
                     microphysics_flag, ice_flag, bin_scheme_flag, sce_flag, &
-                    hm_flag, break_flag, mode2_flag, vent_flag, &
+                    hm_flag, break_flag, mode1_flag, mode2_flag, vent_flag, &
                     kappa_flag, updraft_type,t_thresh, adiabatic_prof, vert_ent, &
                     z_ctop, ent_rate,n_levels_s, &
                     alpha_therm,alpha_cond,alpha_therm_ice,alpha_dep
@@ -3852,12 +3852,12 @@
 	!>@brief
 	!>driver for the bin-microphysics module
 	!>@param[in] sce_flag - flag to say if we are computing the SCE
-    subroutine bmm_driver(sce_flag,hm_flag,break_flag,mode2_flag)
+    subroutine bmm_driver(sce_flag,hm_flag,break_flag,mode1_flag, mode2_flag)
     use numerics_type
     use sce, only : sce_microphysics, sce_sip_microphysics, qsmall
     implicit none
     integer(i4b), intent(in) :: sce_flag
-    logical, intent(in) :: hm_flag, break_flag, mode2_flag
+    logical, intent(in) :: hm_flag, break_flag, mode1_flag, mode2_flag
     integer(i4b) :: i, j, nt
     
     nt=ceiling(runtime / real(dt,kind=wp))
@@ -3895,7 +3895,7 @@
                                 parcel1%mbinall(:,n_comps+1),parcel1%vel,parcel1%dt, &
                                 parcel1%y(parcel1%ite), &
                                 mass_fragment1, mass_fragment2, mass_fragment3, &
-                                hm_flag,break_flag,mode2_flag )
+                                hm_flag,break_flag,mode1_flag, mode2_flag )
                 ! latent heat of fusion
                 parcel1%yice(parcel1%itei)=parcel1%y(parcel1%ite)
             endif
