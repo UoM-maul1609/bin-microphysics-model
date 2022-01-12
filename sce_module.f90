@@ -22,7 +22,8 @@
         						eps1=ra/rv, rhoice=910._wp, n_avo=6.02e23_wp, &
         						kboltz=r_gas/n_avo, epsilond=2000.e-4_wp, &
         						qsmall=1.e-60_wp, qsmall2=1.e-20_wp, &
-        						de_crit=0.2_wp, phi_mode2=0.35_wp
+        						de_crit=0.2_wp, phi_mode2=0.35_wp, &
+        						oneoversix=1._wp/6._wp, dtt=10.e-6_wp
         						
         						
 
@@ -1890,6 +1891,74 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
     
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! one time-step of the bin-microphysics                                        !
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>calculates the number of fragments and their mass
+    subroutine calculate_mode1(min1,min2,t,n,nt,nb,mb,mt)
+        use numerics_type
+        implicit none
+        real(wp), intent(in) :: min1,min2,t
+        real(wp), intent(inout) :: n, nt, nb, mb, mt
+        real(wp) :: tc, dthresh, x, beta1,log10zeta, log10nabla, t0, zetab, nablab, tb0, &
+            sigma, omega, m,d, fac1
+        
+        if((min2>min1).or.(min1<=6.55e-11_wp)) then
+            ! the ice is more massive than the drop or drop small, don't do it
+            n=0._wp
+            nt=0._wp
+            nb=0._wp
+            return
+        endif
+    
+        d = (6._wp*min1/rhow)**(1._wp/3._wp)
+        tc=t-ttr
+        dthresh = min(d,1.6e-3)
+        x = log10(dthresh*1000._wp)
+        
+        ! table 3, phillips et al.
+        beta1 = 0.
+        log10zeta = 2.4268_wp*x*x*x + 3.3274_wp*x*x + 2.0783_wp*x + 1.2927_wp
+        log10nabla = 0.1242_wp*x*x*x - 0.2316_wp*x*x - 0.9874_wp*x - 0.0827_wp
+        t0 = -1.3999_wp*x*x*x - 5.3285_wp*x*x - 3.9847_wp*x - 15.0332_wp
+        
+        ! table 4, phillips et al. 
+        zetab = -0.4651_wp*x*x*x - 1.1072_wp*x*x - 0.4539_wp*x+0.5137_wp
+        nablab = 28.5888*x*x*x + 49.8504_wp*x*x + 22.4873_wp*x + 8.0481_wp
+        tb0 = 13.3588_wp*x*x*x + 15.7432_wp*x*x - 2.6545_wp*x - 18.4875_wp
+        
+        sigma = min(max((d-50.e-6_wp)/10.e-6_wp,0._wp), 1._wp)
+        omega = min(max((-3._wp-tc)/3._wp,0._wp),1._wp)
+        
+        n = sigma*omega*(10._wp**log10zeta *(10**log10nabla)**2) / &
+            ((tc-t0)**2+(10._wp*log10nabla)**2+beta1*tc)
+        
+        ! total number of fragments
+        n=n*d/dthresh
+        ! number of large fragments
+        nb = min(sigma*omega*(zetab*nablab**2/((tc-tb0)**2+nablab**2)),n)
+        ! number of small fragments
+        nt = n-nb
+        
+        m=oneoversix*rhow*pi*d**3
+        
+        ! mass of large fragments
+        mb=0.4_wp*m
+        
+        ! mass of small fragments
+        mt=oneoversix*rhoice*pi*dtt**3
+        
+        fac1=min((mt*nt+mb*nb)/min1,1._wp)
+        nt = nt *fac1
+        nb = nb *fac1
+        n=nt+nb
+        
+    end subroutine calculate_mode1
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    
         
     
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -2067,7 +2136,8 @@
     subroutine sce_sip_microphysics(n_binst,n_bin_mode,n_moments,npart,moments,momtype, &
                                 ecoll,indexc,xn,vel,dt,t, &
                                 mass_hm_splinter, mass_coll_splinter, &
-                                mass_mode2_frag, hm_flag, break_flag, mode2_flag)
+                                mass_mode2_frag, hm_flag, break_flag, mode1_flag, &
+                                mode2_flag)
     use numerics_type
     use numerics, only : zeroin, dvode
     implicit none
@@ -2079,16 +2149,18 @@
     integer(i4b), dimension(n_moments), intent(in) :: momtype
     real(wp), intent(in) :: dt, mass_hm_splinter, mass_coll_splinter, &
                                 mass_mode2_frag
-    logical, intent(in) :: hm_flag, break_flag, mode2_flag
+    logical, intent(in) :: hm_flag, break_flag, mode1_flag, mode2_flag
     real(wp), intent(inout) :: t
     
     real(wp) :: remove1,remove2,massn,massaddto,nnew,gk,beta1,cw,fk05, &
                 frac1, frac2, fracl1,fracl2, fracadj1, fracadj2, totloss, &
                 nfrag, mass_s, mass_stot, masstot, nfrag_drops,nfrag_ice, mass_remain, &
-                mass_dm, mass_sm, frac_i, mass_mtot, mass_smtot, totaddto
+                mass_dm, mass_sm, frac_i, mass_mtot, mass_smtot, totaddto, &
+                mbigm1,mtinym1,nbigm1,ntinym1,ntotm1, mass_m1t, mass_m1b, &
+                mass_m1ttot, mass_m1btot
     real(wp), dimension(n_moments) :: momtemp, oldprop
     integer(i4b) :: i,j,k,l,il,ih,jl,jh,jld,jhd, &
-                     modeinto, phase, phase1, phase2, lf1,lf2,lf3
+                     modeinto, phase, phase1, phase2, lf1,lf2,lf3,  lf4, lf5
     
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Find the min and max bins to do computations on                                    !
@@ -2192,8 +2264,12 @@
             mass_s=0._wp
             mass_dm=0._wp
             mass_sm=0._wp
+            mass_m1t=0._wp
+            mass_m1b=0._wp
+            mass_m1ttot=0._wp
+            mass_m1btot=0._wp
             if((phase1.eq.0).and.(phase2.eq.1).and.(t.lt.ttr).and. &
-                (xn(i)>7.2382e-12_wp).and.(mode2_flag.or.hm_flag)) then
+                (xn(i)>7.2382e-12_wp).and.(mode1_flag.or.(mode2_flag.or.hm_flag))) then
                 
                 
                 ! this is the mode that new ice fragments enter
@@ -2211,6 +2287,37 @@
                 nnew=massaddto/massn
                 
                 mass_remain=xn(i)
+                ! mode 1 goes in here - and it's either one or the other
+                if(mode1_flag) then
+                    ! (1) from xn(i) and xn(j) work out how many fragments there are
+                    ! according to Phillips et al.
+                    ! of both mT and mB
+                    call calculate_mode1(xn(i),xn(j), &
+                        t,ntotm1,ntinym1,nbigm1,mbigm1,mtinym1)
+                    ! (2) from the size of the fragments work out how much rime mass there
+                    !   is and do H-M
+                    ! total mass in both size fragments
+                    mass_m1t=ntinym1*mtinym1 
+                    mass_m1b=nbigm1*mbigm1   
+                    mass_remain=mass_remain-mass_m1t-mass_m1b
+
+                    ! (3) there are now two ice modes, call them lf4 and lf5?
+                    mass_m1ttot = mass_m1t*nnew ! drop mass lost to mode 1 small splinters
+                    mass_m1btot = mass_m1b*nnew ! drop mass lost to mode 1 big splinters
+                    
+                    ! ice mode tiny
+                    do k=jl,jh
+                        if (xn(k).gt.mass_m1t) exit
+                    enddo
+                    lf4=k-1
+                    ! ice mode big
+                    do k=jl,jh
+                        if (xn(k).gt.mass_m1b) exit
+                    enddo
+                    lf5=k-1
+                endif
+                
+                
                 if(mode2_flag) then
                     ! (1) from xn(i) and xn(j) work out how many splash fragments there are
                     ! according to Phillips et al.
@@ -2262,11 +2369,13 @@
                 !-------------------------------------------------------------------------
 
                 ! the mass of the new category (after adjustment)
-                massn=massn-mass_s-mass_dm-mass_sm 
+                massn=massn-mass_s-mass_dm-mass_sm-mass_m1t-mass_m1b
 
                 !print *,jl,jh,lf1,n_binst,parcel1%n_modes
                 ! total mass of new category
-                massaddto=massaddto-mass_stot-mass_mtot-mass_smtot ! the mass produced in collision
+                massaddto=massaddto-mass_stot-mass_mtot-mass_smtot- &
+                        mass_m1ttot-mass_m1btot ! the mass produced in collision
+
 !                 print *,massaddto,mass_s,xn(1),mass_stot, massn,mass_s
             endif            
             !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -2375,7 +2484,43 @@
                 !-------------------------------------------------------------------------
             endif
             
+            if(mode1_flag) then
+                if((phase1.eq.0).and.(phase2.eq.1).and.(t.lt.ttr).and.&
+                    (mass_m1ttot>qsmall2) &
+                    .and. (xn(i)>7.2382e-12_wp)) then
+                    ! ice - mode 2
+                    ! redefine moments
+                    call set_ice_moments(momtemp,n_moments,&
+                        parcel1%n_comps+1,parcel1%n_comps+2,parcel1%n_comps+3, &
+                        parcel1%n_comps+4,parcel1%n_comps+5,masstot,mass_m1t)
+                
+                    ! gain integral bit+++++++++++++++++++++++++++++++++++++++++++++++++++
+                    call add_moments_to_new_bin(lf4,n_moments, n_bin_mode, &
+                        mass_m1ttot, mass_m1t, masstot, remove1, remove2, momtype, xn, &
+                            momtemp, oldprop, npart, moments, phase1,phase2)
+                    !---------------------------------------------------------------------
+                endif            
+                if((phase1.eq.0).and.(phase2.eq.1).and.(t.lt.ttr).and.&
+                    (mass_m1btot>qsmall2) &
+                    .and. (xn(i)>7.2382e-12_wp)) then
+                    ! ice - mode 2
+                    ! redefine moments
+                    call set_ice_moments(momtemp,n_moments,&
+                        parcel1%n_comps+1,parcel1%n_comps+2,parcel1%n_comps+3, &
+                        parcel1%n_comps+4,parcel1%n_comps+5,masstot,mass_m1b)
+                
+                    ! gain integral bit+++++++++++++++++++++++++++++++++++++++++++++++++++
+                    call add_moments_to_new_bin(lf5,n_moments, n_bin_mode, &
+                        mass_m1btot, mass_m1b, masstot, remove1, remove2, momtype, xn, &
+                            momtemp, oldprop, npart, moments, phase1,phase2)
+                    !---------------------------------------------------------------------
+                endif            
+            endif
+            
+                        
+            
             if (.not.mode2_flag) cycle
+            ! mode 2 from here
             
             if((phase1.eq.0).and.(phase2.eq.1).and.(t.lt.ttr).and.(mass_mtot>qsmall2) &
                 .and. (xn(i)>7.2382e-12_wp)) then
