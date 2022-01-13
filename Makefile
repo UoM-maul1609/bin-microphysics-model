@@ -6,7 +6,7 @@ SCE_OSNF_DIR = sce/osnf
 CLEANDIRS = $(OSNF_DIR) $(SCE_DIR)  $(SCE_OSNF_DIR) ./
 
 
-DEBUG = -fbounds-check -g
+DEBUG = -g
 MPI    =#-DMPI1
 OPT    =-O3
 

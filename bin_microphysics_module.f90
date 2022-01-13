@@ -2500,6 +2500,7 @@
                          rhobin,nubin,kappabin,molwbin, &
                          moments,t,p,sz,sz2,sz3,yice,rh,dt) 
       use numerics_type
+      use sce, only : calculate_mode1
       implicit none
       real(wp), intent(inout) :: t
       real(wp), intent(in) :: p,rh,dt
@@ -2519,6 +2520,14 @@
       
       integer(i4b) :: i
       real(wp) :: fracinliq, fracinice, naer05, nprimary
+      
+      
+      ! todo: 
+      ! (1) break this into a do loop to make it easier
+      ! (2) for each drop that freezes calculate the mode 1 break-up 
+      ! (3) put the fragments and moments in the new categories
+      !     they go into the same mode as the "mode" of the drop that freezes
+      !     maybe loop backwards from the current size
       
       !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
       ! first calculate the ice formation over dt using koop et al. 2000       !
@@ -2637,6 +2646,7 @@
       mbin2_ice(:,1:sz)=dmaer01(:,:)/(1.e-50_wp+spread(npartice,2,sz))
       moments(1+sz2:2*sz2,1:sz)=dmaer01(:,:)
       mbin2_ice(:,sz+1)=yice
+      
       ! latent heat of fusion:
       t=t+lf/cp*sum(mwat(:)*dn01(:))
     end subroutine icenucleation
