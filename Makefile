@@ -4,7 +4,7 @@ OSNF_DIR = osnf
 CLEANDIRS = $(OSNF_DIR) ./
 
 
-DEBUG = -fbounds-check -g
+DEBUG = -g
 MPI    =#-DMPI1
 OPT    =-O3
 

@@ -1,6 +1,21 @@
 module numerics
     use numerics_type
     implicit none
+    private 
+    public find_pos, poly_int, tridiagonal, zeroin,assert_eq, r1mach, d1mach, &
+        dfsid1, erfinv, vode_integrate, xsetf, dvode, fmin, assert_eq2, assert_eq3, &
+        assert_eq4, assert_eqn, imaxloc, iminloc, numerics_error, &
+        quad2d_qgaus, quad2d_romb, gammainc, gammainc_scal, invgammainc, &
+        LN2, &
+        A0, A1, A2, A3, A4, A5, A6, A7, &
+        B0, B1, B2, B3, B4, B5, B6, B7, &
+        C0, C1, C2, C3, C4, C5, C6, C7, &
+        D0, D1, D2, D3, D4, D5, D6, D7, &
+        E0, E1, E2, E3, E4, E5, E6, E7, &
+        F0, F1, F2, F3, F4, F5, F6, F7
+    real(wp) :: xsav
+
+    integer(i4b), parameter :: npar_arith=16,npar_arith2=8
     real(wp), parameter :: LN2 = 6.931471805599453094172321214581e-1_wp
     real(wp), parameter :: A0 = 1.1975323115670912564578e0_wp
     real(wp), parameter :: A1 = 4.7072688112383978012285e1_wp
@@ -205,7 +220,514 @@ module numerics
         end function fmin
 	end interface
 !
+
+    interface gammainc
+        module procedure gammainc_scal, gammainc_vec
+    end interface
+    
+    interface gcf
+        module procedure gcf_scal, gcf_vec
+    end interface
+    interface gser
+        module procedure gser_scal, gser_vec
+    end interface
+
     contains
+    ! series solutions for the incomplete gamma function
+	function gser_scal(a,x,gln)
+	implicit none
+	real(wp), intent(in) :: a,x
+	real(wp), optional, intent(out) :: gln
+	real(wp) :: gser_scal
+	integer(i4b), parameter :: itmax=100
+	real(wp), parameter :: eps=epsilon(x)
+	integer(i4b) :: n
+	real(wp) :: ap,del,summ
+	if (x == 0.0_wp) then
+		gser_scal=0.0_wp
+		return
+	end if
+	ap=a
+	summ=1.0_wp/a
+	del=summ
+	do n=1,itmax
+		ap=ap+1.0_wp
+		del=del*x/ap
+		summ=summ+del
+		if (abs(del) < abs(summ)*eps) exit
+	end do
+	if (n > itmax) call numerics_error('a too large, itmax too small in gser_scal')
+	if (present(gln)) then
+		gln=log_gamma(a)
+		gser_scal=summ*exp(-x+a*log(x)-gln)
+	else
+		gser_scal=summ*exp(-x+a*log(x)-log_gamma(a))
+	end if
+	end function gser_scal
+
+
+    ! series solutions for the incomplete gamma function
+	function gser_vec(a,x,gln)
+	implicit none
+	real(wp), dimension(:), intent(in) :: a,x
+	real(wp), dimension(:), optional, intent(out) :: gln
+	real(wp), dimension(size(a)) :: gser_vec
+	integer(i4b), parameter :: itmax=100
+	real(wp), parameter :: eps=epsilon(x)
+	integer(i4b) :: n
+	real(wp), dimension(size(a)) :: ap,del,summ
+	logical(lgt), dimension(size(a)) :: converged,zero
+	n=assert_eq2(size(a),size(x),'gser_vec')
+	zero=(x == 0.0_wp)
+	where (zero) gser_vec=0.0_wp
+	ap=a
+	summ=1.0_wp/a
+	del=summ
+	converged=zero
+	do n=1,itmax
+		where (.not. converged)
+			ap=ap+1.0_wp
+			del=del*x/ap
+			summ=summ+del
+			converged = (abs(del) < abs(summ)*eps)
+		end where
+		if (all(converged)) exit
+	end do
+	if (n > itmax) call numerics_error('a too large, itmax too small in gser_vec')
+	if (present(gln)) then
+		if (size(gln) < size(a)) call &
+			numerics_error('gser: not enough space for gln')
+		gln=log_gamma(a)
+		where (.not. zero) gser_vec=summ*exp(-x+a*log(x)-gln)
+	else
+		where (.not. zero) gser_vec=summ*exp(-x+a*log(x)-log_gamma(a))
+	end if
+	end function gser_vec
+
+
+    ! continued fraction solution of incomplete gamma
+	function gcf_scal(a,x,gln)
+	implicit none
+	real(wp), intent(in) :: a,x
+	real(wp), optional, intent(out) :: gln
+	real(wp) :: gcf_scal
+	integer(i4b), parameter :: itmax=100
+	real(wp), parameter :: eps=epsilon(x),fpmin=tiny(x)/eps
+	integer(i4b) :: i
+	real(wp) :: an,b,c,d,del,h
+	if (x == 0.0_wp) then
+		gcf_scal=1.0_wp
+		return
+	end if
+	b=x+1.0_wp-a
+	c=1.0_wp/fpmin
+	d=1.0_wp/b
+	h=d
+	do i=1,itmax
+		an=-i*(i-a)
+		b=b+2.0_wp
+		d=an*d+b
+		if (abs(d) < fpmin) d=fpmin
+		c=b+an/c
+		if (abs(c) < fpmin) c=fpmin
+		d=1.0_wp/d
+		del=d*c
+		h=h*del
+		if (abs(del-1.0_wp) <= eps) exit
+	end do
+	if (i > itmax) call numerics_error('a too large, itmax too small in gcf_scal')
+	if (present(gln)) then
+		gln=log_gamma(a)
+		gcf_scal=exp(-x+a*log(x)-gln)*h
+	else
+		gcf_scal=exp(-x+a*log(x)-log_gamma(a))*h
+	end if
+	end function gcf_scal
+
+
+    ! continued fraction solution of incomplete gamma
+	function gcf_vec(a,x,gln)
+	implicit none
+	real(wp), dimension(:), intent(in) :: a,x
+	real(wp), dimension(:), optional, intent(out) :: gln
+	real(wp), dimension(size(a)) :: gcf_vec
+	integer(i4b), parameter :: itmax=100
+	real(wp), parameter :: eps=epsilon(x),fpmin=tiny(x)/eps
+	integer(i4b) :: i
+	real(wp), dimension(size(a)) :: an,b,c,d,del,h
+	logical(lgt), dimension(size(a)) :: converged,zero
+	i=assert_eq2(size(a),size(x),'gcf_vec')
+	zero=(x == 0.0_wp)
+	where (zero)
+		gcf_vec=1.0_wp
+	elsewhere
+		b=x+1.0_wp-a
+		c=1.0_wp/fpmin
+		d=1.0_wp/b
+		h=d
+	end where
+	converged=zero
+	do i=1,itmax
+		where (.not. converged)
+			an=-i*(i-a)
+			b=b+2.0_wp
+			d=an*d+b
+			d=merge(fpmin,d, abs(d)<fpmin )
+			c=b+an/c
+			c=merge(fpmin,c, abs(c)<fpmin )
+			d=1.0_wp/d
+			del=d*c
+			h=h*del
+			converged = (abs(del-1.0_wp)<=eps)
+		end where
+		if (all(converged)) exit
+	end do
+	if (i > itmax) call numerics_error('a too large, itmax too small in gcf_vec')
+	if (present(gln)) then
+		if (size(gln) < size(a)) call &
+			numerics_error('gser: not enough space for gln')
+		gln=log_gamma(a)
+		where (.not. zero) gcf_vec=exp(-x+a*log(x)-gln)*h
+	else
+		where (.not. zero) gcf_vec=exp(-x+a*log(x)-log_gamma(a))*h
+	end if
+	end function gcf_vec
+
+
+    ! calculates this incomplete gamma function
+	function gammainc_scal(a,x)
+	implicit none
+	real(wp), intent(in) :: a,x
+	real(wp) :: gammainc_scal
+	call assert1( x >= 0.0_wp,  a > 0.0_wp, 'gamminc_scal args')
+	if (x<a+1.0_wp) then
+		gammainc_scal=gser(a,x)
+	else
+		gammainc_scal=1.0_wp-gcf(a,x)
+	end if
+	end function gammainc_scal
+
+
+	function gammainc_vec(a,x)
+	implicit none
+	real(wp), dimension(:), intent(in) :: a,x
+	real(wp), dimension(size(x)) :: gammainc_vec
+	logical(lgt), dimension(size(x)) :: mask
+	integer(i4b) :: ndum
+	ndum=assert_eq2(size(a),size(x),'gamminc_vec')
+	call assert1( all(x >= 0.0_wp),  all(a > 0.0_wp), 'gamminc_vec args')
+	mask = (x<a+1.0_wp)
+	gammainc_vec=merge(gser(a,merge(x,0.0_wp,mask)), &
+		1.0_wp-gcf(a,merge(x,0.0_wp,.not. mask)),mask)
+	end function gammainc_vec
+
+
+
+    function invgammainc(p,a) 
+        implicit none
+        real(wp), intent(in) :: a
+        real(wp), intent(in) :: p
+        real(wp) :: invgammainc
+
+        integer(i4b) :: j
+        real(wp) :: x,err,t,u,pp,lna1,afac,gln,a1
+        real(wp), parameter :: eps=1.e-8_wp
+    
+        a1=a-1.0_wp
+        gln=log_gamma(a)
+        if(a<=0.0_wp) print *, "a must be positive"
+        if(p>=1.0_wp) then
+            invgammainc=max(100._wp,a+100._wp*sqrt(a))
+            return
+        endif
+        if(p<=0.0_wp) then
+            invgammainc=0.0_wp
+            return
+        endif
+        if(a>1.0_wp) then
+            lna1=log(a1)
+            afac=exp(a1*(lna1-1._wp)-gln)
+            if(p<0.5_wp) then
+                pp=p
+            else
+                pp=1._wp-p
+            endif
+            t=sqrt(-2._wp*log(pp))
+            x=(2.30753_wp+t*0.27061_wp)/(1._wp+t*(0.99229_wp+t*0.04481_wp))-t
+            if(p<0.5_wp) x=-x
+            x=max(1.e-3_wp,a*(1._wp-1._wp/(9._wp*a)-x/(3._wp*sqrt(a)))**3)
+        else
+            t=1.0_wp-a*(0.253_wp+a*0.12_wp)
+            if(p<t) then 
+                x=(p/t)**(1._wp/a)
+            else
+                x=1._wp-log(1._wp-(p-t)/(1._wp-t))
+            endif
+        
+        endif
+    
+        do j=0,11
+            if(x<=0.0_wp) then
+                invgammainc=0.0_wp
+                return
+            endif
+            err=gammainc(a,x)-p
+            if(a>1.) then
+                t=afac*exp(-(x-a1)+a1*(log(x)-lna1))
+            else
+                t=exp(-x+a1*log(x)-gln)
+            endif
+            u=err/t
+            t=u/(1._wp-0.5_wp*min(1._wp,u*((a-1._wp)/x-1._wp)))
+            x=x-t
+            if(x<=0._wp) x=0.5_wp*(x+t)
+            if(abs(t) < eps*x) exit
+        enddo
+    
+        invgammainc=x
+        return 
+    end function invgammainc
+
+	recursive function romb(func1,a,b)
+		use numerics_type
+
+	implicit none
+	real(wp), intent(in) :: a,b
+	real(wp) :: romb
+	interface
+		function func1(x)
+		use numerics_type
+		real(wp), dimension(:), intent(in) :: x
+		real(wp), dimension(size(x)) :: func1
+		end function func1
+	end interface
+	integer(i4b), parameter :: jmax=20,jmaxp=jmax+1,k=5,km=k-1
+	real(wp), parameter :: eps=3.0e-6_wp
+	real(wp), dimension(jmaxp) :: h,s
+	real(wp) :: dromb
+	integer(i4b) :: j
+	h(1)=1.0_wp
+	do j=1,jmax
+		call trapezoid(func1,a,b,s(j),j)
+		if (j >= k) then
+			call poly_int(h(j-km:j),s(j-km:j),0.0_wp,romb,dromb)
+			if (abs(dromb) <= eps*abs(romb)) return
+		end if
+		s(j+1)=s(j)
+		h(j+1)=0.25_wp*h(j)
+	end do
+	call numerics_error('romb: too many steps')
+	end function romb
+
+	recursive subroutine trapezoid(func1,a,b,s,n)
+	use numerics_type
+	implicit none
+	real(wp), intent(in) :: a,b
+	real(wp), intent(inout) :: s
+	integer(i4b), intent(in) :: n
+	interface
+		function func1(x)
+		use numerics_type
+		real(wp), dimension(:), intent(in) :: x
+		real(wp), dimension(size(x)) :: func1
+		end function func1
+	end interface
+	real(wp) :: del,fsum
+	integer(i4b) :: it
+	if (n == 1) then
+		s=0.5_wp*(b-a)*sum(func1( (/ a,b /) ))
+	else
+		it=2**(n-2)
+		del=(b-a)/it
+		fsum=sum(func1(arithmetic_prog(a+0.5_wp*del,del,it)))
+		s=0.5_wp*(s+del*fsum)
+	end if
+	end subroutine trapezoid
+
+	recursive function qgaus(func1,a,b)
+		use numerics_type
+
+	implicit none	
+	real(wp), intent(in) :: a,b
+	real(wp) :: qgaus
+	interface
+		function func1(x)
+		use numerics_type
+		real(wp), dimension(:), intent(in) :: x
+		real(wp), dimension(size(x)) :: func1
+		end function func1
+	end interface
+	real(wp) :: xm,xr
+	real(wp), dimension(5) :: dx, w = (/ 0.2955242247_wp,0.2692667193_wp,&
+		0.2190863625_wp,0.1494513491_wp,0.0666713443_wp /),&
+		x = (/ 0.1488743389_wp,0.4333953941_wp,0.6794095682_wp,&
+		0.8650633666_wp,0.9739065285_wp /)
+	xm=0.5_wp*(b+a)
+	xr=0.5_wp*(b-a)
+	dx(:)=xr*x(:)
+	qgaus=xr*sum(w(:)*(func1(xm+dx)+func1(xm-dx)))
+	end function qgaus
+
+
+
+
+	subroutine quad2d_qgaus(func1,y1,y2,x1,x2,ss)
+		use numerics_type
+	implicit none
+	real(wp), intent(in) :: x1,x2
+	real(wp), intent(out) :: ss
+	
+	interface
+		function func1(x,y)
+		use numerics_type, only : wp
+		implicit none
+		real(wp), intent(in) :: x
+		real(wp), dimension(:), intent(in) :: y
+		real(wp), dimension(size(y)) :: func1
+		end function func1
+!
+
+		function y1(x)
+        use numerics_type, only : wp
+        implicit none
+		real(wp), intent(in) :: x
+		real(wp) :: y1
+		end function y1
+!
+		function y2(x)
+        use numerics_type, only : wp
+        implicit none
+		real(wp), intent(in) :: x
+		real(wp) :: y2
+		end function y2
+
+    end interface
+	
+	ss=qgaus(h,x1,x2)
+	
+    ! internal routine
+    contains
+         function f(y)
+        use numerics_type, only : wp
+        implicit none
+         real(wp), dimension(:), intent(in) :: y
+         real(wp), dimension(size(y)) :: f
+         f=func1(xsav,y)
+         end function f
+        !bl
+        function h(x)
+        use numerics_type, only : wp
+        implicit none
+        real(wp), dimension(:), intent(in) :: x
+        real(wp), dimension(size(x)) :: h
+        integer(i4b) :: i
+        do i=1,size(x)
+            xsav=x(i)
+            h(i)=qgaus(f,y1(xsav),y2(xsav))
+        end do
+        end function h
+	
+	end subroutine quad2d_qgaus
+	
+	
+	
+	
+
+	subroutine quad2d_romb(func1,y1,y2,x1,x2,ss)
+		use numerics_type
+	implicit none
+	real(wp), intent(in) :: x1,x2
+	real(wp), intent(out) :: ss
+
+	interface
+		function func1(x,y)
+		use numerics_type, only : wp
+		implicit none
+		real(wp), intent(in) :: x
+		real(wp), dimension(:), intent(in) :: y
+		real(wp), dimension(size(y)) :: func1
+		end function func1
+!
+
+		function y1(x)
+        use numerics_type, only : wp
+        implicit none
+		real(wp), intent(in) :: x
+		real(wp) :: y1
+		end function y1
+!
+		function y2(x)
+        use numerics_type, only : wp
+        implicit none
+		real(wp), intent(in) :: x
+		real(wp) :: y2
+		end function y2
+
+    end interface
+
+	ss=romb(h,x1,x2)
+
+    ! internal routine
+    contains
+         function f(y)
+        use numerics_type, only : wp
+        implicit none
+         real(wp), dimension(:), intent(in) :: y
+         real(wp), dimension(size(y)) :: f
+         f=func1(xsav,y)
+         end function f
+        !bl
+        function h(x)
+        use numerics_type, only : wp
+        implicit none
+        real(wp), dimension(:), intent(in) :: x
+        real(wp), dimension(size(x)) :: h
+        integer(i4b) :: i
+        do i=1,size(x)
+            xsav=x(i)
+            h(i)=romb(f,y1(xsav),y2(xsav))
+        end do
+        end function h
+
+	end subroutine quad2d_romb
+
+    function arithmetic_prog(first,increment,n)
+    real(wp), intent(in) :: first,increment
+    integer(i4b), intent(in) :: n
+    real(wp), dimension(n) :: arithmetic_prog
+    integer(i4b) :: k,k2
+    real(wp) :: temp
+    if (n > 0) arithmetic_prog(1)=first
+    if (n <= npar_arith) then
+        do k=2,n
+            arithmetic_prog(k)=arithmetic_prog(k-1)+increment
+        end do
+    else ! if it is greater than 16, we do the first 8 as usual
+        do k=2,npar_arith2
+            arithmetic_prog(k)=arithmetic_prog(k-1)+increment
+        end do
+        ! then replicate in sizes of 8, 16, 32, and so on
+        temp=increment*npar_arith2
+        k=npar_arith2
+        do
+            if (k >= n) exit
+            k2=k+k
+            arithmetic_prog(k+1:min(k2,n))=temp+arithmetic_prog(1:min(k,n-k))
+            temp=temp+temp
+            k=k2
+        end do
+    end if
+    end function arithmetic_prog
+
+	subroutine assert1(l1,l2,string)
+        character(len=*), intent(in) :: string
+        logical, intent(in) :: l1,l2
+        if (.not.((l1).and.(l2)) ) then
+            write (*,*) 'numerics: an assert1 failed:', &
+                string
+            stop 'program terminated by assert1'
+        end if
+	end subroutine assert1
 !
 	function assert_eq2(n1,n2,string)
         character(len=*), intent(in) :: string
