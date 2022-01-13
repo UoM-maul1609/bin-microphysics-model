@@ -46,9 +46,11 @@
             ! variables for ODE:                    
             integer(i4b) :: neq, itol, ipr, ite, iz, iw, irh, &
                             itask, istate, iopt, mf, lrw, liw
-            integer(i4b), dimension(:), allocatable :: iwork, ipar
+            integer(i4b), dimension(:), allocatable :: iwork
+            integer(i4b), dimension(1) :: ipar
             real(wp) :: tt, tout
-            real(wp), dimension(:), allocatable :: y, yold, atol, rwork, rpar
+            real(wp), dimension(:), allocatable :: y, yold, atol, rwork
+            real(wp), dimension(1) :: rpar
             real(wp), dimension(1) :: rtol
             
             ! ice water
@@ -69,10 +71,12 @@
             ! variables for ODE:                    
             integer(i4b) :: neqice, itolice, ipri, itei, izi, iwi, irhi, &
                             itaskice, istateice, ioptice, mfice, lrwice, liwice
-            integer(i4b), dimension(:), allocatable :: iworkice, iparice
+            integer(i4b), dimension(:), allocatable :: iworkice
+            integer(i4b), dimension(1) :: iparice
             real(wp) :: ttice, toutice
             real(wp), dimension(1) :: rtolice
-            real(wp), dimension(:), allocatable :: yice, yoldice, atolice, rworkice, rparice
+            real(wp), dimension(:), allocatable :: yice, yoldice, atolice, rworkice
+            real(wp), dimension(1) :: rparice
             
             
             logical :: break_flag=.false.
