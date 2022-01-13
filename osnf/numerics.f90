@@ -5,7 +5,7 @@ module numerics
     public find_pos, poly_int, tridiagonal, zeroin,assert_eq, r1mach, d1mach, &
         dfsid1, erfinv, vode_integrate, xsetf, dvode, fmin, assert_eq2, assert_eq3, &
         assert_eq4, assert_eqn, imaxloc, iminloc, numerics_error, &
-        quad2d_romb, gammainc, gammainc_scal, invgammainc, &
+        quad2d_qgaus, quad2d_romb, gammainc, gammainc_scal, invgammainc, &
         LN2, &
         A0, A1, A2, A3, A4, A5, A6, A7, &
         B0, B1, B2, B3, B4, B5, B6, B7, &
@@ -426,7 +426,7 @@ module numerics
     function invgammainc(p,a) 
         implicit none
         real(wp), intent(in) :: a
-        real(wp), intent(inout) :: p
+        real(wp), intent(in) :: p
         real(wp) :: invgammainc
 
         integer(i4b) :: j
@@ -544,8 +544,94 @@ module numerics
 	end if
 	end subroutine trapezoid
 
+	recursive function qgaus(func1,a,b)
+		use numerics_type
+
+	implicit none	
+	real(wp), intent(in) :: a,b
+	real(wp) :: qgaus
+	interface
+		function func1(x)
+		use numerics_type
+		real(wp), dimension(:), intent(in) :: x
+		real(wp), dimension(size(x)) :: func1
+		end function func1
+	end interface
+	real(wp) :: xm,xr
+	real(wp), dimension(5) :: dx, w = (/ 0.2955242247_wp,0.2692667193_wp,&
+		0.2190863625_wp,0.1494513491_wp,0.0666713443_wp /),&
+		x = (/ 0.1488743389_wp,0.4333953941_wp,0.6794095682_wp,&
+		0.8650633666_wp,0.9739065285_wp /)
+	xm=0.5_wp*(b+a)
+	xr=0.5_wp*(b-a)
+	dx(:)=xr*x(:)
+	qgaus=xr*sum(w(:)*(func1(xm+dx)+func1(xm-dx)))
+	end function qgaus
 
 
+
+
+	subroutine quad2d_qgaus(func1,y1,y2,x1,x2,ss)
+		use numerics_type
+	implicit none
+	real(wp), intent(in) :: x1,x2
+	real(wp), intent(out) :: ss
+	
+	interface
+		function func1(x,y)
+		use numerics_type, only : wp
+		implicit none
+		real(wp), intent(in) :: x
+		real(wp), dimension(:), intent(in) :: y
+		real(wp), dimension(size(y)) :: func1
+		end function func1
+!
+
+		function y1(x)
+        use numerics_type, only : wp
+        implicit none
+		real(wp), intent(in) :: x
+		real(wp) :: y1
+		end function y1
+!
+		function y2(x)
+        use numerics_type, only : wp
+        implicit none
+		real(wp), intent(in) :: x
+		real(wp) :: y2
+		end function y2
+
+    end interface
+	
+	ss=qgaus(h,x1,x2)
+	
+    ! internal routine
+    contains
+         function f(y)
+        use numerics_type, only : wp
+        implicit none
+         real(wp), dimension(:), intent(in) :: y
+         real(wp), dimension(size(y)) :: f
+         f=func1(xsav,y)
+         end function f
+        !bl
+        function h(x)
+        use numerics_type, only : wp
+        implicit none
+        real(wp), dimension(:), intent(in) :: x
+        real(wp), dimension(size(x)) :: h
+        integer(i4b) :: i
+        do i=1,size(x)
+            xsav=x(i)
+            h(i)=qgaus(f,y1(xsav),y2(xsav))
+        end do
+        end function h
+	
+	end subroutine quad2d_qgaus
+	
+	
+	
+	
 
 	subroutine quad2d_romb(func1,y1,y2,x1,x2,ss)
 		use numerics_type
