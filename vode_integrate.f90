@@ -7,8 +7,10 @@
         implicit none
         logical(lgt), save :: initialise_ode=.true.
         integer(i4b) :: neq,itol=2,itask=1,istate=1,iopt=1,lrw,liw,mf=22,iout
-        real(wp), dimension(:), allocatable :: rpar
-        integer(i4b), dimension(:), allocatable :: ipar
+        !real(wp), dimension(:), allocatable :: rpar
+        !integer(i4b), dimension(:), allocatable :: ipar
+        real(wp), dimension(1) :: rpar
+        integer(i4b), dimension(1) :: ipar
         
         
         

@@ -129,7 +129,8 @@
     program main
         use numerics_type
         use numerics, only : dvode, dfsid1, zeroin,fmin, vode_integrate, &
-                tridiagonal, erfinv, invgammainc, quad2d_romb, gammainc_scal, gammainc
+                tridiagonal, erfinv, invgammainc, quad2d_qgaus, &
+                quad2d_romb, gammainc_scal, gammainc
         use random, only : random_normal
         use hypergeo, only : hygfx
         use test, only : phi, ni, qi, nr1, qr, ttr, vx,vy, lf, &
@@ -314,6 +315,12 @@
         endif
         
         print *,'Double Integral solution is: ', ss, miupper,gammainc(2.0_wp,0.99_wp)        
+        ss=0._wp
+        if(mrupper.gt.mrthresh) then
+            call quad2d_qgaus(dintegral,limit1,limit2,x1,x2,ss)
+        endif
+        
+        print *,'Double Integral solution 2 is: ', ss   
         
     end program main
 
