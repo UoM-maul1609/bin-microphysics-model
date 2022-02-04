@@ -2495,6 +2495,255 @@
 	end function demott_2010
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! ice nucleation                                                               !
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    subroutine noncollisional_iceformation(npart, npartice, mwat,mbin2,mbin2_ice, &
+                         rhobin,nubin,kappabin,molwbin, &
+                         moments,medges, &
+                         t,p,nbins1,ncomps,nbinw,nmoms,nmodes,yice,rh,dt,&
+                         sce_flag,mode1_flag) 
+    use numerics_type
+    use sce, only : calculate_mode1
+    implicit none
+    real(wp), intent(inout) :: t
+    real(wp), intent(in) :: p,rh,dt
+    real(wp), dimension(nbinw), intent(inout) :: npart,npartice
+    real(wp), dimension(nbinw), intent(in) :: mwat
+    real(wp), dimension(nbinw,ncomps), intent(in) :: &
+                                          rhobin,nubin,kappabin,molwbin
+    real(wp), dimension(2*nbinw,nmoms), intent(inout) :: moments
+    integer(i4b), intent(in) :: ncomps,nbinw, nmoms, nmodes, nbins1
+    real(wp), dimension(nbinw,ncomps), intent(in) :: mbin2
+    real(wp), dimension(nbinw,ncomps+1), intent(inout) :: mbin2_ice
+    real(wp), dimension(nbins1+1,nmodes), intent(in) :: medges
+    integer(i4b), intent(in) :: sce_flag
+    logical, intent(in) :: mode1_flag
+    
+
+    real(wp), dimension(nbinw) :: nw,aw,jw,dn01,m01,ns,dw,dd,kappa,rhoat
+    real(wp), dimension(nbinw,ncomps) :: dmaer01
+    real(wp), dimension(ncomps) :: dmaer01a
+    real(wp), dimension(nmoms) :: momtemp
+
+    real(wp), intent(inout), dimension(nbinw) :: yice
+
+    integer(i4b) :: i,j,k, inew, it, ib
+    real(wp) :: fracinliq, fracinice, naer05, nprimary
+    real(wp) :: n, nt, nb, mt, mb, mnew, nleft, mttot, mbtot, mleft, mall,  &
+            mtot_orig, mtot_mt, mtot_mb
+
+    ! (1) calculate the homogeneous nucleation of ice in SC water
+    ! (2) calculate the primary nucleation
+    ! (3) calculate the mode-1 freezing fragmentation
+    ! (4) transfer the moments to the ice phase
+
+    if(t.gt.ttr) return
+
+    m01 = yice*npartice
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! (1) first calculate the ice formation over dt using koop et al. 2000   !
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! number of moles of water
+    nw = mwat / molw_water
+    ! activity of water
+    select case(kappa_flag)
+        case(0)
+            aw(:)=(nw(:))/(nw(:)+sum(mbin2(:,:)/molwbin(:,:)*nubin(:,:),2) )
+        case(1)
+            rhoat(:)=mwat(:)/rhow+sum(mbin2(:,:)/rhobin(:,:),2)
+            rhoat(:)=(mwat(:)+sum(mbin2(:,:),2))/rhoat(:);
+
+            dw(:)=((mwat(:)+sum(mbin2(:,:),2))*6._wp/(pi*rhoat(:)))**(1._wp/3._wp)
+
+            dd(:)=((sum(mbin2(:,:)/rhobin(:,:),2))* &
+                    6._wp/(pi))**(1._wp/3._wp) ! dry diameter
+                          ! needed for eqn 6, petters and kreidenweis (2007)
+            kappa(:)=sum((mbin2(:,:)+1.e-60_wp)/rhobin(:,:)*kappabin(:,:),2) &
+                    / sum((mbin2(:,:)+1.e-60_wp)/rhobin(:,:),2)
+            ! equation 7, petters and kreidenweis (2007)
+            aw=(dw**3-dd**3)/(dw**3-dd**3*(1._wp-kappa)) ! from eq 6,p+k(acp,2007)
+        case default
+            print *,'error kappa_flag'
+            stop
+    end select
+    ! koop et al. (2000) nucleation rate - due to homogeneous nucleation.
+    jw(:)=koopnucrate(aw,t,p,nbinw)
+    dn01=0._wp
+    ! the number of ice crystals nucleated by homogeneous nucleation:
+    dn01(:)=dn01(:)+abs( npart(:)*(1._wp-exp(-jw(:)*mwat(:)/rhow*dt)) )
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    
+    
+    
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! (2) second calculate the ice formation over dt using DeMott et al. 2010!
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! calculate the dry size of the aerosol particle                         
+    dd(:)=((sum(mbin2(:,:)/rhobin(:,:),2))*6._wp/(pi))**(1._wp/3._wp) ! dry diameter
+    naer05=0._wp
+    ! add up the total number > 500 nm
+    do i=1,nbinw
+        if ((dd(i).gt.0.5e-6_wp).and.(rh.ge.1._wp)) naer05=naer05+npart(i)-dn01(i)
+    enddo  
+    ! calculate the number of ice crystals according to DeMott et al. 2010
+    nprimary=demott_2010(t,naer05)
+    ! ensure the number nucleated is less than the number that can nucleate
+    nprimary=min(naer05,nprimary) 
+    ! this is ice moments for total number of monomers (ncomps+2)
+    nprimary=max(nprimary-sum(dn01+moments(nbinw+1:2*nbinw,ncomps+2)),0._wp)
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! deplete the aerosols larger than 0.5 microns
+    ! (maybe in future will want to deplete the largest first, but at the moment
+    !       it is doing it for all modes - in reverse order)
+    do i=nbinw,1,-1
+        if (nprimary.le.0._wp) exit
+        if ((dd(i).gt.0.5e-6_wp).and.(rh.ge.1._wp)) then
+            ! it can nucleate: reduce number of primary ice
+            dn01(i)=dn01(i)+min(nprimary,npart(i)-dn01(i))
+            nprimary=nprimary-min(npart(i)-dn01(i),nprimary)
+        endif
+    enddo    
+    ! limit to number of drops / unfrozen aerosol
+    dn01(:)=min(dn01(:),npart(:))
+    if(t.gt.ttr) dn01=0._wp
+    ! we now have the total number of ice crystals to 'nucleate'
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! (3) third calculate fragmentation of these freezing drops              !
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    do i=1,nmodes
+        do j=1,nbins1
+            ! reference to nbinw
+            k=j+(i-1)*(nbins1)
+            
+            ! if these are freezing then calculate mode-1
+            ! total number, number of tiny, number of big
+            !   and corresponding masses for this freezing event
+            mall = mwat(k)*dn01(k)
+            mnew = mwat(k)
+            nleft = dn01(k)
+            n=0._wp
+            nt=0._wp
+            nb=0._wp
+            mt=0._wp
+            mb=0._wp
+            if (dn01(k) > 0._wp) then
+                if(mode1_flag) &
+                    call calculate_mode1(mwat(k),0._wp,t,n,nt,nb,mb,mt)
+                ! adjust the mass and numbers of the freezing drops in 
+                ! the three modes so mass is conserved
+                mnew = mnew-nt*mt-nb*mb
+                n=n*dn01(k) ! the number concentration of these fragments
+                nt=nt*dn01(k)
+                nb=nb*dn01(k)
+                nleft=nleft-n ! ice mass left over to go in new bin
+            endif     
+            ! total mass going into ice bins
+            mttot=mt*nt
+            mbtot=mb*nb 
+            mleft=nleft*mnew
+                        
+            ! number conc. of liquid bins:
+            npart(k) = npart(k) - dn01(k)
+            ! fraction of liquid left
+            fracinliq = npart(k) / max(npart(k)+dn01(k),1.e-30_wp)
+            ! aerosol moments to go into ice
+            momtemp(1:ncomps) = (1._wp-fracinliq)*moments(k,1:ncomps)
+            ! scale aerosol moments according to this fraction
+            moments(k,1:ncomps)=moments(k,1:ncomps)*fracinliq
+            
+            
+            
+            
+            ! find the bins where mnew, mt, and mb need to go.
+            inew    = find_medge(medges,mnew,nbins1,nmodes,i)
+            it      = find_medge(medges,mt,nbins1,nmodes,i)
+            ib      = find_medge(medges,mb,nbins1,nmodes,i)
+            
+            ! for this ice bin we need to create three new ice bins in
+            ! inew, it, and ib
+            ! aerosol moments going into these bins (by mass)
+            moments(inew+nbinw,1:ncomps)=moments(inew+nbinw,1:ncomps)+ &
+                                        momtemp(:)*mleft/mall
+            moments(it+nbinw,1:ncomps)=moments(it+nbinw,1:ncomps)+ &
+                                        momtemp(:)*mttot/mall
+            moments(ib+nbinw,1:ncomps)=moments(ib+nbinw,1:ncomps)+ &
+                                        momtemp(:)*mbtot/mall
+            
+            ! the ice mass in these bins
+            m01(inew)=m01(inew) + nleft*mnew
+            m01(it)=m01(it) + mttot
+            m01(ib)=m01(ib) + mbtot
+
+            ! number in these bins
+            npartice(inew) = npartice(inew) + nleft
+            npartice(it) = npartice(it) + nt
+            npartice(ib) = npartice(ib) + nb
+            
+            
+            ! now the ice moments: phi, nmon, vol, rim, unfro
+            ! phi
+            moments(inew+nbinw,ncomps+1)   =moments(inew+nbinw,ncomps+1)+nleft
+            moments(it+nbinw,ncomps+1)     =moments(it+nbinw,ncomps+1)+nt
+            moments(ib+nbinw,ncomps+1)     =moments(ib+nbinw,ncomps+1)+nb
+            ! nmon
+            moments(inew+nbinw,ncomps+2)   =moments(inew+nbinw,ncomps+2)+nleft
+            moments(it+nbinw,ncomps+2)     =moments(it+nbinw,ncomps+2)+nt
+            moments(ib+nbinw,ncomps+2)     =moments(ib+nbinw,ncomps+2)+nb
+            ! vol
+            moments(inew+nbinw,ncomps+3) =moments(inew+nbinw,ncomps+3)+mleft/rhoice
+            moments(it+nbinw,ncomps+3)   =moments(it+nbinw,ncomps+3)+mttot/rhoice
+            moments(ib+nbinw,ncomps+3)   =moments(ib+nbinw,ncomps+3)+mbtot/rhoice
+            
+            
+            ! mass of aerosol going to ice - needs to be shared over the bins 
+            ! where the ice goes
+            dmaer01a(:)=mbin2(k,:)*dn01(k)
+            ! ice moments
+            ! mass of ice 
+            
+        enddo
+    enddo
+    
+    where((m01.gt.0._wp).and.(npartice.gt.0._wp))
+        yice=m01/npartice
+    end where
+    ! aerosol mass in ice bins
+    mbin2_ice(:,1:ncomps)=dmaer01(:,:)/(1.e-50_wp+spread(npartice,2,ncomps))
+    moments(1+nbinw:2*nbinw,1:ncomps)=dmaer01(:,:)
+    mbin2_ice(:,ncomps+1)=yice
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! latent heat of fusion (these freeze so this is how much heat is released):
+    t=t+lf/cp*sum(mwat(:)*dn01(:))
+    end subroutine noncollisional_iceformation
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! helper function                                                              !
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    function find_medge(medges,m,nbins1,nmodes,imode)
+        use numerics_type
+        implicit none
+        real(wp), dimension(nbins1+1,nmodes), intent(in) :: medges
+        real(wp), intent(in) :: m
+        integer(i4b), intent(in) :: nbins1,nmodes,imode
+        
+        integer(i4b) :: find_medge
+        integer(i4b) :: i,j
+        do i = 1,nbins1
+            if(medges(i,imode)>=m) exit
+        enddo
+        i=i-1
+        find_medge=i+(imode-1)*(nbins1)
+        
+    
+    end function find_medge    
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
     
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -3115,7 +3364,7 @@
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
 	!>calculates one time-step of bin-microphysics
-    subroutine bin_microphysics(func1,func2,func3)
+    subroutine bin_microphysics(func1,func2,func3,func4)
     use numerics_type
     use numerics, only : zeroin, dvode
     implicit none
@@ -3166,6 +3415,28 @@
             real(wp), dimension(sz2,sz+1), intent(inout) :: mbin2_ice
             real(wp), intent(inout), dimension(sz2) :: yice
         end subroutine func3
+    end interface
+    interface
+        subroutine func4(npart, npartice, mwat,mbin2,mbin2_ice, &
+                         rhobin,nubin,kappabin,molwbin,moments,medges, &
+                         t,p,nbins1,ncomps,nbinw,nmoms,nmodes,yice,rh,dt,sce_flag, &
+                         mode1_flag) 
+            use numerics_type
+            implicit none
+            real(wp), intent(inout) :: t
+            real(wp), intent(in) :: p,rh,dt
+            real(wp), dimension(nbinw), intent(inout) :: npart,npartice
+            real(wp), dimension(nbinw), intent(in) :: mwat
+            real(wp), dimension(nbinw,ncomps), intent(in) :: mbin2, &
+                                                  rhobin,nubin,kappabin,molwbin
+            real(wp), dimension(2*nbinw,nmoms), intent(inout) :: moments
+            integer(i4b), intent(in) :: ncomps,nbinw, nmoms, nmodes, nbins1
+            real(wp), dimension(nbinw,ncomps+1), intent(inout) :: mbin2_ice
+            real(wp), intent(inout), dimension(nbinw) :: yice
+            real(wp), intent(in), dimension(nbins1+1,nmodes) :: medges
+            integer(i4b), intent(in) :: sce_flag
+            logical, intent(in) :: mode1_flag
+        end subroutine func4
     end interface
     
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -3220,7 +3491,22 @@
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         ! Ice nucleation                                                   !
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        call func3(parcel1%npart(1:parcel1%n_bin_modew), &
+!         call func3(parcel1%npart(1:parcel1%n_bin_modew), &
+!                 parcel1%npartice(1:parcel1%n_bin_modew), &
+!                 parcel1%y(1:parcel1%n_bin_modew), &
+!                 parcel1%mbin(:,1:n_comps), &
+!                 parcel1%mbinice(:,1:n_comps+1), &
+!                 parcel1%rhobin(:,1:n_comps), &
+!                 parcel1%nubin(:,1:n_comps), &
+!                 parcel1%kappabin(:,1:n_comps), &
+!                 parcel1%molwbin(:,1:n_comps), &
+!                 parcel1%moments(1:2*parcel1%n_bin_modew,1:parcel1%imoms), &
+!                 parcel1%y(parcel1%ite), &
+!                 parcel1%y(parcel1%ipr),&
+!                 n_comps,parcel1%n_bin_modew,parcel1%imoms+n_comps, &
+!                 parcel1%yice(1:parcel1%n_bin_modew), &
+!                 parcel1%y(parcel1%irh), parcel1%dt) 
+        call func4(parcel1%npart(1:parcel1%n_bin_modew), &
                 parcel1%npartice(1:parcel1%n_bin_modew), &
                 parcel1%y(1:parcel1%n_bin_modew), &
                 parcel1%mbin(:,1:n_comps), &
@@ -3230,13 +3516,16 @@
                 parcel1%kappabin(:,1:n_comps), &
                 parcel1%molwbin(:,1:n_comps), &
                 parcel1%moments(1:2*parcel1%n_bin_modew,1:parcel1%imoms), &
+                parcel1%mbinedges(:,:), &
                 parcel1%y(parcel1%ite), &
                 parcel1%y(parcel1%ipr),&
-                n_comps,parcel1%n_bin_modew,parcel1%imoms+n_comps, &
+                parcel1%n_bins1, &
+                n_comps,parcel1%n_bin_modew,parcel1%imoms+n_comps,parcel1%n_modes, &
                 parcel1%yice(1:parcel1%n_bin_modew), &
-                parcel1%y(parcel1%irh), parcel1%dt) 
+                parcel1%y(parcel1%irh), parcel1%dt,sce_flag, &
+                mode1_flag) 
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        
+
         
 
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -3882,7 +4171,8 @@
         
         if ((updraft_type==2).and.(parcel1%TT>t_thresh)) parcel1%y(parcel1%iw)=0._wp
         ! one time-step of model
-        call bin_microphysics(fparcelwarm, fparcelcold, icenucleation)
+        call bin_microphysics(fparcelwarm, fparcelcold, & 
+            icenucleation, noncollisional_iceformation)
         
         if(sce_flag.gt.0) then
             
@@ -3899,7 +4189,7 @@
                                 parcel1%mbinall(:,n_comps+1),parcel1%dt, &
                                 parcel1%y(parcel1%ite))
                 ! latent heat of fusion
-                parcel1%yice(parcel1%itei)=parcel1%y(parcel1%ite)
+                if(ice_flag.eq.1) parcel1%yice(parcel1%itei)=parcel1%y(parcel1%ite)
             elseif(sce_flag.eq.2) then
                 call sce_sip_microphysics(parcel1%n_bins1,parcel1%n_bin_mode,&
                                 parcel1%n_comps+&
@@ -3911,7 +4201,7 @@
                                 mass_fragment1, mass_fragment2, mass_fragment3, &
                                 hm_flag,break_flag,mode1_flag, mode2_flag )
                 ! latent heat of fusion
-                parcel1%yice(parcel1%itei)=parcel1%y(parcel1%ite)
+                if(ice_flag.eq.1) parcel1%yice(parcel1%itei)=parcel1%y(parcel1%ite)
             endif
                                         
             ! redefine the mass of each component of aerosol
