@@ -2134,7 +2134,7 @@
 	!>@brief
 	!>calculates one time-step of sce-sip_microphysics
     subroutine sce_sip_microphysics(n_binst,n_bin_mode,n_moments,npart,moments,momtype, &
-                                ecoll,indexc,xn,vel,dt,t, &
+                                ecoll,indexc,xn,vel,dt,t, totaddto, &
                                 mass_hm_splinter, mass_coll_splinter, &
                                 mass_mode2_frag, hm_flag, break_flag, mode1_flag, &
                                 mode2_flag)
@@ -2150,12 +2150,12 @@
     real(wp), intent(in) :: dt, mass_hm_splinter, mass_coll_splinter, &
                                 mass_mode2_frag
     logical, intent(in) :: hm_flag, break_flag, mode1_flag, mode2_flag
-    real(wp), intent(inout) :: t
+    real(wp), intent(inout) :: t, totaddto
     
     real(wp) :: remove1,remove2,massn,massaddto,nnew,gk,beta1,cw,fk05, &
                 frac1, frac2, fracl1,fracl2, fracadj1, fracadj2, totloss, &
                 nfrag, mass_s, mass_stot, masstot, nfrag_drops,nfrag_ice, mass_remain, &
-                mass_dm, mass_sm, frac_i, mass_mtot, mass_smtot, totaddto, &
+                mass_dm, mass_sm, frac_i, mass_mtot, mass_smtot, &
                 mbigm1,mtinym1,nbigm1,ntinym1,ntotm1, mass_m1t, mass_m1b, &
                 mass_m1ttot, mass_m1btot
     real(wp), dimension(n_moments) :: momtemp, oldprop
@@ -2558,7 +2558,7 @@
     enddo    
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
-    t=t+totaddto*lf/cp
+    !t=t+totaddto*lf/cp
 
 
 
