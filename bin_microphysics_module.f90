@@ -73,7 +73,7 @@
                             itaskice, istateice, ioptice, mfice, lrwice, liwice
             integer(i4b), dimension(:), allocatable :: iworkice
             integer(i4b), dimension(1) :: iparice
-            real(wp) :: ttice, toutice
+            real(wp) :: ttice, toutice, totaddto
             real(wp), dimension(1) :: rtolice
             real(wp), dimension(:), allocatable :: yice, yoldice, atolice, rworkice
             real(wp), dimension(1) :: rparice
@@ -2638,7 +2638,7 @@
                 n=n*dn01(k) ! the number concentration of these fragments
                 nt=nt*dn01(k)
                 nb=nb*dn01(k)
-                nleft=nleft-n ! ice mass left over to go in new bin
+                !nleft=nleft-n ! ice mass left over to go in new bin
             endif     
             ! total mass going into ice bins
             mttot=mt*nt
@@ -2664,16 +2664,17 @@
             
             ! for this ice bin we need to create three new ice bins in
             ! inew, it, and ib
-            ! aerosol moments going into these bins (by mass)
-            moments(inew+nbinw,1:ncomps)=moments(inew+nbinw,1:ncomps)+ &
-                                        momtemp(:)*mleft/mall
-            moments(it+nbinw,1:ncomps)=moments(it+nbinw,1:ncomps)+ &
-                                        momtemp(:)*mttot/mall
-            moments(ib+nbinw,1:ncomps)=moments(ib+nbinw,1:ncomps)+ &
-                                        momtemp(:)*mbtot/mall
-            
+            if(mall>0._wp) then
+                ! aerosol moments going into these bins (by mass)
+                moments(inew+nbinw,1:ncomps)=moments(inew+nbinw,1:ncomps)+ &
+                                            momtemp(:)*mleft/mall
+                moments(it+nbinw,1:ncomps)=moments(it+nbinw,1:ncomps)+ &
+                                            momtemp(:)*mttot/mall
+                moments(ib+nbinw,1:ncomps)=moments(ib+nbinw,1:ncomps)+ &
+                                            momtemp(:)*mbtot/mall
+            endif            
             ! the ice mass in these bins
-            m01(inew)=m01(inew) + nleft*mnew
+            m01(inew)=m01(inew) + mleft
             m01(it)=m01(it) + mttot
             m01(ib)=m01(ib) + mbtot
 
@@ -2700,7 +2701,8 @@
             
             ! mass of aerosol going to ice - needs to be shared over the bins 
             ! where the ice goes
-            dmaer01a(:)=mbin2(k,:)*dn01(k)
+            !dmaer01a(:)=mbin2(k,:)*dn01(k)
+            
             ! ice moments
             ! mass of ice 
             
@@ -2711,8 +2713,9 @@
         yice=m01/npartice
     end where
     ! aerosol mass in ice bins
-    mbin2_ice(:,1:ncomps)=dmaer01(:,:)/(1.e-50_wp+spread(npartice,2,ncomps))
-    moments(1+nbinw:2*nbinw,1:ncomps)=dmaer01(:,:)
+!     mbin2_ice(:,1:ncomps)=dmaer01(:,:)/(1.e-50_wp+spread(npartice,2,ncomps))
+    mbin2_ice(:,1:ncomps)=moments(nbinw+1:2*nbinw,1:ncomps)/(1.e-50_wp+spread(npartice,2,ncomps))
+    !moments(1+nbinw:2*nbinw,1:ncomps)=dmaer01(:,:)
     mbin2_ice(:,ncomps+1)=yice
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
@@ -4144,6 +4147,31 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! adjust t and rh                                                              !
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>adjust the temperature and rh for latent heating
+	!>@param[in] totmass,p
+	!>@param[inout] t,rh
+	subroutine adjust_t_rh(totmass,t,rh,p)
+	implicit none
+	real(wp), intent(inout) :: t,rh
+	real(wp), intent(in) :: p,totmass
+	
+	real(wp) :: mr
+	
+	! total vapour m.r.
+	mr=rh*eps1*svp_liq(t)/(p-svp_liq(t))
+	! adjust t
+	t=t+totmass*lf/cp
+	! calculate rh
+	rh = mr / (eps1*svp_liq(t)/(p-svp_liq(t)))
+
+    end subroutine adjust_t_rh
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
 
@@ -4197,11 +4225,16 @@
                                 parcel1%npartall,parcel1%moments,parcel1%momenttype, &
                                 parcel1%ecoll,parcel1%indexc, &
                                 parcel1%mbinall(:,n_comps+1),parcel1%vel,parcel1%dt, &
-                                parcel1%y(parcel1%ite), &
+                                parcel1%y(parcel1%ite),parcel1%totaddto, &
                                 mass_fragment1, mass_fragment2, mass_fragment3, &
                                 hm_flag,break_flag,mode1_flag, mode2_flag )
                 ! latent heat of fusion
-                if(ice_flag.eq.1) parcel1%yice(parcel1%itei)=parcel1%y(parcel1%ite)
+                if(ice_flag.eq.1) then
+                    call adjust_t_rh(parcel1%totaddto,parcel1%y(parcel1%ite), &
+                                parcel1%y(parcel1%irh), parcel1%y(parcel1%ipr))
+                    parcel1%yice(parcel1%irhi)=parcel1%y(parcel1%irh)
+                    parcel1%yice(parcel1%itei)=parcel1%y(parcel1%ite)
+                endif
             endif
                                         
             ! redefine the mass of each component of aerosol
