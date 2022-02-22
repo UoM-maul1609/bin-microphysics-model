@@ -37,8 +37,8 @@ rhow=1000.
 DT=10e-6
 
 # change diameter to that of interest
-D=0.06e-3 # diameter of freezing drop
-D=2.6e-3 # diameter of freezing drop
+D=0.150e-3 # diameter of freezing drop
+#D=2.6e-3 # diameter of freezing drop
 
 m=rhow*np.pi*D**3/6.
 
@@ -49,9 +49,18 @@ t=np.linspace(273.15,243.15,100)-ttr
 
 
 plt.ion()
+fig=plt.figure()
 plt.plot(N,t)
 plt.plot(NB,t)
 plt.xscale('log')
+plt.xlabel('Number of fragments')
+plt.ylabel('T ($^\circ$C)')
+ax=fig.gca()
+ax.invert_yaxis()
 
 mB=1./2.5*m
 mT=rhoi*np.pi*DT**3/6.
+
+plt.legend(['Small splinters , D$_S$=' + str(round(1e6*(6.*mT/(np.pi*1000))**(1./3.),0)) + ' $\mu$m', \
+    'Large splinters, D$_L$=' + str(round(1e6*(6.*mB/(np.pi*1000))**(1./3.),0)) + ' $\mu$m'])
+plt.title('Number of fragments from a D=' +str(round(1000*D,3)) + 'mm freezing drop')
