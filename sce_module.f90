@@ -1127,18 +1127,18 @@
 
       ! calculate the diameter and radius
       nw(:)=mwat(:)/molw_water
-      rhoat(:)=mwat(:)/rhow+sum(mbin(:,1:n_comps)/rhobin(:,:),2)
-      rhoat(:)=(mwat(:)+sum(mbin(:,1:n_comps),2))/rhoat(:);
+      rhoat(:)=mwat(:)/rhow+sum(mbin(:,1:parcel1%n_comps)/rhobin(:,:),2)
+      rhoat(:)=(mwat(:)+sum(mbin(:,1:parcel1%n_comps),2))/rhoat(:);
   
       ! wet diameter:
-      dw(:)=((mwat(:)+sum(mbin(:,1:n_comps),2))*6._wp/(pi*rhoat(:)))**(1._wp/3._wp)
+      dw(:)=((mwat(:)+sum(mbin(:,1:parcel1%n_comps),2))*6._wp/(pi*rhoat(:)))**(1._wp/3._wp)
   
       ! calculate surface tension
       sigma=surface_tension(t)
 
       ! equilibrium rh over particle - nb rh_act set to zero if not root-finding
       rh_eq(:)=exp(4._wp*molw_water*sigma/r_gas/t/rhoat(:)/dw(:))* &
-           (nw(:))/(nw(:)+sum(mbin(:,1:n_comps)/molwbin(:,:)*nubin(:,:),2) ) 
+           (nw(:))/(nw(:)+sum(mbin(:,1:parcel1%n_comps)/molwbin(:,:)*nubin(:,:),2) ) 
 
     end subroutine koehler01
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -1178,17 +1178,17 @@
       real(wp) :: sigma
       ! calculate the diameter and radius
       nw(:)=mwat(:)/molw_water
-      rhoat(:)=mwat(:)/rhow+sum(mbin(:,1:n_comps)/rhobin(:,:),2)
-      rhoat(:)=(mwat(:)+sum(mbin(:,1:n_comps),2))/rhoat(:);
+      rhoat(:)=mwat(:)/rhow+sum(mbin(:,1:parcel1%n_comps)/rhobin(:,:),2)
+      rhoat(:)=(mwat(:)+sum(mbin(:,1:parcel1%n_comps),2))/rhoat(:);
   
       ! wet diameter:
       dw(:)=((mwat(:)+sum(mbin(:,1:n_comps),2))* 6._wp/(pi*rhoat(:)))**(1._wp/3._wp)
   
-      dd(:)=((sum(mbin(:,1:n_comps)/rhobin(:,:),2))*6._wp/(pi))**(1._wp/3._wp) ! dry diameter
+      dd(:)=((sum(mbin(:,1:parcel1%n_comps)/rhobin(:,:),2))*6._wp/(pi))**(1._wp/3._wp) ! dry diameter
                                   ! needed for eqn 6, petters and kreidenweis (2007)
   
-      kappa(:)=sum(mbin(:,1:n_comps)/rhobin(:,:)*kappabin(:,:),2) &
-               / sum(mbin(:,1:n_comps)/rhobin(:,:),2)
+      kappa(:)=sum(mbin(:,1:parcel1%n_comps)/rhobin(:,:)*kappabin(:,:),2) &
+               / sum(mbin(:,1:parcel1%n_comps)/rhobin(:,:),2)
                ! equation 7, petters and kreidenweis (2007)
 
       ! calculate surface tension
@@ -1226,8 +1226,8 @@
 
       ! wet diameter:
       massw=nw*molw_water
-      rhoat=massw/rhow+sum(parcel1%mbin(n_sel,1:n_comps) / &
-            parcel1%rhobin(n_sel,1:n_comps))
+      rhoat=massw/rhow+sum(parcel1%mbin(n_sel,1:parcel1%n_comps) / &
+            parcel1%rhobin(n_sel,1:parcel1%n_comps))
       rhoat=(massw+parcel1%maer(n_sel))/rhoat;
       dw=((massw+parcel1%maer(n_sel))* 6._wp/(pi*rhoat))**(1._wp/3._wp)
   
@@ -1236,9 +1236,9 @@
   
       ! equilibrium rh over particle - nb rh_act set to zero if not root-finding
       koehler02=mult*(exp(4._wp*molw_water*sigma/r_gas/parcel1%t/rhoat/dw)* &
-           (nw)/(nw+sum(parcel1%mbin(n_sel,1:n_comps)/ &
-           parcel1%molwbin(n_sel,1:n_comps) * &
-           parcel1%nubin(n_sel,1:n_comps)) ))-rh_act
+           (nw)/(nw+sum(parcel1%mbin(n_sel,1:parcel1%n_comps)/ &
+           parcel1%molwbin(n_sel,1:parcel1%n_comps) * &
+           parcel1%nubin(n_sel,1:parcel1%n_comps)) ))-rh_act
 
     end function koehler02
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -1268,21 +1268,23 @@
 
       ! wet diameter:
       massw=nw*molw_water
-      rhoat=massw/rhow+sum(parcel1%mbin(n_sel,1:n_comps) / &
-            parcel1%rhobin(n_sel,1:n_comps))
+      rhoat=massw/rhow+sum(parcel1%mbin(n_sel,1:parcel1%n_comps) / &
+            parcel1%rhobin(n_sel,1:parcel1%n_comps))
       rhoat=(massw+parcel1%maer(n_sel))/rhoat;
       dw=((massw+parcel1%maer(n_sel))* 6._wp/(pi*rhoat))**(1._wp/3._wp)
   
       ! calculate surface tension
       sigma=surface_tension(parcel1%t)
   
-      dd=(sum(parcel1%mbin(n_sel,1:n_comps) / parcel1%rhobin(n_sel,:))* &
+      dd=(sum(parcel1%mbin(n_sel,1:parcel1%n_comps) / parcel1%rhobin(n_sel,:))* &
           6._wp/(pi))**(1._wp/3._wp) ! dry diameter
                                   ! needed for eqn 6, petters and kreidenweis (2007)
   
-      kappa=sum(parcel1%mbin(n_sel,1:n_comps) / parcel1%rhobin(n_sel,1:n_comps)* &
+      kappa=sum(parcel1%mbin(n_sel,1:parcel1%n_comps) / &
+         parcel1%rhobin(n_sel,1:parcel1%n_comps)* &
                parcel1%kappabin(n_sel,:)) &
-               / sum(parcel1%mbin(n_sel,1:n_comps) / parcel1%rhobin(n_sel,1:n_comps))
+               / sum(parcel1%mbin(n_sel,1:parcel1%n_comps) / &
+               parcel1%rhobin(n_sel,1:parcel1%n_comps))
                ! equation 7, petters and kreidenweis (2007)
 
       ! equilibrium rh over particle - nb rh_act set to zero if not root-finding
@@ -1318,8 +1320,8 @@
       
       ! calculate the diameter and radius
       nw=d_dummy/molw_water ! moles of water
-      rhoat=d_dummy/rhow+mbin* sum(mass_frac_aer1(n_sel,1:n_comps)/ &
-                           density_core1(1:n_comps))
+      rhoat=d_dummy/rhow+mbin* sum(mass_frac_aer1(n_sel,1:parcel1%n_comps)/ &
+                           density_core1(1:parcel1%n_comps))
       rhoat=(d_dummy+mbin)/rhoat;
       dw=((d_dummy+mbin)* 6._wp/(pi*rhoat))**(1._wp/3._wp)
   
@@ -1329,9 +1331,9 @@
       ! equilibrium rh over particle - nb rh_act set to zero if not root-finding
       koehler03=mult*(exp(4._wp*molw_water*sigma/r_gas/parcel1%t/rhoat/dw)* &
            (nw)/(nw+mbin* &
-           sum(mass_frac_aer1(n_sel,1:n_comps)/ &
-           molw_core1(1:n_comps)* &
-           nu_core1(1:n_comps)) ))-rh_act
+           sum(mass_frac_aer1(n_sel,1:parcel1%n_comps)/ &
+           molw_core1(1:parcel1%n_comps)* &
+           nu_core1(1:parcel1%n_comps)) ))-rh_act
 
 
     end function koehler03
@@ -1360,20 +1362,21 @@
       real(wp) :: sigma
       ! calculate the diameter and radius
       nw=d_dummy/molw_water ! moles of water
-      rhoat=d_dummy/rhow+mbin* sum(mass_frac_aer1(n_sel,1:n_comps)/ &
-                           density_core1(1:n_comps))
+      rhoat=d_dummy/rhow+mbin* sum(mass_frac_aer1(n_sel,1:parcel1%n_comps)/ &
+                           density_core1(1:parcel1%n_comps))
       rhoat=(d_dummy+mbin)/rhoat;
       dw=((d_dummy+mbin)* 6._wp/(pi*rhoat))**(1._wp/3._wp)
   
-      dd=((sum(mbin*mass_frac_aer1(n_sel,1:n_comps)/ density_core1(1:n_comps),1))* &
+      dd=((sum(mbin*mass_frac_aer1(n_sel,1:parcel1%n_comps)/ &
+        density_core1(1:parcel1%n_comps),1))* &
           6._wp/(pi))**(1._wp/3._wp) ! dry diameter
                                   ! needed for eqn 6, petters and kreidenweis (2007)
   
-      kappa=sum(mbin*mass_frac_aer1(n_sel,1:n_comps) &
-               / density_core1(1:n_comps)* &
-               kappa_core1(1:n_comps),1) &
-               / sum(mbin*mass_frac_aer1(n_sel,1:n_comps) &
-               /density_core1(1:n_comps),1)
+      kappa=sum(mbin*mass_frac_aer1(n_sel,1:parcel1%n_comps) &
+               / density_core1(1:parcel1%n_comps)* &
+               kappa_core1(1:parcel1%n_comps),1) &
+               / sum(mbin*mass_frac_aer1(n_sel,1:parcel1%n_comps) &
+               /density_core1(1:parcel1%n_comps),1)
                ! equation 7, petters and kreidenweis (2007)
            
       ! calculate surface tension
