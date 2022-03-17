@@ -5,7 +5,7 @@ module numerics
     public find_pos, poly_int, tridiagonal, zeroin,assert_eq, r1mach, d1mach, &
         dfsid1, erfinv, vode_integrate, xsetf, dvode, fmin, assert_eq2, assert_eq3, &
         assert_eq4, assert_eqn, imaxloc, iminloc, numerics_error, &
-        quad2d_qgaus, quad2d_romb, gammainc, gammainc_scal, invgammainc, &
+        quad2d_qgaus, quad2d_romb, romb, gammainc, gammainc_scal, invgammainc, &
         LN2, &
         A0, A1, A2, A3, A4, A5, A6, A7, &
         B0, B1, B2, B3, B4, B5, B6, B7, &
