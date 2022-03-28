@@ -27,7 +27,8 @@
                         write_sce_to_bmm, &
                         scefile, sce_flag, hm_flag, break_flag, mode1_flag,mode2_flag, &
                         psurf, tsurf, q_read, theta_read, rh_read, z_read, &
-                        runtime, dt, zinit, tpert, use_prof_for_tprh, winit, tinit, pinit, &
+                        runtime, dt, zinit, tpert, use_prof_for_tprh, winit, &
+                        winit2, amplitude2, tinit, pinit, &
                         rhinit, microphysics_flag, ice_flag, bin_scheme_flag, vent_flag, &
                         kappa_flag, updraft_type, t_thresh, &
                         adiabatic_prof, vert_ent, z_ctop, &

@@ -113,7 +113,8 @@
         ! some namelist variables
         logical :: micro_init=.true., adiabatic_prof=.false., vert_ent=.false.
         real(wp) :: ent_rate, dmina,dmaxa
-        real(wp) :: zinit,tpert,winit,tinit,pinit,rhinit,z_ctop, alpha_therm, alpha_cond, &
+        real(wp) :: zinit,tpert,winit,winit2, amplitude2, tau2, &
+                    tinit,pinit,rhinit,z_ctop, alpha_therm, alpha_cond, &
                     alpha_therm_ice, alpha_dep
         integer(i4b) :: microphysics_flag=0, kappa_flag,updraft_type, vent_flag, &
                         sce_flag=0,ice_flag=0, bin_scheme_flag=1
@@ -277,7 +278,8 @@
                     q_read, theta_read, rh_read, z_read
         ! define namelists for environment
         namelist /run_vars/ outputfile, scefile,runtime, dt, &
-                    zinit,tpert,use_prof_for_tprh,winit,tinit,pinit,rhinit, &
+                    zinit,tpert,use_prof_for_tprh,winit,winit2,amplitude2, &
+                    tinit,pinit,rhinit, &
                     microphysics_flag, ice_flag, bin_scheme_flag, sce_flag, &
                     hm_flag, break_flag, mode1_flag, mode2_flag, vent_flag, &
                     kappa_flag, updraft_type,t_thresh, adiabatic_prof, vert_ent, &
@@ -314,6 +316,7 @@
         read(8,nml=sounding_spec)
         read(8,nml=aerosol_spec)
         close(8)
+        tau2 = 2._wp*pi/winit2*amplitude2
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 	end subroutine read_in_bmm_namelist
 
@@ -2199,12 +2202,17 @@
 
         integer(i4b) :: i, j,iloc, ipart, ipr, ite, irh, iz,iw
 
+        
         ipart=parcel1%n_bin_modew
         ipr=parcel1%ipr
         ite=parcel1%ite
         irh=parcel1%irh
         iz =parcel1%iz
         iw =parcel1%iw
+
+        if ((updraft_type==3).and.(tt>t_thresh)) then
+            y(iw)=winit2*cos(2._wp*pi*(tt-t_thresh)/tau2)
+        endif
 
         rh=y(irh)
         t=y(ite)
@@ -3494,21 +3502,6 @@
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         ! Ice nucleation                                                   !
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-!         call func3(parcel1%npart(1:parcel1%n_bin_modew), &
-!                 parcel1%npartice(1:parcel1%n_bin_modew), &
-!                 parcel1%y(1:parcel1%n_bin_modew), &
-!                 parcel1%mbin(:,1:n_comps), &
-!                 parcel1%mbinice(:,1:n_comps+1), &
-!                 parcel1%rhobin(:,1:n_comps), &
-!                 parcel1%nubin(:,1:n_comps), &
-!                 parcel1%kappabin(:,1:n_comps), &
-!                 parcel1%molwbin(:,1:n_comps), &
-!                 parcel1%moments(1:2*parcel1%n_bin_modew,1:parcel1%imoms), &
-!                 parcel1%y(parcel1%ite), &
-!                 parcel1%y(parcel1%ipr),&
-!                 n_comps,parcel1%n_bin_modew,parcel1%imoms+n_comps, &
-!                 parcel1%yice(1:parcel1%n_bin_modew), &
-!                 parcel1%y(parcel1%irh), parcel1%dt) 
         call func4(parcel1%npart(1:parcel1%n_bin_modew), &
                 parcel1%npartice(1:parcel1%n_bin_modew), &
                 parcel1%y(1:parcel1%n_bin_modew), &
