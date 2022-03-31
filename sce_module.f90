@@ -405,16 +405,17 @@
     ! set-up size distribution                                                     !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! set local PSD parameters
-    n_aer1(1:n_intern,1:n_mode)=n_aer2
-    d_aer1(1:n_intern,1:n_mode)=d_aer2
-    sig_aer1(1:n_intern,1:n_mode)=sig_aer2
+    n_aer1(1:n_intern,1:n_mode)=n_aer2(1:n_intern,1:n_mode)
+    d_aer1(1:n_intern,1:n_mode)=d_aer2(1:n_intern,1:n_mode)
+    sig_aer1(1:n_intern,1:n_mode)=sig_aer2(1:n_intern,1:n_mode)
     do k=1,n_mode
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         ! Aerosol                                                                  !
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         idum=k ! this is sent through to zbrent to select the correct mode
         ! find total number in mode between dmina and dmaxa:
-        call lognormal_n_between_limits(n_aer2(:,k),d_aer2(:,k),sig_aer2(:,k), &
+        call lognormal_n_between_limits( &
+            n_aer2(1:n_intern,k),d_aer2(1:n_intern,k),sig_aer2(1:n_intern,k), &
                                         n_intern,dmina,dmaxa, num)
         
         ! set up variables for parcel model
