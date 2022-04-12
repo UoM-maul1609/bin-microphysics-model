@@ -35,7 +35,7 @@
                                                     p_sound, theta_q_sound
             real(wp) :: z,p,t,w,rh, qinit, t_cbase, q_cbase, p_cbase, z_cbase, &
                         t_ctop, q_ctop, p_ctop, z_ctop, theta_q_cbase, theta_q_ctop, &
-                        x_ent, theta_q
+                        x_ent, theta_q, dp1, dt1, drh1
                         
                         
             ! liquid water
@@ -136,6 +136,9 @@
                                         kappa_core1
         real(wp), allocatable, dimension(:) :: org_content1, molw_org1, kappa_org1, &
                                     density_org1, delta_h_vap1,nu_org1,log_c_star1
+        integer(i4b) :: len_chamber
+        real(wp), allocatable, dimension(:) :: time_chamber, press_chamber, &
+                                                    temp_chamber, h2o_chamber
         
         
 
@@ -291,6 +294,9 @@
                                 density_core1,nu_core1,kappa_core1, &
                                 org_content1, molw_org1,kappa_org1, &
                                 density_org1, delta_h_vap1,nu_org1, log_c_star1
+        namelist /chamber_setup/ len_chamber
+        namelist /chamber_vars/ time_chamber, press_chamber, temp_chamber, &
+                                h2o_chamber
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
@@ -315,11 +321,101 @@
         
         read(8,nml=sounding_spec)
         read(8,nml=aerosol_spec)
+        
+        if(updraft_type==4) then
+            read(8,nml=chamber_setup)
+            call allocate_chamber_vars()
+            ! read in arrays
+            read(8,nml=chamber_vars)
+            call set_chamber_vars()
+            
+        endif
         close(8)
         tau2 = 2._wp*pi/winit2*amplitude2
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 	end subroutine read_in_bmm_namelist
 
+    subroutine allocate_chamber_vars()
+        implicit none
+        integer(i4b) :: AllocateStatus
+        
+        ! allocate arrays
+        allocate( time_chamber(1:len_chamber), STAT = AllocateStatus)
+        if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+        allocate( press_chamber(1:len_chamber), STAT = AllocateStatus)
+        if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+        allocate( temp_chamber(1:len_chamber), STAT = AllocateStatus)
+        if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+        allocate( h2o_chamber(1:len_chamber), STAT = AllocateStatus)
+        if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+    
+    end subroutine allocate_chamber_vars
+
+
+
+    subroutine set_chamber_vars()
+        implicit none
+        integer(i4b) :: iloc
+        real(wp) :: var, dummy
+        ! now set t,p,rh
+        iloc=find_pos(time_chamber(1:len_chamber),0._wp)
+        iloc=min(len_chamber-1,iloc)
+        iloc=max(1,iloc)
+        ! linear interp p
+        call poly_int(time_chamber(iloc:iloc+1), press_chamber(iloc:iloc+1), &
+                    0._wp, var,dummy)        
+        pinit=var
+        ! linear interp t
+        call poly_int(time_chamber(iloc:iloc+1), temp_chamber(iloc:iloc+1), &
+                    0._wp, var,dummy)        
+        tinit=var
+        ! linear interp h2o
+        call poly_int(time_chamber(iloc:iloc+1), h2o_chamber(iloc:iloc+1), &
+                    0._wp, var,dummy)        
+        
+        rhinit=var*eps1/(pinit-var)
+        rhinit = rhinit / (eps1*svp_liq(tinit)/(pinit-svp_liq(tinit)))
+           
+    end subroutine set_chamber_vars
+
+
+    subroutine calc_chamber_derivs(t,dt,dp1,dt1,drh1)
+        implicit none
+        real(wp), intent(in) :: t,dt
+        real(wp), intent(inout) :: dp1,dt1,drh1
+        integer(i4b) :: iloc1, iloc2
+        real(wp) :: p1,p2,t1,t2,ev1,ev2, rh1,rh2,dummy
+        !  calculate derivatives
+        iloc1=find_pos(time_chamber(1:len_chamber),t)
+        iloc1=min(len_chamber-1,iloc1)
+        iloc1=max(1,iloc1)
+        iloc2=find_pos(time_chamber(1:len_chamber),t+dt)
+        iloc2=min(len_chamber-1,iloc2)
+        iloc2=max(1,iloc2)
+        ! linear interp p
+        call poly_int(time_chamber(iloc1:iloc1+1), press_chamber(iloc1:iloc1+1), &
+                    t, p1,dummy)        
+        call poly_int(time_chamber(iloc2:iloc2+1), press_chamber(iloc2:iloc2+1), &
+                    t+dt, p2,dummy)        
+        dp1 = (p2-p1) / dt
+        ! linear interp t
+        call poly_int(time_chamber(iloc1:iloc1+1), temp_chamber(iloc1:iloc1+1), &
+                    t, t1,dummy)        
+        call poly_int(time_chamber(iloc2:iloc2+1), temp_chamber(iloc2:iloc2+1), &
+                    t+dt, t2,dummy)  
+        dt1 = (t2-t1) / dt      
+        ! linear interp h2o
+        call poly_int(time_chamber(iloc1:iloc1+1), h2o_chamber(iloc1:iloc1+1), &
+                    t, ev1,dummy)        
+        call poly_int(time_chamber(iloc2:iloc2+1), h2o_chamber(iloc2:iloc2+1), &
+                    t+dt, ev2,dummy)        
+        rh1 = ev1*eps1/(p1-ev1) 
+        rh1 = rh1 / (eps1*svp_liq(t1)/(p1-svp_liq(t1)))
+        rh2 = ev2*eps1/(p2-ev2) 
+        rh2 = rh2 / (eps1*svp_liq(t2)/(p2-svp_liq(t2)))
+        drh1 = (rh2-rh1) / dt
+           
+    end subroutine calc_chamber_derivs
 
 
 
@@ -2339,6 +2435,11 @@
 !                 lv/cpm*(parcel1%q_cbase-wv))
 !         endif 
 
+        if(updraft_type==4) then
+            ydot(ipr)=parcel1%dp1
+            ydot(ite)=parcel1%dt1
+!             ydot(irh)=parcel1%drh1
+        endif
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         ! change in rh of parcel                                                 !
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -2446,6 +2547,10 @@
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
+        if(updraft_type==4) then
+            ydot(ite)=0._wp
+            !ydot(irh)=0._wp
+        endif
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         ! change in rh of parcel                                                 !
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -2730,7 +2835,7 @@
 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! latent heat of fusion (these freeze so this is how much heat is released):
-    t=t+lf/cp*sum(mwat(:)*dn01(:))
+    if(updraft_type.ne.4) t=t+lf/cp*sum(mwat(:)*dn01(:))
     end subroutine noncollisional_iceformation
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
@@ -4213,6 +4318,12 @@
         
         
         if ((updraft_type==2).and.(parcel1%TT>t_thresh)) parcel1%y(parcel1%iw)=0._wp
+
+        if(updraft_type==4) then
+            call calc_chamber_derivs(parcel1%tt,parcel1%dt, &
+                    parcel1%dp1,parcel1%dt1,parcel1%drh1)
+        endif
+        
         ! one time-step of model
         call bin_microphysics(fparcelwarm, fparcelcold, & 
             icenucleation, noncollisional_iceformation)
