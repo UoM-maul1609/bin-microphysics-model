@@ -3366,7 +3366,25 @@
         moments(n_bin_modew+1:n_bin_mode,n_comps+3)= momtemp(1:n_bin_modew)                
     end subroutine update_volume_and_shape         
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                
+
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! reduce the rime mass in proportion during evaporation                        !
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>rime mass reduces in proportion to total mass
+    subroutine reduce_rime(ipart, massnew, massold, rimemass)
+        implicit none
+        integer(i4b), intent(in) :: ipart
+        real(wp), intent(in), dimension(ipart) :: massold, massnew
+        real(wp), intent(inout), dimension(ipart) :: rimemass
+        
+        rimemass = rimemass * min(massnew, massold)/massold            
+            
+    end subroutine reduce_rime
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                  
                 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! one time-step of the bin-microphysics                                        !
@@ -3557,6 +3575,10 @@
                            parcel1%iworkice,parcel1%liwice,jparcelwarm, &
                            parcel1%mfice,parcel1%rparice,parcel1%iparice)
         enddo
+        ! rime also evaporates off
+        call reduce_rime(parcel1%n_bin_modew,parcel1%yice(1:parcel1%n_bin_modew), &
+            parcel1%yoldice(1:parcel1%n_bin_modew), &
+            parcel1%moments(parcel1%n_bin_modew+1:parcel1%n_bin_mode,parcel1%n_comps+4))
 
         parcel1%y(parcel1%ipr)=parcel1%yice(parcel1%ipri)
         parcel1%y(parcel1%ite)=parcel1%yice(parcel1%itei)
