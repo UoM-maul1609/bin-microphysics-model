@@ -3725,9 +3725,11 @@
         call check( nf90_def_dim(io1%ncid, "times", NF90_UNLIMITED, io1%x_dimid) )
         call check( nf90_def_dim(io1%ncid, "nbins", n_bins, io1%bin_dimid) )
         call check( nf90_def_dim(io1%ncid, "nbinst", parcel1%n_bins1, io1%bin2_dimid) )
+        call check( nf90_def_dim(io1%ncid, "nbinste", parcel1%n_bins1+1, io1%bin3_dimid) )
         call check( nf90_def_dim(io1%ncid, "nmodes", parcel1%n_modes, io1%mode_dimid) )
         call check( nf90_def_dim(io1%ncid, "ncomps", parcel1%n_comps, io1%comp_dimid) )
         
+
         ! close the file, freeing up any internal netCDF resources
         ! associated with the file, and flush any buffers
         call check( nf90_close(io1%ncid) )
@@ -3737,7 +3739,6 @@
         call check( nf90_open(outputfile, NF90_WRITE, io1%ncid) )
         ! define mode
         call check( nf90_redef(io1%ncid) )
-
 
 
         ! define variable: time
@@ -3858,6 +3859,16 @@
         call check( nf90_put_att(io1%ncid, io1%a_dimid, &
                    "units", "kg") )
                    
+
+        ! define variable: mbinedges
+        call check( nf90_def_var(io1%ncid, "mbinedges", NF90_DOUBLE, &
+                    (/io1%bin3_dimid,io1%mode_dimid/), io1%varid) )
+        ! get id to a_dimid
+        call check( nf90_inq_varid(io1%ncid, "mbinedges", io1%a_dimid) )
+        ! units
+        call check( nf90_put_att(io1%ncid, io1%a_dimid, &
+                   "units", "kg") )
+
                    
                    
         if(ice_flag .eq. 1) then
@@ -3940,6 +3951,12 @@
         endif
         
         call check( nf90_enddef(io1%ncid) )
+
+        ! write variable: mbinedges
+        call check( nf90_inq_varid(io1%ncid, "mbinedges", io1%varid ) )
+        call check( nf90_put_var(io1%ncid, io1%varid, parcel1%mbinedges, &
+                    start = (/io1%icur/)))
+
         call check( nf90_close(io1%ncid) )
 
         new_file=.false.
