@@ -24,13 +24,17 @@ def plot_model_run(fileName='/tmp/output1.nc'):
     mwat=       nc['mwat'][:]
     nwat =      nc['nwat'][:]
     medge =      nc['mbinedges'][:]
-    dedge=((3.*medge/(4.*np.pi*1000.))**(1./3.))
+    dedge=((6.*medge/(np.pi*1000.))**(1./3.))
+    dedge_ice=((6.*medge/(np.pi*920.))**(1./3.))
     
     dedge1 =np.repeat(dedge,len(time),axis=0)
+    dedge1_ice =np.repeat(dedge_ice,len(time),axis=0)
     dmean=np.zeros(np.prod(np.shape(dedge))-1)
+    dmean_ice=np.zeros(np.prod(np.shape(dedge_ice))-1)
     print(np.shape(dmean))
     for i in range(len(dmean)):
         dmean[i] = 0.5*(dedge[0,i]+dedge[0,i+1])
+        dmean_ice[i] = 0.5*(dedge_ice[0,i]+dedge_ice[0,i+1])
     
     
     fig = plt.figure()
@@ -46,7 +50,7 @@ def plot_model_run(fileName='/tmp/output1.nc'):
     plt.ylabel('diameter of drop (m)')
 
     plt.subplot(212)
-    plt.pcolor(time,dmean, \
+    plt.pcolor(time,dmean_ice, \
         np.transpose(np.real(np.squeeze(nicem[:,0,:]))), \
          norm=colors.LogNorm(vmin=10**-5, vmax=nicem.max()))
 #     plt.pcolor(time,dmean, \
