@@ -23,7 +23,9 @@
         						kboltz=r_gas/n_avo, epsilond=2000.e-4_wp, &
         						qsmall=1.e-60_wp, qsmall2=1.e-20_wp, &
         						de_crit=0.2_wp, phi_mode2=0.35_wp, &
-        						oneoversix=1._wp/6._wp, dtt=10.e-6_wp
+        						oneoversix=1._wp/6._wp, dtt=10.e-6_wp, &
+        						oneoverthree=1._wp/3._wp, oneovernine=1._wp/9._wp, &
+        						oneoverpi=1._wp/pi, phi_phillips=3.5e-3_wp
         						
         						
 
@@ -1885,13 +1887,149 @@
       
         ! calculate the change in momentum - equation 7
         ! assume a coefficient of restitution of 0.5?
-        ! units are g cm s-1
+        ! units are g cm s-1        
         delm = 0.25_sp*pi*m1*m2/(m1+m2)*(1._sp+0.5_sp)* &
             abs(v1-v2)*1.e5_sp 
+        !delm=max(min(delm,2.e-1_wp), 1.e-5_wp)
         vardiman_br = max(vard05(1)*(log(delm)**2)+vard05(2)*log(delm)+vard05(3),0._wp)
         vardiman_br = min(vardiman_br,40._wp)
 
     end function vardiman_br
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    
+    
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! Phillips et al 2017 collisional breakup                                      !
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>calculates break up of ice particles during collisions according to 
+	!> Phillips et al (2017)
+	!>@param[in] m1,m2,v1,v2
+	!>@return phillips_br: number of fragments
+    function phillips_br(t,m1,m2,vel1,vel2,n_moments,n1,n2,mom1,mom2)
+    
+
+        use numerics_type
+        implicit none
+        real(wp), intent(in) :: t, m1,m2,vel1,vel2,n1,n2
+        integer(i4b), intent(in) :: n_moments
+        real(wp), dimension(n_moments), intent(in) :: mom1, mom2
+        
+        real(wp) :: dmax1, dmax2, twicea1, twicea2, dsmall, frimes, frimel, &
+                    rhois, phis, &
+                    alpha, a0, t0, a, c, nmax, gamma, zeta, k0, &
+                    rhoi1,rhoi2,frime1,frime2, phi1, phi2, vol1,vol2
+        real(wp) :: phillips_br
+        
+        ! calculate particle properties from moments
+        vol1 = mom1(parcel1%n_comps+3) / n1
+        vol2 = mom2(parcel1%n_comps+3) / n2
+        frime1 = mom1(parcel1%n_comps+4) / (n1*m1)
+        frime2 = mom2(parcel1%n_comps+4) / (n2*m2)
+        phi1 = mom1(parcel1%n_comps+1) / n1
+        phi2 = mom2(parcel1%n_comps+1) / n2
+        rhoi1 = (m1*n1-mom1(parcel1%n_comps+4)) / mom1(parcel1%n_comps+3)
+        rhoi2 = (m2*n2-mom2(parcel1%n_comps+4)) / mom2(parcel1%n_comps+3)
+        
+        
+        ! calculate the max length of the ice crystals
+        twicea1 = (6._wp*vol1 / (pi*phi1))**oneoverthree
+        dmax1 = max(twicea1, dmax1*phi1  )
+        
+        twicea2=(6._wp*vol2 / (pi*phi2))**oneoverthree
+        dmax2 = max(twicea2, dmax2*phi2  )
+        
+        ! calculate the max dimension of the particle assuming rime fills in like a sphere
+        dmax1=max(dmax1,  &
+         (6._wp*oneoverpi*(pi*twicea1**3*phi1*oneoversix)+ &
+            m1*frime1/rhoice  )**oneoverthree)
+        dmax2=max(dmax2,  &
+         (6._wp*oneoverpi*(pi*twicea2**3*phi2*oneoversix)+&
+            m2*frime2/rhoice  )**oneoverthree)
+        
+        ! some swapping
+        if(dmax1<dmax2) then
+            dsmall = dmax1
+            frimes = frime1
+            frimel = frime2
+            rhois = rhoi1
+            phis = phi1
+        else
+            dsmall = dmax2
+            frimes = frime2
+            frimel = frime1
+            rhois = rhoi2
+            phis = phi2
+        endif
+        
+        
+        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        ! table 1: phillips et al. (2017)
+        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        ! type 1
+        alpha=pi*dsmall**2
+        if ((dsmall> 5.e-4_wp).and.(dsmall<5.e-3_wp).and.(frimes>=0.5_wp) &
+            .and.(frimes<0.9_wp).and.(frimel>=0.5_wp)) then
+            
+            ! collisions of graupel size 500 micron to 5 mm with graupel and hail
+            a0=3.78e4_wp*(1._wp+0.0079_wp/dsmall**1.5_wp)
+            t0=-15._wp
+            A=a0*oneoverthree+max(2.*a0*oneoverthree-a0*oneovernine*(t-ttr-t0),0._wp)
+            c=6.30e6_wp*phi_phillips
+            nmax=100._wp
+            gamma=0.3_wp
+            zeta=0.001_wp
+        
+        ! type 1
+        elseif ((frimes>=0.9_wp).and.(frimel>=0.9_wp)) then
+            
+            ! collisions of hail and hail - no size constraint
+            a0=4.35e5_wp
+            t0=15._wp
+            A=a0*oneoverthree+max(2.*a0*oneoverthree-a0*oneovernine*(t-ttr-t0),0._wp)
+            c=3.31e5_wp
+            nmax=1000._wp
+            gamma=0.54_wp
+            zeta=1.e-6_wp
+            
+        ! types 2 or 3
+        elseif ((dsmall> 5.e-4_wp).and.(dsmall<5.e-3_wp).and.(frimes<0.5_wp) &
+            .and. (phis < 1._wp)) then
+            ! collisions of ice /snow size 500 micron to 5 mm with any ice
+            
+            ! seems like columnar habits dont fragment?
+            if(rhois < 400._wp) then
+                ! dendrites
+                A=1.41e6_wp*(1._wp+100._wp*frimes**2)*(1._wp+3.98e-5_wp/dsmall**1.5_wp)
+                c=3.09e6_wp*frimes
+                nmax=100._wp
+                gamma=0.50_wp - 0.25_wp*frimes
+                zeta=0.001_wp
+                
+            else
+                ! spatial planar
+                A=1.58e7_wp*(1._wp+100._wp*frimes**2)*(1._wp+1.33e-4_wp/dsmall**1.5_wp)
+                c=7.08e6_wp*frimes
+                nmax=100._wp
+                gamma=0.50_wp - 0.25_wp*frimes
+                zeta=0.001_wp
+            
+            endif
+
+        else
+            phillips_br= 0._wp
+            return
+        endif
+        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        
+        ! CKE
+        k0 = 0.5_wp*(m1*m2/(m1+m2))*(vel1-vel2)**2
+        ! finally apply equation 13
+        phillips_br = min(alpha*A*(1._wp-exp(-(C*K0/(alpha*A))**gamma )), nmax)
+        
+    end function phillips_br
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
     
@@ -2153,7 +2291,8 @@
     integer(i4b), dimension(n_moments), intent(in) :: momtype
     real(wp), intent(in) :: dt, mass_hm_splinter, mass_coll_splinter, &
                                 mass_mode2_frag
-    logical, intent(in) :: hm_flag, break_flag, mode1_flag, mode2_flag
+    logical, intent(in) :: hm_flag, mode1_flag, mode2_flag
+    integer(i4b), intent(in) :: break_flag
     real(wp), intent(inout) :: t, totaddto
     
     real(wp) :: remove1,remove2,massn,massaddto,nnew,gk,beta1,cw,fk05, &
@@ -2223,10 +2362,25 @@
             !if((phase1==0).and.(phase2==1)) cycle
             masstot=massaddto
             mass_stot=0._wp
+            ! if one liquid and two ice
+            mass_smtot=0._wp
+            mass_mtot=0._wp
+            mass_stot=0._wp
+            mass_s=0._wp
+            mass_dm=0._wp
+            mass_sm=0._wp
+            mass_m1t=0._wp
+            mass_m1b=0._wp
+            mass_m1ttot=0._wp
+            mass_m1btot=0._wp
             ! if both are ice phase - fragmentation
-            if((phase1.eq.1).and.(phase2.eq.1).and.(t.lt.ttr).and.break_flag) then
+            if((phase1.eq.1).and.(phase2.eq.1).and.(t.lt.ttr).and.(break_flag.ne.0)) then
                 ! vardiman (1978) number of fragments formed in a collision between i + j-
-                nfrag=vardiman_br(xn(i),xn(j),vel(i),vel(j))
+                if(break_flag==1) nfrag=vardiman_br(xn(i),xn(j),vel(i),vel(j))                        
+                        
+                if(break_flag==2) nfrag=phillips_br(t,xn(i),xn(j),vel(i),vel(j), &
+                                                n_moments,npart(i),npart(j), &
+                                                    moments(i,:),moments(j,:))
                 !nfrag=0._wp
                 !-------------------------------------------------------------------------
                 
@@ -2261,17 +2415,6 @@
             !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
             
-            ! if one liquid and two ice
-            mass_smtot=0._wp
-            mass_mtot=0._wp
-            mass_stot=0._wp
-            mass_s=0._wp
-            mass_dm=0._wp
-            mass_sm=0._wp
-            mass_m1t=0._wp
-            mass_m1b=0._wp
-            mass_m1ttot=0._wp
-            mass_m1btot=0._wp
             if((phase1.eq.0).and.(phase2.eq.1).and.(t.lt.ttr).and. &
                 (xn(i)>7.2382e-12_wp).and.(mode1_flag.or.(mode2_flag.or.hm_flag))) then
                 
