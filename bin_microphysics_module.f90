@@ -118,7 +118,8 @@
                     alpha_therm_ice, alpha_dep
         integer(i4b) :: microphysics_flag=0, kappa_flag,updraft_type, vent_flag, &
                         sce_flag=0,ice_flag=0, bin_scheme_flag=1
-        logical :: use_prof_for_tprh, hm_flag, break_flag, mode1_flag, mode2_flag
+        logical :: use_prof_for_tprh, hm_flag, mode1_flag, mode2_flag
+        integer(i4b) :: break_flag
         real(wp) :: dz,dt, runtime, t_thresh
         ! sounding spec
         real(wp) :: psurf, tsurf
@@ -4220,7 +4221,8 @@
     use sce, only : sce_microphysics, sce_sip_microphysics, qsmall
     implicit none
     integer(i4b), intent(in) :: sce_flag
-    logical, intent(in) :: hm_flag, break_flag, mode1_flag, mode2_flag
+    logical, intent(in) :: hm_flag, mode1_flag, mode2_flag
+    integer(i4b), intent(in) :: break_flag
     integer(i4b) :: i, j, nt
     
     nt=ceiling(runtime / real(dt,kind=wp))
