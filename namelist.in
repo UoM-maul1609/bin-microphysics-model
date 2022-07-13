@@ -34,7 +34,7 @@
  	alpha_dep=1.0,
  	hm_flag=.false.,
  	break_flag=2,       ! 0=off, 1=vardiman et al, 2=phillips 2017 scheme
- 	mode1_flag=.false., ! at the moment it is only coded up for collision-freezing
+ 	mode1_flag=.false., ! collisional and via nucleation
  	mode2_flag=.false./
 &aerosol_setup
     n_mode            = 1,
