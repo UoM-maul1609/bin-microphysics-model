@@ -1976,7 +1976,7 @@
             ! collisions of graupel size 500 micron to 5 mm with graupel and hail
             a0=3.78e4_wp*(1._wp+0.0079_wp/dsmall**1.5_wp)
             t0=-15._wp
-            A=a0*oneoverthree+max(2.*a0*oneoverthree-a0*oneovernine*(t-ttr-t0),0._wp)
+            A=a0*oneoverthree+max(2.*a0*oneoverthree-a0*oneovernine*abs(t-ttr-t0),0._wp)
             c=6.30e6_wp*phi_phillips
             nmax=100._wp
             gamma=0.3_wp
@@ -1988,7 +1988,7 @@
             ! collisions of hail and hail - no size constraint
             a0=4.35e5_wp
             t0=15._wp
-            A=a0*oneoverthree+max(2.*a0*oneoverthree-a0*oneovernine*(t-ttr-t0),0._wp)
+            A=a0*oneoverthree+max(2.*a0*oneoverthree-a0*oneovernine*abs(t-ttr-t0),0._wp)
             c=3.31e5_wp
             nmax=1000._wp
             gamma=0.54_wp
