@@ -28,6 +28,7 @@ RANLIB = ranlib
 OBJ = o
 FFLAGS = $(OPT)  $(DEBUG)  -o 
 FFLAGS2 =  $(DEBUG) -O3 -o 
+VAR_TYPE = 1 # 0 single, 1 double
 
 
 
