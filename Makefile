@@ -22,7 +22,7 @@ RANLIB = ranlib
 OBJ = o
 FFLAGS = $(OPT)  $(DEBUG)  -o 
 FFLAGS2 =  $(DEBUG) -O3 -o 
-
+VAR_TYPE = 1 # 0 single, 1 double
 
 
 main.exe	:  osnf_lib.a  main.$(OBJ) 
@@ -41,7 +41,7 @@ osnf_lib.a	:  numerics.$(OBJ) zeroin.$(OBJ) sfmin.$(OBJ) \
             svode.$(OBJ) slinpk.$(OBJ) vode.$(OBJ) dlinpk.$(OBJ) vode_integrate.$(OBJ) \
             erfinv.$(OBJ) tridiagonal.$(OBJ) hygfx.$(OBJ) random.$(OBJ)
 numerics_type.$(OBJ)	: numerics_type.f90 
-	$(FOR) numerics_type.f90 $(FFLAGS)numerics_type.$(OBJ)
+	$(FOR) numerics_type.f90 -cpp -DVAR_TYPE=$(VAR_TYPE) $(FFLAGS)numerics_type.$(OBJ)
 numerics.$(OBJ)	: numerics.f90 numerics_type.$(OBJ)
 	$(FOR) numerics.f90 $(FFLAGS)numerics.$(OBJ)
 zeroin.$(OBJ)	: zeroin.f
