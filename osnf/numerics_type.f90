@@ -6,9 +6,15 @@ module numerics_type
     integer, parameter :: i1b = selected_int_kind(2)
     integer, parameter :: sp = kind(1.0)
     integer, parameter :: dp = kind(1.0d0)
+#if VAR_TYPE == 1
     integer, parameter :: wp = kind(1.0d0)
+	integer, parameter :: wpc = kind((1.0d0,1.0d0))
+#endif
+#if VAR_TYPE == 0
+    integer, parameter :: wp = kind(1.0)
+	integer, parameter :: wpc = kind((1.0,1.0))
+#endif
 	integer, parameter :: spc = kind((1.0,1.0))
 	integer, parameter :: dpc = kind((1.0d0,1.0d0))
-	integer, parameter :: wpc = kind((1.0d0,1.0d0))
     real(wp), parameter :: pi=3.141592653589793238462643383279502884197_wp
 end module numerics_type
