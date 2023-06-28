@@ -158,6 +158,7 @@ def plot_model_run(fileName='/tmp/output1.nc'):
     plt.subplots_adjust(wspace=0.4)
     
     plt.draw()
+    plt.ion()
     plt.show()
     
     

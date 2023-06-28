@@ -2668,19 +2668,19 @@
             
             ! find the bins where mnew, mt, and mb need to go.
             inew    = find_medge(medges,mnew,nbins1,nmodes,i)
-            it      = find_medge(medges,mt,nbins1,nmodes,i)
-            ib      = find_medge(medges,mb,nbins1,nmodes,i)
+            it      = max(find_medge(medges,mt,nbins1,nmodes,i),1)
+            ib      = max(find_medge(medges,mb,nbins1,nmodes,i),1)
             
             ! for this ice bin we need to create three new ice bins in
             ! inew, it, and ib
             if(mall>0._wp) then
                 ! aerosol moments going into these bins (by mass)
                 moments(inew+nbinw,1:ncomps)=moments(inew+nbinw,1:ncomps)+ &
-                                            momtemp(:)*mleft/mall
+                                            momtemp(1:ncomps)*mleft/mall
                 moments(it+nbinw,1:ncomps)=moments(it+nbinw,1:ncomps)+ &
-                                            momtemp(:)*mttot/mall
+                                            momtemp(1:ncomps)*mttot/mall
                 moments(ib+nbinw,1:ncomps)=moments(ib+nbinw,1:ncomps)+ &
-                                            momtemp(:)*mbtot/mall
+                                            momtemp(1:ncomps)*mbtot/mall
             endif            
             ! the ice mass in these bins
             m01(inew)=m01(inew) + mleft
