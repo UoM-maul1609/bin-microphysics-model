@@ -155,7 +155,7 @@
              -29.890199206698309_wp, -32.327548996894521_wp, 15.827423311652167_wp, &
              18.466605783503052_wp, -4.158566361058538_wp, -5.039533848938808_wp, &
              1.477272813054374_wp, 1.038600921563425_wp, -0.457007828432810_wp]
-        real(sp), dimension(2), parameter :: gam_mu_cl=[260.163817050062335_wp, &
+        real(wp), dimension(2), parameter :: gam_mu_cl=[260.163817050062335_wp, &
                                                     8.274747821396463_wp]
 
 
@@ -2947,9 +2947,9 @@
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         ! solving equations 43 and 43 over dV
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        rgamma_tp2=1._sp/(gamma_t+2._sp)
+        rgamma_tp2=1._wp/(gamma_t+2._wp)
         ln_vn_vo=log(v/v_old)
-        phi=phi*exp((gamma_t-1._sp)*rgamma_tp2*ln_vn_vo)       
+        phi=phi*exp((gamma_t-1._wp)*rgamma_tp2*ln_vn_vo)       
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
        
     end subroutine chen_and_lamb_prop
@@ -3071,20 +3071,20 @@
         
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         ! calculate the inherent growth ratio - this is from a 17th order polynomial
-        gamma_t=0._sp
+        gamma_t=0._wp
         t1=min(max(t,243.15),273.15) ! range of fit
         do i=1,n_cl
             gamma_t=gamma_t+((t1-gam_mu_cl(1))/gam_mu_cl(2))**(n_cl-i)*gam_cl(i)
         enddo
-        gamma_t=10._sp**gamma_t
+        gamma_t=10._wp**gamma_t
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         
         
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         ! equation 42 from Chen and Lamb (1994, JAS: The Theoretical Basis for 
         !   Parameterisation of Ice Crystal Habits)
-        delta_rho=(qv-qvsat)*rhoa*1000._sp ! g/m^3
-        dep_density=rhoice*exp(-3._sp*max(delta_rho-0.05_sp,0._sp)/gamma_t)
+        delta_rho=(qv-qvsat)*rhoa*1000._wp ! g/m^3
+        dep_density=rhoice*exp(-3._wp*max(delta_rho-0.05_wp,0._wp)/gamma_t)
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     end subroutine chen_and_lamb_anc
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -3107,19 +3107,19 @@
         
         ! factor to convert between R and a - derived from equating volume of sphere to 
         ! volume of spheroid and taking the ratio of a / r
-        fac1=(1._sp/(phi))**(1/3)
+        fac1=(1._wp/(phi))**(1/3)
         
         ! factor to convert between a and capacitance
-        if(phi<0.99_sp) then
+        if(phi<0.99_wp) then
             ! see equation 39 of Chen and Lamb (1994)
-            ecc=sqrt(1._sp-phi**2)
+            ecc=sqrt(1._wp-phi**2)
             fac2=ecc/asin(ecc)
-        elseif(phi>1.01_sp) then
+        elseif(phi>1.01_wp) then
             ! see equation 40 of Chen and Lamb (1994)
-            ecc=sqrt(1._sp-(1._sp/phi)**2)
-            fac2=1._sp/phi/log((1._sp+ecc)*phi)
+            ecc=sqrt(1._wp-(1._wp/phi)**2)
+            fac2=1._wp/phi/log((1._wp+ecc)*phi)
         else
-            fac2=1._sp
+            fac2=1._wp
         endif
         
         ! total factor
@@ -3715,7 +3715,7 @@
     implicit none
     logical, intent(inout) :: new_file
     character (len=*),intent(in) :: outputfile
-    real(sp) :: phi
+    real(wp) :: phi
     ! output to netcdf file
     if(new_file) then
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
