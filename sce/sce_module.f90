@@ -107,7 +107,7 @@
         
 
         ! Vardiman (1978) fits to figure 6 - note delta M in units on g cm s-1
-        real(sp), dimension(3), parameter :: vard01=[0.000495314304309_wp, &
+        real(wp), dimension(3), parameter :: vard01=[0.000495314304309_wp, &
                                                  0.281199363154805_wp, &
                                                  3.380130133900658_wp], &
                                          vard02=[0.304288838581395_wp, &
@@ -1888,8 +1888,8 @@
         ! calculate the change in momentum - equation 7
         ! assume a coefficient of restitution of 0.5?
         ! units are g cm s-1        
-        delm = 0.25_sp*pi*m1*m2/(m1+m2)*(1._sp+0.5_sp)* &
-            abs(v1-v2)*1.e5_sp 
+        delm = 0.25_wp*pi*m1*m2/(m1+m2)*(1._wp+0.5_wp)* &
+            abs(v1-v2)*1.e5_wp 
         !delm=max(min(delm,2.e-1_wp), 1.e-5_wp)
         vardiman_br = max(vard05(1)*(log(delm)**2)+vard05(2)*log(delm)+vard05(3),0._wp)
         vardiman_br = min(vardiman_br,40._wp)
