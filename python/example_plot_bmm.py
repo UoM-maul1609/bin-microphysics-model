@@ -66,6 +66,8 @@ def plot_model_run(fileName='/tmp/output1.nc'):
     p2, = par1.plot(time, qi*1000., label="ice")
     p3, = par2.plot(time, rh, label="humidity")
     
+    par1.set_xlim(host.get_xlim())
+    par2.set_xlim(host.get_xlim())
     
     host.legend(loc=6)
     
@@ -96,6 +98,7 @@ def plot_model_run(fileName='/tmp/output1.nc'):
     
     p1, = host.plot(time, p/100., label="pressure")
     p3, = par2.plot(time, t-273.15, label="temperature")
+    par2.set_xlim(host.get_xlim())
     host.invert_yaxis()
     
     host.legend(loc=8)
@@ -126,6 +129,8 @@ def plot_model_run(fileName='/tmp/output1.nc'):
     
     p1, = host.plot(time, ndrop/1.e6, label="CDNC")
     p3, = par2.plot(time, nice/1.e3, label="N$_{ice}$")
+    
+    par2.set_xlim(host.get_xlim())
     
     host.legend(loc=6)
     
