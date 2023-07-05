@@ -67,6 +67,7 @@ def plot_model_run(fileName='/tmp/output1.nc'):
     p3, = par2.plot(time, rh, label="humidity")
     
     par1.set_xlim(host.get_xlim())
+    par1.set_ylim(host.get_ylim())
     par2.set_xlim(host.get_xlim())
     
     host.legend(loc=6)
