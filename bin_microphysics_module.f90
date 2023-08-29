@@ -3715,7 +3715,7 @@
     implicit none
     logical, intent(inout) :: new_file
     character (len=*),intent(in) :: outputfile
-    real(wp) :: phi
+    real(wp) :: phi, sd2, sd3, deff
     ! output to netcdf file
     if(new_file) then
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -4021,16 +4021,36 @@
     call check( nf90_put_var(io1%ncid, io1%varid, &
         sum(parcel1%ndrop), start = (/io1%icur/)))
 
+
+
+
     ! write variable: effective radius
     call check( nf90_inq_varid(io1%ncid, "deff", io1%varid ) )
-    call check( nf90_put_var(io1%ncid, io1%varid, &
-        sum((parcel1%y(1:parcel1%n_bin_modew)* &
-            6._wp/(rhow*pi))**(3._wp/3._wp)*  &
-            parcel1%npart(1:parcel1%n_bin_modew)) / &
-        sum((parcel1%y(1:parcel1%n_bin_modew)* &
-            6._wp/(rhow*pi))**(2._wp/3._wp)*  &
-            parcel1%npart(1:parcel1%n_bin_modew)), &
+    
+    parcel1%ndrop=0._wp
+    where (parcel1%y(1:parcel1%n_bin_modew) > 6.5450e-14_wp)
+    	parcel1%ndrop =  (parcel1%y(1:parcel1%n_bin_modew)* &
+            6._wp/(rhow*pi))**(3._wp/3._wp)* parcel1%npart(1:parcel1%n_bin_modew)
+	end where
+	sd3 = sum(parcel1%ndrop)
+	
+    parcel1%ndrop=0._wp
+    where (parcel1%y(1:parcel1%n_bin_modew) > 6.5450e-14_wp)
+    	parcel1%ndrop =  (parcel1%y(1:parcel1%n_bin_modew)* &
+            6._wp/(rhow*pi))**(2._wp/3._wp)* parcel1%npart(1:parcel1%n_bin_modew)
+	end where
+	sd2 = sum(parcel1%ndrop)
+	
+	if(sd2 .lt. 1.e-10_wp) then
+		deff = 0._wp
+	else
+		deff = sd3 / sd2
+	endif
+    
+    call check( nf90_put_var(io1%ncid, io1%varid, deff, &
                 start = (/io1%icur/)))
+
+
 
     call check( nf90_inq_varid(io1%ncid, "mwat", io1%varid ) )
     call check( nf90_put_var(io1%ncid, io1%varid, &
