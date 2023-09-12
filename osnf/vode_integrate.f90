@@ -90,9 +90,9 @@
                             rwork,lrw,iwork,liw,jac,mf,rpar,ipar)
             enddo
         else
-            do while (x .lt. x1)
+            do while (x .gt. x2)
                 istate=1
-                call dvode(fex,neq,y,x,x1,itol,rtol,atol,itask,istate,iopt, & 
+                call dvode(fex,neq,y,x,x2,itol,rtol,atol,itask,istate,iopt, & 
                             rwork,lrw,iwork,liw,jac,mf,rpar,ipar)   
             enddo        
         endif
