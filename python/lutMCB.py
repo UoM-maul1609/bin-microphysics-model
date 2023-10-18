@@ -7,7 +7,7 @@ import getpass
 username=getpass.getuser()
 
 
-if __name__=="__main__":
+def doAnalysis():
     """ read in data of albedo and number activated
         and create lut
     """
@@ -26,9 +26,13 @@ if __name__=="__main__":
         tau1=np.sum(nc['beta_ext'][:]*(nc['time'][1]-nc['time'][0])*winit)
         lut2[i]= tau1 / (tau1+7.7) # see equation 2.3
         nc.close()
+    return (lut1,lut2)
 
+if __name__=="__main__":
+
+    lut1,lut2=doAnalysis()
+    
     plt.ion()
-#     plt.figure()
     plt.plot(NaClMR,lut2)
     plt.ylabel('Albedo')
     plt.xlabel('NaCl m.r. (kg kg$^{-1}$)')
