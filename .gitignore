@@ -10,3 +10,4 @@ references
 namelist.andreas
 namelist.run
 *.dSYM
+__pycache__/

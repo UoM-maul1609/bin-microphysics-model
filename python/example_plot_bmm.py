@@ -9,8 +9,13 @@ from netCDF4 import Dataset
 import numpy as np
 import matplotlib.pyplot as plt
 
+import os
+import getpass
+
+username=getpass.getuser()
+
 #from runsDefine import outputDir
-outputDir='/tmp'
+outputDir='/tmp/' + username
 fileName=outputDir + '/output1.nc'
 
 def plot_model_run(fileName='/tmp/output1.nc'):
@@ -170,7 +175,8 @@ def plot_model_run(fileName='/tmp/output1.nc'):
     
     
     
-    plt.savefig("/tmp/Test.png")
+    
+    fig.savefig('/tmp/' + username + '/Test.png')
 
     
     

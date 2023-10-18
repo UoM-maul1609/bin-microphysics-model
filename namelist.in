@@ -3,7 +3,7 @@
 	scefile = 'sce/namelist.in',
 	runtime=7000.,
 	dt=10.,
-	zinit=450.,
+	zinit=1000.,
 	tpert=0.0,
 	use_prof_for_tprh=.false.,
 	winit=2.5,
@@ -20,12 +20,12 @@
 	sce_flag = 2,        ! 0=don't call SCE; 1=call SCE; 2=call SCE with SIP
 	vent_flag=1,
 	kappa_flag=1,
-	updraft_type=2,      ! type of updraft, 1 for constant, 2=stop after t_thresh reached
+	updraft_type=1,      ! type of updraft, 1 for constant, 2=stop after t_thresh reached
 	                        ! 3=constant until t_thresh, then 
 	t_thresh=2600.,      ! time threshold for updraft
  	adiabatic_prof=.true., ! to have entrainment on, set this flag to false
-    vert_ent=.false., ! entrain in vertical (.true.); or laterally (.false.)
-    z_ctop=1200., ! height of cloud-top for vertical entrainment
+    vert_ent=.true., ! entrain in vertical (.true.); or laterally (.false.)
+    z_ctop=5000., ! height of cloud-top for vertical entrainment
  	ent_rate=1.e-3, 
  	n_levels_s = 151,
  	alpha_therm=1.0,
@@ -33,7 +33,7 @@
  	alpha_therm_ice=1.0,
  	alpha_dep=1.0,
  	hm_flag=.false.,
- 	break_flag=2,       ! 0=off, 1=vardiman et al, 2=phillips 2017 scheme
+ 	break_flag=0,       ! 0=off, 1=vardiman et al, 2=phillips 2017 scheme
  	mode1_flag=.false., ! collisional and via nucleation
  	mode2_flag=.false./
 &aerosol_setup
