@@ -60,11 +60,8 @@ def batchRuns():
       
         print(elements)
         changeFile(dumpFile,tmpFile,runToDo[0][0],elements[0])
-        changeFile(tmpFile,tmpFile,runToDo[1][0],elements[1])
-        changeFile(tmpFile,tmpFile,runToDo[2][0],elements[2])
-        changeFile(tmpFile,tmpFile,runToDo[3][0],elements[3])
-        changeFile(tmpFile,tmpFile,runToDo[4][0],elements[4])
-        changeFile(tmpFile,tmpFile,runToDo[5][0],elements[5])
+        for i in range(1,len(runToDo)):
+            changeFile(tmpFile,tmpFile,runToDo[i][0],elements[i])
         
         
         
