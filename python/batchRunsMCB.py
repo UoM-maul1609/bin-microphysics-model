@@ -36,7 +36,6 @@ def batchRuns():
     tmpFileObj=tempfile.NamedTemporaryFile(delete=False)
     tmpFile=tmpFileObj.name
     
-    changeFile(inputFile,dumpFile,'/tmp/output1.nc','/tmp/' + username + '/output1.nc')
     
     if not os.path.exists('/tmp/' + username):
         os.mkdir('/tmp/' + username)
@@ -52,7 +51,9 @@ def batchRuns():
         n=str(k)
         print('Run number '+ n.zfill(3))
 
-      
+        fileName=outputDir + '/' + username + '/output' + n.zfill(3) + '.nc'
+        changeFile(inputFile,dumpFile,'/tmp/output1.nc',fileName)
+
         changeFile(dumpFile,tmpFile,'n_aer1(1:3,2:2)        = 0e6, 0.e6, 0.e6,',\
             'n_aer1(1:3,2:2)        = ' + str(N_aer[k]) + ', 0.e6, 0.e6,')
         changeFile(tmpFile,tmpFile,'d_aer1(1:3,2:2)        = 100e-9   , 1e-9, 1.e-9, ',\

@@ -22,9 +22,9 @@ if __name__=="__main__":
 
         # read the file and store vars for lut
         nc=Dataset(fileName)
-        lut1[i]=nc['ndrop'][-1]/1e6
+        lut1[i]=nc['ndrop'][-1] / 1e6
         tau1=np.sum(nc['beta_ext'][:]*(nc['time'][1]-nc['time'][0])*winit)
-        lut2[i]= tau1/(tau1+7.7) # see equation 2.3
+        lut2[i]= tau1 / (tau1+7.7) # see equation 2.3
         nc.close()
 
     plt.ion()

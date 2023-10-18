@@ -28,7 +28,7 @@ def batchRuns():
     
     
     
-    inputFile=os.getcwd()+'/../namelist.in'
+    inputFile=os.getcwd()+'/namelist-sip.in'
     # inputFile='/Users/mccikpc2/Dropbox/programming/fortran/scm/namelist.pamm'
     
     dumpFileObj=tempfile.NamedTemporaryFile(delete=False)
