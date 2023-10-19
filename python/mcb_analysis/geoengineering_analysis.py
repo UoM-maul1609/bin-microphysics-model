@@ -137,15 +137,15 @@ if __name__=="__main__":
     for j in range(3):
         # loss to society, which is dependent on temperature rise
         if (j==0):  # estimated from Stern review - lower bound
-                loss_in_GDP=(217.32*(tsurface-tsurface[0,0])-543.3)* \
+                loss_in_GDP=(0.5*(tsurface-tsurface[0,0])+2)* \
                     1e12/100;
                 col='r';lin=1;ls1='--'
         elif(j==1):     # estimated from Stern review - upper bound
-                loss_in_GDP=(72.44*(tsurface-tsurface[0,0])-36.22)* \
+                loss_in_GDP=(5*(tsurface-tsurface[0,0])-15.)* \
                     1e12/100;
                 col='r';lin=1;ls1='--'
         elif(j==2):     # estimated from Stern review - center
-                loss_in_GDP=(144.88*(tsurface-tsurface[0,0])-253.54)* \
+                loss_in_GDP=(2*(tsurface-tsurface[0,0])-3.5)* \
                     1e12/100;
                 col='r';lin=3;ls1='-'
                 
@@ -155,8 +155,8 @@ if __name__=="__main__":
     
         # cost of ships - 5 billion, plus 10% of cost per year - taken from
         # literature
-        cost=5e9*frac_tot+0.1*5e9*time1*frac_tot;
-
+        cost=4e9*(frac_tot+0.025*time1*frac_tot);
+#         cost=0.
     
     
         if method==RAYLEIGH_JET:
@@ -228,6 +228,15 @@ if __name__=="__main__":
 #     set(h,'ytick',8:1:13,'yticklabel',10.^(8:1:13));
     plt.xlabel('Cost of implementation (dollars)')
     plt.ylabel('CO_2 mixing ratio (ppm)')
+    if method==RAYLEIGH_JET:
+        plt.title('Rayleigh Jet Spraying')
+    elif method==TAYLOR_CONE:
+        plt.title('Taylor Cone Spraying')
+    elif method==SUPERCRITICAL:
+        plt.title('Supercritical Spraying')
+    elif method==EFFERVESCENT:
+        plt.title('Effervescent Spraying')
+        
     h.set_label('Cost of implementing+cost to society (dollars)')
     plt.savefig('/tmp/' + username + '/co2_vs_cost_vs_gross_cost.png')
     #--------------------------------------------------------------------------
