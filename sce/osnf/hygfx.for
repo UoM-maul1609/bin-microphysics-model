@@ -41,6 +41,7 @@ C
         L3=B.EQ.INT(B).AND.B.LT.0.0_wp
         L4=C-A.EQ.INT(C-A).AND.C-A.LE.0.0_wp
         L5=C-B.EQ.INT(C-B).AND.C-B.LE.0.0_wp
+        HW=0.0_wp
         IF (L0.OR.L1) THEN
            WRITE(*,*)'The hypergeometric series is divergent'
            RETURN
