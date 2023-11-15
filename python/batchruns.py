@@ -46,8 +46,11 @@ def batchRuns():
     print(dumpFile)
     
 
-    (r,c)=np.shape(runToDo)
-    
+    #(r,c)=np.shape(runToDo)
+    r=len(runToDo)
+    c=0
+    for i in range(r):
+        c=np.maximum(c,len(runToDo[i]))
     
     
     # https://stackoverflow.com/questions/23427181/all-combinations-with-multiple-loops
@@ -106,7 +109,13 @@ def changeFile(inFile,outFile,inString,outString):
     fout = open(outFile,"wt")
 
     for line in lines:
-        fout.write(line.replace(inString,outString))
+        if isinstance(outString, list):
+            line1=line
+            for i in range(len(outString)):
+                line1=line1.replace(inString[i],outString[i])
+            fout.write(line1)
+        else:
+            fout.write(line.replace(inString,outString))
     
 
     fout.close()

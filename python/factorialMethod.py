@@ -29,7 +29,10 @@ def factorialMethod():
     
         
 
-    (r,c)=np.shape(runToDo)
+    r=len(runToDo)
+    c=0
+    for i in range(r):
+        c=np.maximum(c,len(runToDo[i]))
     
     
     # https://stackoverflow.com/questions/23427181/all-combinations-with-multiple-loops
