@@ -5,13 +5,15 @@
 	dt=10.,
 	zinit=1000.,
 	tpert=0.0,
-	use_prof_for_tprh=.false.,
+	use_prof_for_tprh=.true.,
 	winit=2.5,
 	winit2=0.5,         ! only used if updraft_type=3 - peak updraft (m/s) in oscillatory phase
 	amplitude2=100.,    ! only used if updraft_type=3 - amplitude (m) in oscillatory phase
 	tinit=280.,
 	pinit=90000,
 	rhinit=0.95,
+	radinit=500.,       ! initial radius of bubble or jet
+	bubble_flag=.false., ! .true. for bubble, .false. for jet
 	microphysics_flag=1, ! flag for microphysics: 0 (no micro); 
 	                     ! 1 (microphysics on)
 	ice_flag=1,          ! flag for ice-microphysics: 0 (no ice);
@@ -20,13 +22,14 @@
 	sce_flag = 2,        ! 0=don't call SCE; 1=call SCE; 2=call SCE with SIP
 	vent_flag=1,
 	kappa_flag=0,
-	updraft_type=2,      ! type of updraft, 1 for constant, 2=stop after t_thresh reached
-	                        ! 3=constant until t_thresh, then 
+	updraft_type=4,      ! type of updraft, 1 for constant, 2=stop after t_thresh reached
+	                        ! 3=constant until t_thresh, then oscillate with winit2 and amplitude2
+	                        ! 4=take into account buoyancy
 	t_thresh=1600.,      ! time threshold for updraft
- 	adiabatic_prof=.true., ! to have entrainment on, set this flag to false
+ 	adiabatic_prof=.false., ! to have entrainment on, set this flag to false
     vert_ent=.false., ! entrain in vertical (.true.); or laterally (.false.)
     z_ctop=5000., ! height of cloud-top for vertical entrainment
- 	ent_rate=1.e-3, 
+ 	ent_rate=1.e-4, 
  	n_levels_s = 151,
  	alpha_therm=1.0,
  	alpha_cond=1.0,

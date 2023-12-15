@@ -22,7 +22,9 @@
         						eps1=ra/rv, rhoice=910._wp, &
         						mass_fragment1=pi/6._wp*rhoice*10.e-6_wp**3._wp, &
         						mass_fragment2=mass_fragment1, &
-        						mass_fragment3=mass_fragment1
+        						mass_fragment3=mass_fragment1, &
+        						gam_fac_ent=1._wp/(1._wp+0.5_wp), & ! P+K, 12-25
+        						onethird=1._wp/3._wp
         						
 
         type parcel
@@ -33,7 +35,7 @@
             real(wp), dimension(:,:), allocatable :: q_sound
             real(wp), dimension(:), allocatable :: t_sound, z_sound, rh_sound, &
                                                     p_sound, theta_q_sound
-            real(wp) :: z,p,t,w,rh, qinit, t_cbase, q_cbase, p_cbase, z_cbase, &
+            real(wp) :: z,p,t,w,rh, rad,qinit, t_cbase, q_cbase, p_cbase, z_cbase, &
                         t_ctop, q_ctop, p_ctop, z_ctop, theta_q_cbase, theta_q_ctop, &
                         x_ent, theta_q
                         
@@ -44,7 +46,7 @@
             real(wp), dimension(:,:), allocatable :: mbin, mbinall, rhobin, &
                                         nubin,molwbin,kappabin ! all bins x all comps                                
             ! variables for ODE:                    
-            integer(i4b) :: neq, itol, ipr, ite, iz, iw, irh, &
+            integer(i4b) :: neq, itol, ipr, ite, iz, iw, irh, ira, &
                             itask, istate, iopt, mf, lrw, liw
             integer(i4b), dimension(:), allocatable :: iwork
             integer(i4b), dimension(1) :: ipar
@@ -114,11 +116,11 @@
         logical :: micro_init=.true., adiabatic_prof=.false., vert_ent=.false.
         real(wp) :: ent_rate, dmina,dmaxa
         real(wp) :: zinit,tpert,winit,winit2, amplitude2, tau2, &
-                    tinit,pinit,rhinit,z_ctop, alpha_therm, alpha_cond, &
+                    tinit,pinit,rhinit,radinit,z_ctop, alpha_therm, alpha_cond, &
                     alpha_therm_ice, alpha_dep
         integer(i4b) :: microphysics_flag=0, kappa_flag,updraft_type, vent_flag, &
                         sce_flag=0,ice_flag=0, bin_scheme_flag=1
-        logical :: use_prof_for_tprh, hm_flag, mode1_flag, mode2_flag
+        logical :: use_prof_for_tprh, hm_flag, mode1_flag, mode2_flag, bubble_flag
         integer(i4b) :: break_flag
         real(wp) :: dz,dt, runtime, t_thresh
         ! sounding spec
@@ -280,7 +282,7 @@
         ! define namelists for environment
         namelist /run_vars/ outputfile, scefile,runtime, dt, &
                     zinit,tpert,use_prof_for_tprh,winit,winit2,amplitude2, &
-                    tinit,pinit,rhinit, &
+                    tinit,pinit,rhinit, radinit, bubble_flag, &
                     microphysics_flag, ice_flag, bin_scheme_flag, sce_flag, &
                     hm_flag, break_flag, mode1_flag, mode2_flag, vent_flag, &
                     kappa_flag, updraft_type,t_thresh, adiabatic_prof, vert_ent, &
@@ -337,7 +339,8 @@
 	!>interpolates the sounding to the grid
     subroutine initialise_bmm_arrays(psurf, tsurf, q_read, theta_read, rh_read, z_read, &
                     runtime, dt, zinit, tpert, use_prof_for_tprh, winit, tinit, pinit, &
-                    rhinit, microphysics_flag, ice_flag, bin_scheme_flag, vent_flag, &
+                    rhinit, radinit, bubble_flag, &
+                    microphysics_flag, ice_flag, bin_scheme_flag, vent_flag, &
                     kappa_flag, updraft_type, adiabatic_prof, vert_ent, z_ctop, &
                     ent_rate, n_levels_s, alpha_therm, alpha_cond, alpha_therm_ice, &
                     alpha_dep, n_intern, n_mode, n_sv, sv_flag, n_bins, n_comps, &
@@ -349,11 +352,12 @@
     use numerics, only : find_pos, poly_int, zeroin, fmin,vode_integrate
 
     implicit none
-    logical, intent(in) :: use_prof_for_tprh, adiabatic_prof, vert_ent
+    logical, intent(in) :: use_prof_for_tprh, adiabatic_prof, vert_ent, bubble_flag
     integer(i4b), intent(in) :: microphysics_flag, ice_flag, bin_scheme_flag, vent_flag, &
                     kappa_flag, updraft_type, n_levels_s,n_intern, n_mode, n_sv, &
                     sv_flag, n_bins, n_comps, sce_flag
-    real(wp), intent(in) :: psurf, tsurf, runtime, dt, zinit, tpert, winit, tinit, &
+    real(wp), intent(in) :: psurf, radinit, &
+                    tsurf, runtime, dt, zinit, tpert, winit, tinit, &
                     pinit, rhinit, alpha_therm, alpha_cond, alpha_therm_ice, &
                     alpha_dep, dmina,dmaxa, z_ctop, ent_rate
     real(wp), dimension(1:n_levels_s), intent(in) :: theta_read, rh_read, z_read
@@ -388,6 +392,7 @@
     parcel1%t=tinit
     parcel1%w=winit
     parcel1%rh=rhinit
+    parcel1%rad=radinit
     parcel1%dt=dt
 
     parcel1%ice_flag=ice_flag
@@ -713,7 +718,11 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! set-up ODE variables                                                         !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    parcel1%neq=parcel1%n_bin_modew+5 ! p,t,rh,z,w
+    if(adiabatic_prof) then
+        parcel1%neq=parcel1%n_bin_modew+5 ! p,t,rh,z,w
+    else
+        parcel1%neq=parcel1%n_bin_modew+6 ! p,t,rh,z,w,ra
+    endif
     parcel1%tt=0._wp
     parcel1%tout=parcel1%tt+parcel1%dt
     parcel1%itol=2
@@ -732,6 +741,14 @@
     parcel1%irh=parcel1%n_bin_modew+3 ! rh
     parcel1%iz =parcel1%n_bin_modew+4 ! altitude
     parcel1%iw =parcel1%n_bin_modew+5 ! vertical wind
+    ! extra variables for entrainment
+    if(.not.adiabatic_prof) then
+        parcel1%ira =parcel1%n_bin_modew+6 ! radius of bubble or jet
+        parcel1%atol(parcel1%ira) =2.e-2_wp
+        if(parcel1%ira .ne. parcel1%neq) stop "*** problem with array lengths ***"
+    else
+        if(parcel1%iw .ne. parcel1%neq) stop "*** problem with array lengths ***"
+    endif
     
     parcel1%atol(parcel1%ipr)=10._wp
     parcel1%atol(parcel1%ite)=1.e-4_wp
@@ -739,7 +756,6 @@
     parcel1%atol(parcel1%iz) =2.e-2_wp
     parcel1%atol(parcel1%iw) =2.e-2_wp
     
-    if(parcel1%iw .ne. parcel1%neq) stop "*** problem with array lengths ***"
     parcel1%itask=1
     parcel1%istate=1
     parcel1%iopt=1
@@ -771,6 +787,9 @@
     parcel1%y(parcel1%irh)=parcel1%rh
     parcel1%y(parcel1%iz) =parcel1%z
     parcel1%y(parcel1%iw) =parcel1%w
+    if(.not.adiabatic_prof) then
+        parcel1%y(parcel1%ira) =parcel1%rad   
+    endif
     ! do not print messages
     call xsetf(0)
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -2199,9 +2218,9 @@
         real(wp) :: wv=0._wp, wl=0._wp, wi=0._wp, rm, cpm, &
                   drv=0._wp, dri=0._wp,dri2=0._wp, &
                   rh,t,p,err,sl, w, &
-                  te, qve, pe, var, dummy, rhoe, rhop, b
+                  te, qve, pe, var, dummy, rhoe, rhop, b, mu, w_e,dlnrho
 
-        integer(i4b) :: i, j,iloc, ipart, ipr, ite, irh, iz,iw
+        integer(i4b) :: i, j,iloc, ipart, ipr, ite, irh, iz,iw, ira
 
         
         ipart=parcel1%n_bin_modew
@@ -2210,6 +2229,8 @@
         irh=parcel1%irh
         iz =parcel1%iz
         iw =parcel1%iw
+        ira = parcel1%ira
+        if(.not.adiabatic_prof) ydot(ira)=0._wp
 
         if ((updraft_type==3).and.(tt>t_thresh)) then
             y(iw)=winit2*cos(2._wp*pi*(tt-t_thresh)/tau2)
@@ -2278,7 +2299,22 @@
         ydot(1:ipart)=pi*parcel1%rhoat*parcel1%dw**2 * parcel1%da_dt
         ! change in vapour content
         drv = -sum(ydot(1:ipart)*parcel1%npart)
+        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        ! change in temperature of parcel                                        !
+        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        ydot(ite)=rm/p*ydot(ipr)*t/cpm  ! temperature change: expansion
+        ydot(ite)=ydot(ite)-lv/cpm*drv ! temp change: condensation
+        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        
         if((.not. adiabatic_prof) .and. (.not. vert_ent)) then ! entraining?
+            w_e=w
+            ! mu
+            if(bubble_flag) then
+                mu=ent_rate
+            else
+                mu=0.2_wp/y(ira)
+            endif
+            
             !calculate the environmental p, qv, te, density
             ! parcel p, density
             ! buoyancy...
@@ -2307,38 +2343,33 @@
                 (parcel1%z_sound(1) .gt. y(iz))) then
                 b=0._wp
             else
-                b=grav*(rhoe-rhop)/rhoe
+!                 b=grav*(rhoe-rhop)/rhop
+                b=grav*(t-te)/te
             endif
+            if(updraft_type==4) then
+                ydot(iw)=gam_fac_ent*(b-grav*wl)-mu*gam_fac_ent*w_e**2 
+            endif        
             ! forcing
-            drv=drv+w*ent_rate*(qve-wv)
+            drv=drv+w_e*mu*(qve-wv-wl)
+            
+            ! equation 12-26
+            ydot(ite)=ydot(ite)+w_e*mu*(te-y(ite) + lv/cpm*(qve-wv))
+            
+            ! Equation 12-32 or 12-33 P+K
+            dlnrho=1._wp/rhop*(1._wp/(ra*t))*(ydot(ipr)- p/(ra*t**2)*ydot(ite))
+            if(bubble_flag) then
+                ydot(ira) = y(ira)*onethird*(mu*w_e-dlnrho)
+            else
+                ydot(ira) = y(ira)*0.5_wp*(mu*w_e- dlnrho - &
+                    1._wp/(sign(max(abs(w_e),1.e-3),w_e))*ydot(iw))
+            endif
 
         endif
-        
-        
-        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        ! change in temperature of parcel                                        !
-        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        ydot(ite)=rm/p*ydot(ipr)*t/cpm  ! temperature change: expansion
-        ydot(ite)=ydot(ite)-lv/cpm*drv ! temp change: condensation
-        if((.not. adiabatic_prof) .and. (.not. vert_ent)) then ! entraining?
-            ydot(ite)=ydot(ite)+w*ent_rate*(te-y(ite) + lv/cpm*(qve-wv))
-            !ydot(iw) = b -w*ent_rate*y(iw)
-        endif
-        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-!         if(y(iz) .gt. parcel1%z_cbase) then
-!             parcel1%theta_q=calc_theta_q3(t,p,wv+wl)
-!             parcel1%x_ent=(parcel1%theta_q-parcel1%theta_q_cbase) / &
-!                 (parcel1%theta_q_ctop-parcel1%theta_q_cbase)
-!             parcel1%x_ent=max(0._wp,parcel1%x_ent)
-!             parcel1%x_ent=min(1._wp,parcel1%x_ent)
-!             
-!             ydot(ite)=ydot(ite)+&
-!                 parcel1%x_ent/dt*(parcel1%t_ctop-y(ite) + &
-!                 lv/cpm*(parcel1%q_ctop-wv)) +&
-!                 (1._wp-parcel1%x_ent)/dt*(parcel1%t_cbase-y(ite) + &
-!                 lv/cpm*(parcel1%q_cbase-wv))
-!         endif 
+        ! jobs: read in c=0.2 from namelist
+        !       change sounding data for dcmex
+        !       add 2nd aerosol structure, which can be entrained in
+        !       entrainment of aerosol / drops outside of solver 
+        !       move entrainment outside of solver?     
 
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         ! change in rh of parcel                                                 !

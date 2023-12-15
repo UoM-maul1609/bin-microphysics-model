@@ -29,7 +29,8 @@
                         psurf, tsurf, q_read, theta_read, rh_read, z_read, &
                         runtime, dt, zinit, tpert, use_prof_for_tprh, winit, &
                         winit2, amplitude2, tinit, pinit, &
-                        rhinit, microphysics_flag, ice_flag, bin_scheme_flag, vent_flag, &
+                        rhinit, radinit, bubble_flag, &
+                        microphysics_flag, ice_flag, bin_scheme_flag, vent_flag, &
                         kappa_flag, updraft_type, t_thresh, &
                         adiabatic_prof, vert_ent, z_ctop, &
                         ent_rate, n_levels_s, alpha_therm, alpha_cond, alpha_therm_ice, &
@@ -79,7 +80,8 @@
         endif        
         call initialise_bmm_arrays(psurf, tsurf, q_read, theta_read, rh_read, z_read, &
                     runtime, dt, zinit, tpert, use_prof_for_tprh, winit, tinit, pinit, &
-                    rhinit, microphysics_flag, ice_flag, bin_scheme_flag, vent_flag, &
+                    rhinit, radinit, bubble_flag, &
+                    microphysics_flag, ice_flag, bin_scheme_flag, vent_flag, &
                     kappa_flag, updraft_type, adiabatic_prof, vert_ent, z_ctop, &
                     ent_rate, n_levels_s, alpha_therm, alpha_cond, alpha_therm_ice, &
                     alpha_dep, n_intern, n_mode, n_sv, sv_flag, n_bins, n_comps, &
