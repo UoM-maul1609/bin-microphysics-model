@@ -6,7 +6,7 @@
 	zinit=3955.,
 	tpert=0.0,
 	use_prof_for_tprh=.false.,
-	winit=1.5,
+	winit=2.5,
 	winit2=0.5,         ! only used if updraft_type=3 - peak updraft (m/s) in oscillatory phase
 	amplitude2=100.,    ! only used if updraft_type=3 - amplitude (m) in oscillatory phase
 	tinit=276.869,
@@ -24,7 +24,7 @@
 	kappa_flag=1,
 	updraft_type=2,      ! type of updraft, 1 for constant, 2=stop after t_thresh reached
 	                        ! 3=constant until t_thresh, then 
-	t_thresh=2666.7,      ! time threshold for updraft
+	t_thresh=1600.,      ! time threshold for updraft
  	adiabatic_prof=.true., ! to have entrainment on, set this flag to false
     vert_ent=.false., ! entrain in vertical (.true.); or laterally (.false.)
     z_ctop=5000., ! height of cloud-top for vertical entrainment
