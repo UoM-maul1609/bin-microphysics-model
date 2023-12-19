@@ -605,7 +605,8 @@
         ! linear interp rh
         call poly_int(parcel1%z_sound(iloc:iloc+1), parcel1%rh_sound(iloc:iloc+1), &
                     min(parcel1%z,parcel1%z_sound(n_levels_s)), var,dummy)        
-        parcel1%rh=var 
+        parcel1%rh=var
+        parcel1%rh=0.99_wp
         print *,'t,p,rh from sounding: ', parcel1%t, parcel1%p, parcel1%rh
     endif
     parcel1%qinit=parcel1%rh*eps1*svp_liq(parcel1%t)/(parcel1%p-svp_liq(parcel1%t))
@@ -2347,9 +2348,9 @@
                 b=grav*(t-te)/te
             endif
             if(updraft_type==4) then
-                ydot(iw)=gam_fac_ent*(b-grav*wl)-mu*gam_fac_ent*w_e**2 
+                ydot(iz)=gam_fac_ent*(b-grav*wl)-mu*gam_fac_ent*w_e**2 
             endif        
-            ! forcing
+            ! forcing - eq. 12-29
             drv=drv+w_e*mu*(qve-wv-wl)
             
             ! equation 12-26
