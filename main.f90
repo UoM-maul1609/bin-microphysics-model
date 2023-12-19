@@ -70,6 +70,7 @@
         ! allocate and initialise the grid                                     !
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         if (sce_flag.gt.0) then
+            ! note, this initialises parcel1 arrays in sce module
             call initialise_sce_arrays(n_bins, n_binsc,n_mode, n_comps, n_intern, &
                     ice_flag, &
                     pinit,tinit,rhinit,dt,dmina,dmaxa,dminc,dmaxc,&
@@ -77,7 +78,8 @@
                     n_aer1,d_aer1,sig_aer1)
             n_bins=n_binst ! n_bins from parcel is increased so allocations are the 
                            ! same as SCE code
-        endif        
+        endif 
+        ! initialise parcel1 arrays in bmm module       
         call initialise_bmm_arrays(psurf, tsurf, q_read, theta_read, rh_read, z_read, &
                     runtime, dt, zinit, tpert, use_prof_for_tprh, winit, tinit, pinit, &
                     rhinit, radinit, bubble_flag, &
@@ -92,14 +94,15 @@
         ! This code writes the SCE variables to the BMM            
         if(sce_flag.gt.0) then
             ! send the SCE arrays, and use the local BMM arrays to map
+            ! parcel1 here are the sce module vars. They are written to the bmm version of
+            ! parcel1
             call write_sce_to_bmm(parcel1%n_bin_mode,parcel1%n_bin_modew,parcel1%n_binst,&
                     parcel1%n_modes, parcel1%n_comps, parcel1%n_comps+parcel1%imoms, &
                     parcel1%ice_flag, &
                     parcel1%npart, parcel1%moments, parcel1%mbin, parcel1%vel, &
                     parcel1%indexc, parcel1%ecoll, &
-                    parcel1%mbinedges)
+                    parcel1%mbinedges,adiabatic_prof)
         endif        
-        ! 4. Tidy up! - Friday
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
@@ -110,11 +113,6 @@
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         io1%new_file=.true.
         call bmm_driver(sce_flag,hm_flag,break_flag,mode1_flag,mode2_flag) 
-                !(nq,nprec,kp,ord,o_halo,runtime,dt,updraft_type,t_thresh,w_peak, &
-        				! 	grid1%q,grid1%precip,grid1%theta, &
-!                             grid1%p,dz,grid1%z,grid1%t,grid1%rho,grid1%u,io1%new_file, &
-!                             micro_init,monotone,microphysics_flag,hm_flag,theta_flag, &
-!                             mass_ice)
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 

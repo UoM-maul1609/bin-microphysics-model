@@ -42,9 +42,10 @@
                         
             ! liquid water
             real(wp), dimension(:), allocatable :: d, maer, npart, rho_core, &
-                            rh_eq, rhoat, dw, da_dt, ndrop, npartall
+                            rh_eq, rhoat, dw, da_dt, ndrop, npartall, npart_ent
             real(wp), dimension(:,:), allocatable :: mbin, mbinall, rhobin, &
-                                        nubin,molwbin,kappabin ! all bins x all comps                                
+                                        nubin,molwbin,kappabin, &
+                                        mbin_ent ! all bins x all comps                                
             ! variables for ODE:                    
             integer(i4b) :: neq, itol, ipr, ite, iz, iw, irh, ira, &
                             itask, istate, iopt, mf, lrw, liw
@@ -65,7 +66,8 @@
                                         
             ! general
             integer(i4b) :: imoms
-            real(wp), allocatable, dimension(:,:) :: moments, mbinedges,ecoll,ecoal
+            real(wp), allocatable, dimension(:,:) :: moments, mbinedges,ecoll,ecoal, &
+                                                    mbinedges_ent
             real(wp), allocatable, dimension(:) :: momtemp, vel
             integer(i4b), allocatable, dimension(:) :: momenttype
             integer(i4b), dimension(:,:), allocatable :: indexc                            
@@ -790,6 +792,15 @@
     parcel1%y(parcel1%iw) =parcel1%w
     if(.not.adiabatic_prof) then
         parcel1%y(parcel1%ira) =parcel1%rad   
+        ! note, this allocates some space for the aerosol to be entrained into the parcel
+        allocate( parcel1%mbinedges_ent(1:parcel1%n_bins1+1,1:parcel1%n_modes), &
+            STAT = AllocateStatus)
+        if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+        allocate( parcel1%npart_ent(1:parcel1%n_bin_modew), STAT = AllocateStatus)
+        if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+        allocate( parcel1%mbin_ent(1:parcel1%n_bin_modew,1:n_comps+1), &
+            STAT = AllocateStatus)
+        if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
     endif
     ! do not print messages
     call xsetf(0)
@@ -984,7 +995,8 @@
 	!>maps the sce variables onto BMM
     subroutine write_sce_to_bmm(n_bin_mode,n_bin_modew,n_binst,n_mode, n_comps, n_moments, &
                     ice_flag, &
-                    npart, moments, mbin, vel, indexc,ecoll,mbinedges)
+                    npart, moments, mbin, vel, indexc,ecoll,mbinedges, &
+                    adiabatic_prof)
     implicit none
     integer(i4b), intent(in) :: n_bin_mode, n_bin_modew, &
         n_binst, n_mode, n_comps, n_moments, ice_flag
@@ -994,6 +1006,7 @@
     real(wp), dimension(n_binst+1,n_mode), intent(in) :: mbinedges
     integer(i4b), dimension(n_bin_mode,n_bin_mode), intent(in) :: indexc
     real(wp), dimension(n_bin_mode,n_bin_mode), intent(in) :: ecoll
+    logical, intent(in) :: adiabatic_prof
 
 
     
@@ -1005,6 +1018,16 @@
     parcel1%mbin=mbin(1:n_bin_modew,1:n_comps+1)
     parcel1%mbinedges=mbinedges
     parcel1%mbinall(:,:)=mbin
+    
+    ! entraining aerosol
+    if(.not.adiabatic_prof) then
+        parcel1%npart_ent=npart(1:n_bin_modew)
+        ! note, 1:n_comps are the masses of the aerosol componenets in each bin
+        ! n_comps + 1 is the water mass
+        parcel1%mbin_ent=mbin(1:n_bin_modew,1:n_comps+1)
+        parcel1%mbinedges_ent=mbinedges
+    endif
+    
     
     parcel1%indexc=indexc
     parcel1%ecoll=ecoll
@@ -2240,7 +2263,7 @@
         rh=y(irh)
         t=y(ite)
         p=y(ipr)
-        w=y(iw)
+!         w=y(iw)
     
 
         ! check there are no negative values
@@ -2254,6 +2277,7 @@
         sl=(sl*p/(1._wp+sl))/svp_liq(t)
         wv=eps1*rh*svp_liq(t) / (p-svp_liq(t)) ! vapour mixing ratio
         wl=sum(parcel1%npart*y(1:ipart))             ! liquid mixing ratio
+        wl=sum(parcel1%npartice*parcel1%yice(1:ipart))             ! ice mixing ratio
 
         ! calculate the moist gas constants and specific heats
         rm=ra+wv*rv
@@ -2261,7 +2285,7 @@
 
         ! now calculate derivatives
         ! adiabatic parcel model
-        ydot(iz )=w                         ! vertical wind
+        ydot(iz )=y(iw)                         ! vertical wind
         ydot(ipr)=-p/rm/t*grav*ydot(iz)      ! hydrostatic equation
 
         ! calculate equilibrium rhs
@@ -2308,13 +2332,9 @@
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         
         if((.not. adiabatic_prof) .and. (.not. vert_ent)) then ! entraining?
-            w_e=w
+            w_e=y(iw)
             ! mu
-            if(bubble_flag) then
-                mu=ent_rate
-            else
-                mu=0.2_wp/y(ira)
-            endif
+            mu=ent_rate/y(ira)
             
             !calculate the environmental p, qv, te, density
             ! parcel p, density
@@ -2326,14 +2346,14 @@
             ! linear interp p
             call poly_int(parcel1%z_sound(iloc:iloc+1), parcel1%p_sound(iloc:iloc+1), &
                         min(y(iz),parcel1%z_sound(n_levels_s)), var,dummy)        
-            pe=var
+            pe=p
             ! linear interp qv
-            call poly_int(parcel1%z_sound(iloc:iloc+1), parcel1%q_sound(1,iloc:iloc+1), &
-                        min(y(iz),parcel1%z_sound(n_levels_s)), var,dummy)        
+            call poly_int(parcel1%p_sound(iloc:iloc+1), parcel1%q_sound(1,iloc:iloc+1), &
+                        max(y(ipr),parcel1%p_sound(n_levels_s)), var,dummy)        
             qve=var
             ! linear interp te
-            call poly_int(parcel1%z_sound(iloc:iloc+1), parcel1%t_sound(iloc:iloc+1), &
-                        min(y(iz),parcel1%z_sound(n_levels_s)), var,dummy)        
+            call poly_int(parcel1%p_sound(iloc:iloc+1), parcel1%t_sound(iloc:iloc+1), &
+                        max(y(ipr),parcel1%p_sound(n_levels_s)), var,dummy)        
             te=var
             ! env density:
             rhoe=pe/(rm*te)
@@ -2348,10 +2368,14 @@
                 b=grav*(t-te)/te
             endif
             if(updraft_type==4) then
-                ydot(iz)=gam_fac_ent*(b-grav*wl)-mu*gam_fac_ent*w_e**2 
+                if(y(iw) > 0.001_wp) then
+                    ydot(iw)=gam_fac_ent*(b-grav*wl-grav*wi)-mu*gam_fac_ent*w_e**2 
+                else
+                    ydot(iw)=(0.001_wp-y(iw))/10._wp
+                endif
             endif        
             ! forcing - eq. 12-29
-            drv=drv+w_e*mu*(qve-wv-wl)
+            drv=drv+w_e*mu*(qve-wv-wl-wi)
             
             ! equation 12-26
             ydot(ite)=ydot(ite)+w_e*mu*(te-y(ite) + lv/cpm*(qve-wv))
@@ -3431,7 +3455,7 @@
     use numerics, only : zeroin, dvode
     implicit none
     real(wp) :: mass1, mass2, deltam, vapour_mass, liquid_mass, x1,x2 , cpm, &
-        var, dummy, gamma_t, dep_density, rhoa, qv, qvsat
+        var, dummy, gamma_t, dep_density, rhoa, qv, qvsat, mu1
     integer(i4b) :: iloc, i
     
     interface
@@ -3660,6 +3684,23 @@
 
 
 
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! lateral entrainment reducing drop number conc.                       !
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    if(.not. adiabatic_prof) then
+        mu1=ent_rate/parcel1%y(parcel1%ira)
+        ! drops / aerosol
+        parcel1%npart(1:parcel1%n_bin_modew)= &
+            parcel1%npart(1:parcel1%n_bin_modew)-mu1*parcel1%y(parcel1%iw)* &
+            (parcel1%npart(1:parcel1%n_bin_modew))*parcel1%dt
+        ! ice / aerosol
+        parcel1%npartice(1:parcel1%n_bin_modew)= &
+            parcel1%npartice(1:parcel1%n_bin_modew)-mu1*parcel1%y(parcel1%iw)* &
+            (parcel1%npartice(1:parcel1%n_bin_modew))*parcel1%dt
+    endif
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
 
     
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -3676,8 +3717,6 @@
             parcel1%q_cbase, parcel1%theta_q, &
             parcel1%x_ent, parcel1%y, parcel1%npart, &
             parcel1%z_sound, parcel1%theta_q_sound, set_theta_q_cb_flag)   
-        
-
         
     endif
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
