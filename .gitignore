@@ -11,3 +11,5 @@ namelist.andreas
 namelist.run
 *.dSYM
 __pycache__/
+.DS_Store
+
