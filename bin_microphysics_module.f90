@@ -121,7 +121,7 @@
                     tinit,pinit,rhinit,radinit,z_ctop, alpha_therm, alpha_cond, &
                     alpha_therm_ice, alpha_dep
         integer(i4b) :: microphysics_flag=0, kappa_flag,updraft_type, vent_flag, &
-                        sce_flag=0,ice_flag=0, bin_scheme_flag=1
+                        sce_flag=0,ice_flag=0, bin_scheme_flag=1, entrain_period=0
         logical :: use_prof_for_tprh, hm_flag, mode1_flag, mode2_flag, bubble_flag
         integer(i4b) :: break_flag
         real(wp) :: dz,dt, runtime, t_thresh
@@ -287,7 +287,8 @@
                     tinit,pinit,rhinit, radinit, bubble_flag, &
                     microphysics_flag, ice_flag, bin_scheme_flag, sce_flag, &
                     hm_flag, break_flag, mode1_flag, mode2_flag, vent_flag, &
-                    kappa_flag, updraft_type,t_thresh, adiabatic_prof, vert_ent, &
+                    kappa_flag, updraft_type,t_thresh, adiabatic_prof, &
+                    entrain_period, vert_ent, &
                     z_ctop, ent_rate,n_levels_s, &
                     alpha_therm,alpha_cond,alpha_therm_ice,alpha_dep
         namelist /aerosol_setup/ n_intern,n_mode,n_sv,sv_flag, n_bins,n_comps
@@ -2277,7 +2278,7 @@
         sl=(sl*p/(1._wp+sl))/svp_liq(t)
         wv=eps1*rh*svp_liq(t) / (p-svp_liq(t)) ! vapour mixing ratio
         wl=sum(parcel1%npart*y(1:ipart))             ! liquid mixing ratio
-        wl=sum(parcel1%npartice*parcel1%yice(1:ipart))             ! ice mixing ratio
+        if(ice_flag==1) wi=sum(parcel1%npartice*parcel1%yice(1:ipart))             ! ice mixing ratio
 
         ! calculate the moist gas constants and specific heats
         rm=ra+wv*rv
@@ -2391,7 +2392,6 @@
 
         endif
         ! jobs: read in c=0.2 from namelist
-        !       change sounding data for dcmex
         !       add 2nd aerosol structure, which can be entrained in
         !       entrainment of aerosol / drops outside of solver 
         !       move entrainment outside of solver?     
@@ -3693,10 +3693,12 @@
         parcel1%npart(1:parcel1%n_bin_modew)= &
             parcel1%npart(1:parcel1%n_bin_modew)-mu1*parcel1%y(parcel1%iw)* &
             (parcel1%npart(1:parcel1%n_bin_modew))*parcel1%dt
-        ! ice / aerosol
-        parcel1%npartice(1:parcel1%n_bin_modew)= &
-            parcel1%npartice(1:parcel1%n_bin_modew)-mu1*parcel1%y(parcel1%iw)* &
-            (parcel1%npartice(1:parcel1%n_bin_modew))*parcel1%dt
+		if(ice_flag == 1) then
+			! ice / aerosol
+			parcel1%npartice(1:parcel1%n_bin_modew)= &
+				parcel1%npartice(1:parcel1%n_bin_modew)-mu1*parcel1%y(parcel1%iw)* &
+				(parcel1%npartice(1:parcel1%n_bin_modew))*parcel1%dt
+        endif
     endif
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
