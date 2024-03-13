@@ -8,6 +8,8 @@ import sys
 # caution: path[0] is reserved for script path (or '' in REPL)
 sys.path.insert(1, '../')
 import lutMCB
+from scipy.optimize import fsolve
+import multi_root
 
 username=getpass.getuser()
 
@@ -24,7 +26,9 @@ def cloud_albedo(mr,D,beta):
     
     return yhat
 
-
+def solve1(x):
+	return scint1(10**x)-albedo_geog
+    
 if __name__=="__main__":
     """
     ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -99,16 +103,22 @@ if __name__=="__main__":
     %++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
     """
     frac_tot,co2ppm=np.mgrid[0:1+0.001:0.001,400:1510:10]
-    albedo_geog=0.44;
+    # make the albedo 0.04 higher than baseline
+    albedo_geog=A[0]+0.03;
 
     num_ship=frac_tot*1500;
     # in order to achieve albedo_geog we need to have the following mr
     if lut_flag:
         scint=interp1d(A,mr1,fill_value='extrapolate')
+        scint1=interp1d(mr1,A,fill_value='extrapolate')
+        mr=np.min(10**multi_root.multi_root( \
+        	solve1,[np.log10(mr1[0]),np.log10(mr1[-1])]))
     else:
         scint=interp1d(A,mr,fill_value='extrapolate')
+        scint1=interp1d(mr,A,fill_value='extrapolate')
+        mr=np.min(10**multi_root.multi_root( \
+        	solve1,[np.log10(mr1[0]),np.log10(mr1[-1])]))
     
-    mr=scint(albedo_geog)
 
 
     # now calculate the flow rate
