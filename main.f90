@@ -32,7 +32,7 @@
                         rhinit, radinit, bubble_flag, &
                         microphysics_flag, ice_flag, bin_scheme_flag, vent_flag, &
                         kappa_flag, updraft_type, t_thresh, &
-                        adiabatic_prof, vert_ent, z_ctop, &
+                        adiabatic_prof, entrain_period, vert_ent, z_ctop, &
                         ent_rate, n_levels_s, alpha_therm, alpha_cond, alpha_therm_ice, &
                         alpha_dep, n_intern, n_mode, n_sv, sv_flag, n_bins, n_comps, &
                         n_aer1,d_aer1,sig_aer1,dmina,dmaxa,mass_frac_aer1,molw_core1, &

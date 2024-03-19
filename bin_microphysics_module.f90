@@ -288,7 +288,7 @@
                     microphysics_flag, ice_flag, bin_scheme_flag, sce_flag, &
                     hm_flag, break_flag, mode1_flag, mode2_flag, vent_flag, &
                     kappa_flag, updraft_type,t_thresh, adiabatic_prof, &
-                    entrain_period, vert_ent, &
+                    entrain_period, entrain_period, vert_ent, &
                     z_ctop, ent_rate,n_levels_s, &
                     alpha_therm,alpha_cond,alpha_therm_ice,alpha_dep
         namelist /aerosol_setup/ n_intern,n_mode,n_sv,sv_flag, n_bins,n_comps
@@ -610,6 +610,7 @@
                     min(parcel1%z,parcel1%z_sound(n_levels_s)), var,dummy)        
         parcel1%rh=var
         parcel1%rh=0.99_wp
+        parcel1%t=parcel1%t+tpert
         print *,'t,p,rh from sounding: ', parcel1%t, parcel1%p, parcel1%rh
     endif
     parcel1%qinit=parcel1%rh*eps1*svp_liq(parcel1%t)/(parcel1%p-svp_liq(parcel1%t))
@@ -2332,7 +2333,8 @@
         ydot(ite)=ydot(ite)-lv/cpm*drv ! temp change: condensation
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         
-        if((.not. adiabatic_prof) .and. (.not. vert_ent)) then ! entraining?
+        if((.not. adiabatic_prof) .and. (.not. vert_ent) .and. &
+        	(entrain_period == 0)) then ! entraining?
             w_e=y(iw)
             ! mu
             mu=ent_rate/y(ira)
@@ -2376,10 +2378,10 @@
                 endif
             endif        
             ! forcing - eq. 12-29
-            drv=drv+w_e*mu*(qve-wv-wl-wi)
+            drv=drv-w_e*mu*(wv+wl+wi-qve)
             
             ! equation 12-26
-            ydot(ite)=ydot(ite)+w_e*mu*(te-y(ite) + lv/cpm*(qve-wv))
+            ydot(ite)=ydot(ite)-w_e*mu*(y(ite)-te + lv/cpm*(wv-qve))
             
             ! Equation 12-32 or 12-33 P+K
             dlnrho=1._wp/rhop*(1._wp/(ra*t))*(ydot(ipr)- p/(ra*t**2)*ydot(ite))
@@ -3687,7 +3689,7 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! lateral entrainment reducing drop number conc.                       !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    if(.not. adiabatic_prof) then
+    if((.not. adiabatic_prof) .and. (entrain_period==0)) then
         mu1=ent_rate/parcel1%y(parcel1%ira)
         ! drops / aerosol
         parcel1%npart(1:parcel1%n_bin_modew)= &

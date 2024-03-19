@@ -4,7 +4,7 @@
 	runtime=2000.,
 	dt=10.,
 	zinit=3947.81,
-	tpert=0.0,
+	tpert=2.0,
 	use_prof_for_tprh=.true.,
 	winit=1.5,
 	winit2=0.5,         ! only used if updraft_type=3 - peak updraft (m/s) in oscillatory phase
@@ -12,7 +12,7 @@
 	tinit=282.069,
 	pinit=65016.9,
 	rhinit=0.66744,
-	radinit=200.,       ! initial radius of bubble or jet
+	radinit=500.,       ! initial radius of bubble or jet
 	bubble_flag=.false., ! .true. for bubble, .false. for jet
 	microphysics_flag=1, ! flag for microphysics: 0 (no micro); 
 	                     ! 1 (microphysics on)
@@ -31,7 +31,7 @@
  	!				  ! side of solver every time-step; 2 every two time-steps, etc)
     vert_ent=.false., ! entrain in vertical (.true.); or laterally (.false.)
     z_ctop=5000., ! height of cloud-top for vertical entrainment
- 	ent_rate=0.25, ! entrainment parameter C
+ 	ent_rate=0.2, ! entrainment parameter C
  	n_levels_s = 98,
  	alpha_therm=1.0,
  	alpha_cond=1.0,
