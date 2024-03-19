@@ -24,7 +24,7 @@
         						mass_fragment2=mass_fragment1, &
         						mass_fragment3=mass_fragment1, &
         						gam_fac_ent=1._wp/(1._wp+0.5_wp), & ! P+K, 12-25
-        						onethird=1._wp/3._wp
+        						onethird=1._wp/3._wp, fourthirds=4._wp/3._wp
         						
 
         type parcel
@@ -2244,7 +2244,8 @@
         real(wp) :: wv=0._wp, wl=0._wp, wi=0._wp, rm, cpm, &
                   drv=0._wp, dri=0._wp,dri2=0._wp, &
                   rh,t,p,err,sl, w, &
-                  te, qve, pe, var, dummy, rhoe, rhop, b, mu, w_e,dlnrho
+                  te, qve, pe, var, dummy, rhoe, rhop, b, mu, w_e,dlnrho, wv_old, &
+                  rm_old, ratio=1.0_wp, flux_old, flux_new, svp1, svp2
 
         integer(i4b) :: i, j,iloc, ipart, ipr, ite, irh, iz,iw, ira
 
@@ -2275,14 +2276,46 @@
 
 
         ! calculate mixing ratios from rh, etc
-        sl=svp_liq(t)*rh/(p-svp_liq(t)) ! saturation ratio
-        sl=(sl*p/(1._wp+sl))/svp_liq(t)
-        wv=eps1*rh*svp_liq(t) / (p-svp_liq(t)) ! vapour mixing ratio
-        wl=sum(parcel1%npart*y(1:ipart))             ! liquid mixing ratio
-        if(ice_flag==1) wi=sum(parcel1%npartice*parcel1%yice(1:ipart))             ! ice mixing ratio
-
-        ! calculate the moist gas constants and specific heats
+        svp1=svp_liq(t)
+        sl=svp1*rh/(p-svp1) ! saturation ratio
+        sl=(sl*p/(1._wp+sl))/svp1
+        wv=eps1*rh*svp1 / (p-svp1) ! vapour mixing ratio
+		! calculate the moist gas constant
         rm=ra+wv*rv
+
+		!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+		! lateral entrainment reducing drop number conc.                       !
+		!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+		if((.not. adiabatic_prof) .and. (entrain_period==0)) then
+			svp2=svp_liq(parcel1%yold(parcel1%ite))
+			wv_old=eps1*parcel1%yold(parcel1%irh)* &
+				svp2 / (parcel1%yold(parcel1%ipr)- svp2) ! wv mixing ratio
+			rm_old = ra+wv_old*rv
+			if(bubble_flag) then
+				! actually the mass of a bubble
+				flux_old = fourthirds*pi*parcel1%yold(parcel1%ira)**3 * &
+					parcel1%yold(parcel1%ipr)/(parcel1%yold(parcel1%ite)*rm_old)
+				flux_new = fourthirds*pi*y(parcel1%ira)**3 * &
+					y(parcel1%ipr)/(y(parcel1%ite)*rm)
+			else
+				! actually the mass flux for a jet (conserve number flux)
+				flux_old = pi*parcel1%yold(parcel1%ira)**2 * &
+					parcel1%yold(parcel1%ipr)/(parcel1%yold(parcel1%ite)*rm_old) * &
+					parcel1%yold(parcel1%iw)
+				flux_new = pi*y(parcel1%ira)**2 * &
+					y(parcel1%ipr)/(y(parcel1%ite)*rm) * y(parcel1%iw)
+			endif
+			ratio = min(flux_old / flux_new,1.0_wp)
+		endif
+		!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+
+		! calculate lw mixing ratio
+        wl=sum(parcel1%npart*y(1:ipart))*ratio             ! liquid mixing ratio
+        if(ice_flag==1) wi=sum(parcel1%npartice*parcel1%yice(1:ipart))*ratio ! ice mr
+
+        ! calculate specific heats
         cpm=cp+wv*cpv+wl*cpw+wi*cpi
 
         ! now calculate derivatives
@@ -2325,7 +2358,7 @@
         ! mass growth rate
         ydot(1:ipart)=pi*parcel1%rhoat*parcel1%dw**2 * parcel1%da_dt
         ! change in vapour content
-        drv = -sum(ydot(1:ipart)*parcel1%npart)
+        drv = -sum(ydot(1:ipart)*parcel1%npart)*ratio
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         ! change in temperature of parcel                                        !
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -2401,10 +2434,10 @@
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         ! change in rh of parcel                                                 !
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        ydot(irh)=(p-svp_liq(t))*svp_liq(t)*drv
-        ydot(irh)=ydot(irh)+svp_liq(t)*wv*ydot(ipr)
+        ydot(irh)=(p-svp1)*svp1*drv
+        ydot(irh)=ydot(irh)+svp1*wv*ydot(ipr)
         ydot(irh)=ydot(irh)-wv*p*dfsid1(svp_liq,t,1.e0_wp,1.e-8_wp,err)*ydot(ite)
-        ydot(irh)=ydot(irh) / (eps1*svp_liq(t)**2)
+        ydot(irh)=ydot(irh) / (eps1*svp1**2)
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
       
     end subroutine fparcelwarm
@@ -3457,7 +3490,8 @@
     use numerics, only : zeroin, dvode
     implicit none
     real(wp) :: mass1, mass2, deltam, vapour_mass, liquid_mass, x1,x2 , cpm, &
-        var, dummy, gamma_t, dep_density, rhoa, qv, qvsat, mu1
+        var, dummy, gamma_t, dep_density, rhoa, qv, qvsat, wv, rm_old, rm_new, &
+        flux_old, flux_new, ratio, svp1
     integer(i4b) :: iloc, i
     
     interface
@@ -3530,8 +3564,8 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! mass balance                                                         !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	parcel1%yold=parcel1%y ! store old
     if(adiabatic_prof) then
-        parcel1%yold=parcel1%y ! store old
         call mass_balance(parcel1%neq,parcel1%neqice,parcel1%y,&
                     parcel1%yice,parcel1%npart,parcel1%npartice, &
                         mass1,parcel1%n_bin_modew,&
@@ -3558,6 +3592,46 @@
                    parcel1%mf,parcel1%rpar,parcel1%ipar)
     enddo
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! lateral entrainment reducing drop number conc.                       !
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    if((.not. adiabatic_prof) .and. (entrain_period==0)) then
+    	svp1=svp_liq(parcel1%yold(parcel1%ite))
+		wv=eps1*parcel1%yold(parcel1%irh)* &
+			svp1 / (parcel1%yold(parcel1%ipr)- svp1) ! wv mixing ratio
+		rm_old = ra+wv*rv
+    	svp1=svp_liq(parcel1%y(parcel1%ite))
+		wv=eps1*parcel1%y(parcel1%irh)* &
+			svp1 / (parcel1%y(parcel1%ipr)- svp1) ! wv mixing ratio
+		rm_new = ra+wv*rv
+    	if(bubble_flag) then
+    		! actually the mass of a bubble
+			flux_old = fourthirds*pi*parcel1%yold(parcel1%ira)**3 * &
+				parcel1%yold(parcel1%ipr)/(parcel1%yold(parcel1%ite)*rm_old)
+    		flux_new = fourthirds*pi*parcel1%y(parcel1%ira)**3 * &
+    			parcel1%y(parcel1%ipr)/(parcel1%y(parcel1%ite)*rm_new)
+    	else
+    		! actually the mass flux for a jet (conserve number flux)
+			flux_old = pi*parcel1%yold(parcel1%ira)**2 * &
+				parcel1%yold(parcel1%ipr)/(parcel1%yold(parcel1%ite)*rm_old) * &
+				parcel1%yold(parcel1%iw)
+    		flux_new = pi*parcel1%y(parcel1%ira)**2 * &
+    			parcel1%y(parcel1%ipr)/(parcel1%y(parcel1%ite)*rm_new) * &
+    			parcel1%y(parcel1%iw)
+    	endif
+		ratio = min(flux_old / flux_new,1.0_wp)
+        ! drops / aerosol
+        parcel1%npart(1:parcel1%n_bin_modew)= &
+            parcel1%npart(1:parcel1%n_bin_modew)*ratio
+		if(ice_flag == 1) then
+			! ice / aerosol
+			parcel1%npartice(1:parcel1%n_bin_modew)= &
+				parcel1%npartice(1:parcel1%n_bin_modew)*ratio
+        endif
+    endif
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
 
     if (sce_flag.gt.0) then
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -3686,23 +3760,6 @@
 
 
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! lateral entrainment reducing drop number conc.                       !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    if((.not. adiabatic_prof) .and. (entrain_period==0)) then
-        mu1=ent_rate/parcel1%y(parcel1%ira)
-        ! drops / aerosol
-        parcel1%npart(1:parcel1%n_bin_modew)= &
-            parcel1%npart(1:parcel1%n_bin_modew)-mu1*parcel1%y(parcel1%iw)* &
-            (parcel1%npart(1:parcel1%n_bin_modew))*parcel1%dt
-		if(ice_flag == 1) then
-			! ice / aerosol
-			parcel1%npartice(1:parcel1%n_bin_modew)= &
-				parcel1%npartice(1:parcel1%n_bin_modew)-mu1*parcel1%y(parcel1%iw)* &
-				(parcel1%npartice(1:parcel1%n_bin_modew))*parcel1%dt
-        endif
-    endif
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
 
