@@ -26,6 +26,8 @@
 	                        ! 3=constant until t_thresh, then 
 	t_thresh=1600.,      ! time threshold for updraft
  	adiabatic_prof=.true., ! to have entrainment on, set this flag to false
+ 	entrain_period=0, ! for inhomogeneous mixing (0 entrain only in solver; 1 entrain out
+ 					  ! side of solver every time-step; 2 every two time-steps, etc)
     vert_ent=.false., ! entrain in vertical (.true.); or laterally (.false.)
     z_ctop=5000., ! height of cloud-top for vertical entrainment
  	ent_rate=1.e-3, 
