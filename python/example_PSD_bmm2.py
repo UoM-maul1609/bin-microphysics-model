@@ -24,6 +24,7 @@ def plot_model_run(fileName='/tmp/output1.nc'):
     nc=Dataset(fileName)
     
     time=       nc['time'][:]
+    z	=       nc['z'][:]
     mice=       nc['mice'][:]
     nicem=      nc['nicem'][:]
     mwat=       nc['mwat'][:]
@@ -43,28 +44,26 @@ def plot_model_run(fileName='/tmp/output1.nc'):
     
     
     fig = plt.figure()
-    plt.subplot(211)
-    plt.pcolor(time,dmean, \
-        np.transpose(np.real(np.squeeze(nwat[:,0,:]))), \
-         norm=colors.LogNorm(vmin=10**-5, vmax=nwat.max()))
-#     plt.pcolor(time,dmean, \
-#         np.transpose(np.real(np.log10(np.squeeze(nwat[:,0,:]) / np.diff(dedge1,axis=1) ))), \
-#          norm=colors.LogNorm(vmin=10**-3, vmax=nwat.max()))
-    plt.colorbar()
-    plt.yscale('log')
-    plt.ylabel('diameter of drop (m)')
-
-    plt.subplot(212)
-    plt.pcolor(time,dmean_ice, \
-        np.transpose(np.real(np.squeeze(nicem[:,0,:]))), \
-         norm=colors.LogNorm(vmin=10**-5, vmax=nicem.max()))
-#     plt.pcolor(time,dmean, \
-#         np.transpose(np.real(np.log10(np.squeeze(nicem[:,0,:])/ np.diff(dedge1,axis=1) ))), \
-#          norm=colors.LogNorm(vmin=10**-5, vmax=nicem.max()))
-    plt.colorbar()
-    plt.yscale('log')
-    plt.ylabel('diameter of crystal (m)')
-    plt.xlabel('time (s)')
+    ts=30
+    print(np.shape(dedge1))
+    dat=np.transpose(np.real(np.squeeze(nwat[ts,0,:])))
+#     dedges_a=np.linspace(1e-6,1e-4,50)
+    dedges_a=np.logspace(-6,-4,20)
+    dat1=np.zeros(len(dedges_a)-1)
+    
+    
+    for i in range(len(dat1)):
+        ind,=np.where((dedges_a[i]<dmean) & (dmean<=dedges_a[i+1]))
+        dat1[i]=np.sum(dat[ind])
+		
+    plt.plot((dedges_a[:-1]+dedges_a[1:])*0.5,dat1, '-x')
+#     /np.diff(dedges_a),'-x')
+#     plt.xscale('log')
+#     plt.yscale('log')
+#     plt.ylim((1e12,1e14))
+    plt.xlim((1e-6,50e-6))
+    plt.xlabel('diameter')
+    plt.ylabel('counts')
     plt.ion()
     plt.show()
     fig.savefig('/tmp/' + username + '/Test.png')

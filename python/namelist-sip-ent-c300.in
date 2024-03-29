@@ -1,7 +1,7 @@
  &run_vars
 	outputfile = '/tmp/output1.nc',
 	scefile = 'python/namelist-sce-sip.in',
-	runtime=2000.,
+	runtime=3000.,
 	dt=10.,
 	zinit=4863.61,
 	tpert=2.0,

@@ -1,7 +1,7 @@
  &run_vars
 	outputfile = '/tmp/output1.nc',
 	scefile = 'python/namelist-sce-sip.in',
-	runtime=2000.,
+	runtime=3000.,
 	dt=10.,
 	zinit=3947.81,
 	tpert=2.0,
@@ -22,7 +22,7 @@
 	sce_flag = 2,        ! 0=don't call SCE; 1=call SCE; 2=call SCE with SIP
 	vent_flag=1,
 	kappa_flag=1,
-	updraft_type=2,      ! type of updraft, 1 for constant, 2=stop after t_thresh reached
+	updraft_type=4,      ! type of updraft, 1 for constant, 2=stop after t_thresh reached
 	                        ! 3=constant until t_thresh, then oscillate with winit2 and amplitude2
                             ! 4=take into account buoyancy
 	t_thresh=2000.,      ! time threshold for updraft

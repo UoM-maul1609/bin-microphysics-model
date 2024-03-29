@@ -24,6 +24,7 @@
         						mass_fragment2=mass_fragment1, &
         						mass_fragment3=mass_fragment1, &
         						gam_fac_ent=1._wp/(1._wp+0.5_wp), & ! P+K, 12-25
+        						gam_fac_ent2=1._wp+0.5_wp, &
         						onethird=1._wp/3._wp, fourthirds=4._wp/3._wp
         						
 
@@ -37,7 +38,7 @@
                                                     p_sound, theta_q_sound
             real(wp) :: z,p,t,w,rh, rad,qinit, t_cbase, q_cbase, p_cbase, z_cbase, &
                         t_ctop, q_ctop, p_ctop, z_ctop, theta_q_cbase, theta_q_ctop, &
-                        x_ent, theta_q
+                        x_ent, theta_q, zlast
                         
                         
             ! liquid water
@@ -67,7 +68,7 @@
             ! general
             integer(i4b) :: imoms
             real(wp), allocatable, dimension(:,:) :: moments, mbinedges,ecoll,ecoal, &
-                                                    mbinedges_ent
+                                                    moments_ent, mbinedges_ent
             real(wp), allocatable, dimension(:) :: momtemp, vel
             integer(i4b), allocatable, dimension(:) :: momenttype
             integer(i4b), dimension(:,:), allocatable :: indexc                            
@@ -146,8 +147,11 @@
 
         ! variables for model
         real(wp) :: theta_surf,theta_init, &
-            theta_q_sat,t1old, p111, w_cb, n_dummy, d_dummy, x2old=1.0_wp
+            theta_q_sat,t1old, p111, w_cb, n_dummy, d_dummy, x2old=1.0_wp, &
+            wvenv_send, tenv_send, ratio_send, mu_send=0.0_wp, radius_send, w_send, &
+            dilute_send, wv_send
         logical :: set_theta_q_cb_flag=.true.
+		integer(i4b) :: entrain_count=0
 
         ! Chen and Lamb (1994) Gamma variable fit (scaled and centred logarithm)
         integer(i4b), parameter :: n_cl=18
@@ -288,7 +292,7 @@
                     microphysics_flag, ice_flag, bin_scheme_flag, sce_flag, &
                     hm_flag, break_flag, mode1_flag, mode2_flag, vent_flag, &
                     kappa_flag, updraft_type,t_thresh, adiabatic_prof, &
-                    entrain_period, entrain_period, vert_ent, &
+                    entrain_period, vert_ent, &
                     z_ctop, ent_rate,n_levels_s, &
                     alpha_therm,alpha_cond,alpha_therm_ice,alpha_dep
         namelist /aerosol_setup/ n_intern,n_mode,n_sv,sv_flag, n_bins,n_comps
@@ -613,9 +617,9 @@
         parcel1%t=parcel1%t+tpert
         print *,'t,p,rh from sounding: ', parcel1%t, parcel1%p, parcel1%rh
     endif
+    parcel1%zlast=parcel1%z
     parcel1%qinit=parcel1%rh*eps1*svp_liq(parcel1%t)/(parcel1%p-svp_liq(parcel1%t))
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! get cloud-base conditions (for entrainment process)                          !
@@ -803,6 +807,9 @@
         allocate( parcel1%mbin_ent(1:parcel1%n_bin_modew,1:n_comps+1), &
             STAT = AllocateStatus)
         if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+		allocate( parcel1%moments_ent(1:parcel1%n_bin_mode,1:n_comps+parcel1%imoms), &
+			STAT = AllocateStatus)
+		if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
     endif
     ! do not print messages
     call xsetf(0)
@@ -1009,6 +1016,7 @@
     integer(i4b), dimension(n_bin_mode,n_bin_mode), intent(in) :: indexc
     real(wp), dimension(n_bin_mode,n_bin_mode), intent(in) :: ecoll
     logical, intent(in) :: adiabatic_prof
+    integer(i4b) :: i,j
 
 
     
@@ -1028,6 +1036,25 @@
         ! n_comps + 1 is the water mass
         parcel1%mbin_ent=mbin(1:n_bin_modew,1:n_comps+1)
         parcel1%mbinedges_ent=mbinedges
+		parcel1%moments_ent=0._wp
+		do j=1,parcel1%n_comps
+			! above the aerosol
+			do i=1,parcel1%n_bin_modew
+				! aerosol moments
+				parcel1%moments_ent(i,j)=parcel1%npart_ent(i)*parcel1%mbin_ent(i,j)
+			enddo
+		enddo
+		if (parcel1%ice_flag.eq.1) then
+			do i=1,parcel1%n_bin_modew
+				! other moments: phi, nmon, vol, rim, unf
+				! rim: mass
+				parcel1%moments_ent(i,parcel1%n_comps+4)=parcel1%npart_ent(i)* &
+					parcel1%mbin_ent(i,parcel1%n_comps+1)
+				! unf: mass
+				parcel1%moments_ent(i,parcel1%n_comps+5)=parcel1%npart_ent(i)* &
+					parcel1%mbin_ent(i,parcel1%n_comps+1)
+			enddo        
+		endif
     endif
     
     
@@ -1443,7 +1470,7 @@
       rhoat(:)=(mwat(:)+sum(mbin(:,1:n_comps),2))/rhoat(:);
   
       ! wet diameter:
-      dw(:)=((mwat(:)+sum(mbin(:,1:n_comps),2))*6._wp/(pi*rhoat(:)))**(1._wp/3._wp)
+      dw(:)=((mwat(:)+sum(mbin(:,1:n_comps),2))*6._wp/(pi*rhoat(:)))**(onethird)
       
     end subroutine wetdiam
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -1483,7 +1510,7 @@
       rhoat(:)=(mwat(:)+sum(mbin(:,1:n_comps),2))/rhoat(:);
   
       ! wet diameter:
-      dw(:)=((mwat(:)+sum(mbin(:,1:n_comps),2))*6._wp/(pi*rhoat(:)))**(1._wp/3._wp)
+      dw(:)=((mwat(:)+sum(mbin(:,1:n_comps),2))*6._wp/(pi*rhoat(:)))**(onethird)
   
       ! calculate surface tension
       sigma=surface_tension(t)
@@ -1534,9 +1561,9 @@
       rhoat(:)=(mwat(:)+sum(mbin(:,1:n_comps),2))/rhoat(:);
   
       ! wet diameter:
-      dw(:)=((mwat(:)+sum(mbin(:,1:n_comps),2))* 6._wp/(pi*rhoat(:)))**(1._wp/3._wp)
+      dw(:)=((mwat(:)+sum(mbin(:,1:n_comps),2))* 6._wp/(pi*rhoat(:)))**(onethird)
   
-      dd(:)=((sum(mbin(:,1:n_comps)/rhobin(:,:),2))*6._wp/(pi))**(1._wp/3._wp) ! dry diameter
+      dd(:)=((sum(mbin(:,1:n_comps)/rhobin(:,:),2))*6._wp/(pi))**(onethird) ! dry diameter
                                   ! needed for eqn 6, petters and kreidenweis (2007)
   
       kappa(:)=sum(mbin(:,1:n_comps)/rhobin(:,:)*kappabin(:,:),2) &
@@ -1581,7 +1608,7 @@
       rhoat=massw/rhow+sum(parcel1%mbin(n_sel,1:n_comps) / &
             parcel1%rhobin(n_sel,1:n_comps))
       rhoat=(massw+parcel1%maer(n_sel))/rhoat;
-      dw=((massw+parcel1%maer(n_sel))* 6._wp/(pi*rhoat))**(1._wp/3._wp)
+      dw=((massw+parcel1%maer(n_sel))* 6._wp/(pi*rhoat))**(onethird)
   
       ! calculate surface tension
       sigma=surface_tension(parcel1%t)
@@ -1623,13 +1650,13 @@
       rhoat=massw/rhow+sum(parcel1%mbin(n_sel,1:n_comps) / &
             parcel1%rhobin(n_sel,1:n_comps))
       rhoat=(massw+parcel1%maer(n_sel))/rhoat;
-      dw=((massw+parcel1%maer(n_sel))* 6._wp/(pi*rhoat))**(1._wp/3._wp)
+      dw=((massw+parcel1%maer(n_sel))* 6._wp/(pi*rhoat))**(onethird)
   
       ! calculate surface tension
       sigma=surface_tension(parcel1%t)
   
       dd=(sum(parcel1%mbin(n_sel,1:n_comps) / parcel1%rhobin(n_sel,:))* &
-          6._wp/(pi))**(1._wp/3._wp) ! dry diameter
+          6._wp/(pi))**(onethird) ! dry diameter
                                   ! needed for eqn 6, petters and kreidenweis (2007)
   
       kappa=sum(parcel1%mbin(n_sel,1:n_comps) / parcel1%rhobin(n_sel,1:n_comps)* &
@@ -1642,6 +1669,101 @@
            (dw**3-dd**3)/(dw**3-dd**3*(1._wp-kappa)))-rh_act
            ! eq 6 petters and kreidenweis (acp, 2007)
     end function kkoehler02
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    
+    
+    
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! koehler equations                                                     	   !
+    ! this is coded so it can be called with a root-finder, to find the inverse	   !
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>calculates the equilibrium humidity over a particle using koehler theory
+	!>@param[in] nw: number of moles of water
+	!>@return koehler02_ent: equilibrium rh - but called via root-finder, so nw is returned
+    function koehler02_ent(nw) ! only pass one variable so can use root-finders
+      use numerics_type
+      implicit none
+      real(wp), intent(in) :: nw
+      real(wp) :: massw
+      real(wp) :: rhoat, dw,koehler02_ent
+      real(wp) :: sigma, maer1
+      
+      
+	  ! mass of aerosol dry
+	  maer1=sum(parcel1%mbin_ent(n_sel,1:n_comps))
+      ! wet diameter:
+      massw=nw*molw_water
+      rhoat=massw/rhow+sum(parcel1%mbin_ent(n_sel,1:n_comps) / &
+            parcel1%rhobin(n_sel,1:n_comps))
+      rhoat=(massw+maer1)/rhoat
+      dw=((massw+maer1)* 6._wp/(pi*rhoat))**(onethird)
+  
+      ! calculate surface tension
+      sigma=surface_tension(parcel1%t)
+  
+      ! equilibrium rh over particle - nb rh_act set to zero if not root-finding
+      koehler02_ent=mult*(exp(4._wp*molw_water*sigma/r_gas/parcel1%t/rhoat/dw)* &
+           (nw)/(nw+sum(parcel1%mbin_ent(n_sel,1:n_comps)/ &
+           parcel1%molwbin(n_sel,1:n_comps) * &
+           parcel1%nubin(n_sel,1:n_comps)) ))-rh_act
+
+    end function koehler02_ent
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+
+
+
+
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! kappa-koehler equations                                                      !
+    ! this is coded so it can be called with a root-finder, to find the inverse	   !
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>calculates the equilibrium humidity over a particle using K-koehler theory
+	!>@param[in] nw: number of moles of water
+	!>@return kkoehler02_ent: equilibrium rh - but called via root-finder, so nw is returned
+    function kkoehler02_ent(nw) ! only pass one variable so can use root-finders
+      use numerics_type
+      implicit none
+      real(wp), intent(in) :: nw
+      real(wp) :: massw
+      real(wp) :: rhoat, dw,dd,kappa,kkoehler02_ent
+      real(wp) :: sigma, maer1
+
+
+	  ! mass of aerosol dry
+	  maer1=sum(parcel1%mbin_ent(n_sel,1:n_comps))
+
+      ! wet diameter:
+      massw=nw*molw_water
+      rhoat=massw/rhow+sum(parcel1%mbin_ent(n_sel,1:n_comps) / &
+            parcel1%rhobin(n_sel,1:n_comps))
+      rhoat=(massw+maer1)/rhoat;
+      dw=((massw+maer1)* 6._wp/(pi*rhoat))**(onethird)
+  
+      ! calculate surface tension
+      sigma=surface_tension(parcel1%t)
+  
+      dd=(sum(parcel1%mbin_ent(n_sel,1:n_comps) / parcel1%rhobin(n_sel,:))* &
+          6._wp/(pi))**(onethird) ! dry diameter
+                                  ! needed for eqn 6, petters and kreidenweis (2007)
+  
+      kappa=sum(parcel1%mbin_ent(n_sel,1:n_comps) / parcel1%rhobin(n_sel,1:n_comps)* &
+               parcel1%kappabin(n_sel,:)) &
+               / sum(parcel1%mbin_ent(n_sel,1:n_comps) / parcel1%rhobin(n_sel,1:n_comps))
+               ! equation 7, petters and kreidenweis (2007)
+
+      ! equilibrium rh over particle - nb rh_act set to zero if not root-finding
+      kkoehler02_ent=mult*(exp(4._wp*molw_water*sigma/r_gas/parcel1%t/rhoat/dw)* &
+           (dw**3-dd**3)/(dw**3-dd**3*(1._wp-kappa)))-rh_act
+           ! eq 6 petters and kreidenweis (acp, 2007)
+    end function kkoehler02_ent
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
     
@@ -1673,7 +1795,7 @@
       rhoat=d_dummy/rhow+mbin* sum(mass_frac_aer1(n_sel,1:n_comps)/ &
                            density_core1(1:n_comps))
       rhoat=(d_dummy+mbin)/rhoat;
-      dw=((d_dummy+mbin)* 6._wp/(pi*rhoat))**(1._wp/3._wp)
+      dw=((d_dummy+mbin)* 6._wp/(pi*rhoat))**(onethird)
   
       ! calculate surface tension
       sigma=surface_tension(parcel1%t)
@@ -1715,10 +1837,10 @@
       rhoat=d_dummy/rhow+mbin* sum(mass_frac_aer1(n_sel,1:n_comps)/ &
                            density_core1(1:n_comps))
       rhoat=(d_dummy+mbin)/rhoat;
-      dw=((d_dummy+mbin)* 6._wp/(pi*rhoat))**(1._wp/3._wp)
+      dw=((d_dummy+mbin)* 6._wp/(pi*rhoat))**(onethird)
   
       dd=((sum(mbin*mass_frac_aer1(n_sel,1:n_comps)/ density_core1(1:n_comps),1))* &
-          6._wp/(pi))**(1._wp/3._wp) ! dry diameter
+          6._wp/(pi))**(onethird) ! dry diameter
                                   ! needed for eqn 6, petters and kreidenweis (2007)
   
       kappa=sum(mbin*mass_frac_aer1(n_sel,1:n_comps) &
@@ -2266,7 +2388,6 @@
         rh=y(irh)
         t=y(ite)
         p=y(ipr)
-!         w=y(iw)
     
 
         ! check there are no negative values
@@ -2366,58 +2487,66 @@
         ydot(ite)=ydot(ite)-lv/cpm*drv ! temp change: condensation
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         
-        if((.not. adiabatic_prof) .and. (.not. vert_ent) .and. &
-        	(entrain_period == 0)) then ! entraining?
-            w_e=y(iw)
-            ! mu
-            mu=ent_rate/y(ira)
-            
-            !calculate the environmental p, qv, te, density
-            ! parcel p, density
-            ! buoyancy...
-            ! locate position
-            iloc=find_pos(parcel1%z_sound(1:n_levels_s),y(iz))
-            iloc=min(n_levels_s-1,iloc)
-            iloc=max(1,iloc)
-            ! linear interp p
-            call poly_int(parcel1%z_sound(iloc:iloc+1), parcel1%p_sound(iloc:iloc+1), &
-                        min(y(iz),parcel1%z_sound(n_levels_s)), var,dummy)        
-            pe=p
-            ! linear interp qv
-            call poly_int(parcel1%p_sound(iloc:iloc+1), parcel1%q_sound(1,iloc:iloc+1), &
-                        max(y(ipr),parcel1%p_sound(n_levels_s)), var,dummy)        
-            qve=var
-            ! linear interp te
-            call poly_int(parcel1%p_sound(iloc:iloc+1), parcel1%t_sound(iloc:iloc+1), &
-                        max(y(ipr),parcel1%p_sound(n_levels_s)), var,dummy)        
-            te=var
-            ! env density:
-            rhoe=pe/(rm*te)
-            ! parcel density:
-            rhop=p/(rm*t)
-            !buoyancy
-            if((parcel1%z_sound(n_levels_s) .lt. y(iz)) .or. &
-                (parcel1%z_sound(1) .gt. y(iz))) then
-                b=0._wp
-            else
+        
+        if((.not. adiabatic_prof) .and. (.not. vert_ent)) then ! entraining?
+			! parcel density:
+			rhop=p/(rm*t)
+			w_e=y(iw)
+			! mu
+			if(entrain_period==0) then
+				mu=ent_rate/y(ira)
+			else
+				mu=0.0_wp
+			endif		
+			!calculate the environmental p, qv, te, density
+			! parcel p, density
+			! buoyancy...
+			! locate position
+			iloc=find_pos(parcel1%z_sound(1:n_levels_s),y(iz))
+			iloc=min(n_levels_s-1,iloc)
+			iloc=max(1,iloc)
+			! linear interp p
+			call poly_int(parcel1%z_sound(iloc:iloc+1), &
+					parcel1%p_sound(iloc:iloc+1), &
+						min(y(iz),parcel1%z_sound(n_levels_s)), var,dummy)        
+			pe=p
+			! linear interp qv
+			call poly_int(parcel1%p_sound(iloc:iloc+1), &
+					parcel1%q_sound(1,iloc:iloc+1), &
+						max(y(ipr),parcel1%p_sound(n_levels_s)), var,dummy)        
+			qve=var
+			! linear interp te
+			call poly_int(parcel1%p_sound(iloc:iloc+1), &
+					parcel1%t_sound(iloc:iloc+1), &
+						max(y(ipr),parcel1%p_sound(n_levels_s)), var,dummy)        
+			te=var
+			! env density:
+			rhoe=pe/(rm*te)
+			!buoyancy
+			if((parcel1%z_sound(n_levels_s) .lt. y(iz)) .or. &
+				(parcel1%z_sound(1) .gt. y(iz))) then
+				b=0._wp
+			else
 !                 b=grav*(rhoe-rhop)/rhop
-                b=grav*(t-te)/te
-            endif
-            if(updraft_type==4) then
-                if(y(iw) > 0.001_wp) then
-                    ydot(iw)=gam_fac_ent*(b-grav*wl-grav*wi)-mu*gam_fac_ent*w_e**2 
-                else
-                    ydot(iw)=(0.001_wp-y(iw))/10._wp
-                endif
-            endif        
-            ! forcing - eq. 12-29
-            drv=drv-w_e*mu*(wv+wl+wi-qve)
-            
-            ! equation 12-26
-            ydot(ite)=ydot(ite)-w_e*mu*(y(ite)-te + lv/cpm*(wv-qve))
-            
+				b=grav*(t-te)/te
+			endif
+			if(updraft_type==4) then
+				if(y(iw) > 0.001_wp) then
+					ydot(iw)=gam_fac_ent*(b-grav*wl-grav*wi)-mu*gam_fac_ent*w_e**2 
+				else
+					ydot(iw)=(0.001_wp-y(iw))/10._wp
+				endif
+			endif        
+			! forcing - eq. 12-29
+			drv=drv-w_e*mu*(wv+wl-qve) ! vapour reduction => condensation?
+			! add the temp change due to 
+			ydot(ite)=ydot(ite)+lv/cpm*w_e*mu*(wv+wl-qve) ! temp change: condensation
+
+			! equation 12-26
+			ydot(ite)=ydot(ite)-w_e*mu*(y(ite)-te + lv/cpm*(wv-qve))
+
             ! Equation 12-32 or 12-33 P+K
-            dlnrho=1._wp/rhop*(1._wp/(ra*t))*(ydot(ipr)- p/(ra*t**2)*ydot(ite))
+            dlnrho=1._wp/rhop*(1._wp/(ra*t))*(ydot(ipr)- p/(t)*ydot(ite))
             if(bubble_flag) then
                 ydot(ira) = y(ira)*onethird*(mu*w_e-dlnrho)
             else
@@ -2426,7 +2555,7 @@
             endif
 
         endif
-        ! jobs: read in c=0.2 from namelist
+        ! jobs: 
         !       add 2nd aerosol structure, which can be entrained in
         !       entrainment of aerosol / drops outside of solver 
         !       move entrainment outside of solver?     
@@ -3487,11 +3616,11 @@
 	!>calculates one time-step of bin-microphysics
     subroutine bin_microphysics(func1,func2,func3,func4)
     use numerics_type
-    use numerics, only : zeroin, dvode
+    use numerics, only : zeroin, dvode, fmin
     implicit none
     real(wp) :: mass1, mass2, deltam, vapour_mass, liquid_mass, x1,x2 , cpm, &
         var, dummy, gamma_t, dep_density, rhoa, qv, qvsat, wv, rm_old, rm_new, &
-        flux_old, flux_new, ratio, svp1
+        flux_old, flux_new, ratio, svp1, delta_t, dz, pe, qve, te, rhoe
     integer(i4b) :: iloc, i
     
     interface
@@ -3561,6 +3690,7 @@
         end subroutine func4
     end interface
     
+    
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! mass balance                                                         !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -3572,9 +3702,7 @@
                         parcel1%irh,parcel1%ite,parcel1%ipr,ice_flag)
     endif    
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    
   
-    
     
     
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -3593,10 +3721,78 @@
     enddo
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
+		pe=0.5*(parcel1%yold(parcel1%ipr)+parcel1%y(parcel1%ipr))
+		iloc=find_pos(parcel1%p_sound(1:n_levels_s),pe)
+		iloc=min(n_levels_s-1,iloc)
+		iloc=max(1,iloc)
+
+		! linear interp qv
+		call poly_int(parcel1%p_sound(iloc:iloc+1), parcel1%q_sound(1,iloc:iloc+1), &
+				max(pe,parcel1%p_sound(n_levels_s)), qve,dummy)
+		wvenv_send=qve
+		! linear interp te
+		call poly_int(parcel1%p_sound(iloc:iloc+1), parcel1%t_sound(iloc:iloc+1), &
+				max(pe,parcel1%p_sound(n_levels_s)), te,dummy)   
+		tenv_send=te     
+		rhoe=qve/(eps1*svp_liq(te)/(parcel1%y(parcel1%ipr)-svp_liq(te))	)
+	
+    entrain_count = min(entrain_count + 1, max(entrain_period,1))
+!     if((.not. adiabatic_prof) .and. (entrain_period == 0).and.(parcel1%TT<=40._wp)) then
+    if((.not. adiabatic_prof) .and. (entrain_period == entrain_count)) then
+    	! do inhomogeneous mixing here
+    	! find change in radius due to mixing
+    	dz=parcel1%y(parcel1%iz)-parcel1%zlast
+		! locate position
+		pe=0.5*(parcel1%yold(parcel1%ipr)+parcel1%y(parcel1%ipr))
+		iloc=find_pos(parcel1%p_sound(1:n_levels_s),pe)
+		iloc=min(n_levels_s-1,iloc)
+		iloc=max(1,iloc)
+
+		! linear interp qv
+		call poly_int(parcel1%p_sound(iloc:iloc+1), parcel1%q_sound(1,iloc:iloc+1), &
+				max(pe,parcel1%p_sound(n_levels_s)), qve,dummy)
+		wvenv_send=qve
+		! linear interp te
+		call poly_int(parcel1%p_sound(iloc:iloc+1), parcel1%t_sound(iloc:iloc+1), &
+				max(pe,parcel1%p_sound(n_levels_s)), te,dummy)   
+		tenv_send=te     
+		! env density:
+		rhoe=pe/((ra+rv*qve)*te)
+
+    	! find the change in temperature due to mixing with the env air, then evaporating
+    	! water so that the RH is maintained during evaporation
+    	delta_t=zeroin(-10._wp, 10._wp, inhomog_mix,1.e-30_wp)
+    	dummy=inhomog_mix(delta_t)
+!     	delta_t=zeroin(-10._wp, 10._wp, homog_mix,1.e-30_wp)
+!     	dummy=homog_mix(delta_t)
+!     	print *, parcel1%y(parcel1%ite), delta_t, ratio_send, dilute_send,w_send, parcel1%y(parcel1%irh)
+    	if ((ratio_send > 0._wp) .and. (ratio_send<1._wp) ) then
+			
+			parcel1%y(parcel1%ite)=parcel1%y(parcel1%ite)+delta_t
+			parcel1%y(parcel1%ira)=radius_send
+			parcel1%y(parcel1%iw)=w_send
+			
+! 			parcel1%y(parcel1%irh)=wv_send/(eps1*svp_liq(parcel1%y(parcel1%ite))/ &
+! 				(parcel1%y(parcel1%ipr)-svp_liq(parcel1%y(parcel1%ite))))
+			parcel1%npart(1:parcel1%n_bin_modew) = parcel1%npart(1:parcel1%n_bin_modew) * &
+				ratio_send*dilute_send
+			parcel1%moments = parcel1%moments * ratio_send*dilute_send
+			if(ice_flag == 1) parcel1%npartice(1:parcel1%n_bin_modew) = &
+				parcel1%npartice(1:parcel1%n_bin_modew) * ratio_send*dilute_send
+
+
+			entrain_count=0
+			! store last entrainment height
+			parcel1%zlast = parcel1%y(parcel1%iz)
+    	endif
+    endif
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! lateral entrainment reducing drop number conc.                       !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    if((.not. adiabatic_prof) .and. (entrain_period==0)) then
+    if((.not. adiabatic_prof).and.(entrain_period==0)) then 
+!     if((.not. adiabatic_prof).and.(entrain_period==0).and.(parcel1%TT>30._wp)) then
     	svp1=svp_liq(parcel1%yold(parcel1%ite))
 		wv=eps1*parcel1%yold(parcel1%irh)* &
 			svp1 / (parcel1%yold(parcel1%ipr)- svp1) ! wv mixing ratio
@@ -3624,14 +3820,71 @@
         ! drops / aerosol
         parcel1%npart(1:parcel1%n_bin_modew)= &
             parcel1%npart(1:parcel1%n_bin_modew)*ratio
+        
+        parcel1%moments(:,:)= &
+            parcel1%moments(:,:)*ratio
+        
 		if(ice_flag == 1) then
 			! ice / aerosol
 			parcel1%npartice(1:parcel1%n_bin_modew)= &
 				parcel1%npartice(1:parcel1%n_bin_modew)*ratio
         endif
+		!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+		! put water on bins being entrained, using koehler equation        !
+		!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+		select case(kappa_flag)
+			case(0)
+				do i=1,parcel1%n_bin_modew
+					if (parcel1%npart_ent(i) == 0._wp) cycle
+					n_sel=i
+					rh_act=0._wp !min(parcel1%rh,0.999_wp)
+					mult=-1._wp
+					! has to be less than the peak moles of water at activation
+					dummy=fmin(1.e-50_wp,1.e1_wp, koehler02_ent,1.e-30_wp)
+					mult=1._wp
+					rh_act=koehler02_ent(dummy)
+					rh_act=min(parcel1%y(parcel1%irh),rh_act)
+					d_dummy=zeroin(1.e-30_wp, dummy, koehler02_ent,1.e-30_wp)* &
+						molw_water 
+					parcel1%mbin_ent(i,n_comps+1)= d_dummy
+				enddo
+			case(1)
+				do i=1,parcel1%n_bin_modew
+					if (parcel1%npart_ent(i) == 0._wp) cycle
+					n_sel=i
+					rh_act=0._wp !min(parcel1%rh,0.999_wp)
+					mult=-1._wp
+					! has to be less than the peak moles of water at activation
+					dummy=fmin(1.e-50_wp,1.e1_wp, kkoehler02_ent,1.e-30_wp)
+					mult=1._wp
+					rh_act=kkoehler02_ent(dummy)
+					rh_act=min(parcel1%y(parcel1%irh),rhoe)
+					d_dummy=zeroin(1.e-30_wp, dummy, kkoehler02_ent,1.e-30_wp)* &
+						molw_water 
+					parcel1%mbin_ent(i,n_comps+1)= d_dummy
+				enddo
+			case default
+				print *,'error kappa flag'
+				stop
+		end select
+		!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        
+		if (sce_flag.gt.0) then
+			!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+			! Moving Centre binning                                        !
+			!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+			call moving_centre(parcel1%n_bin_mode,parcel1%n_bin_modew,&
+					parcel1%n_bins1,parcel1%n_modes, parcel1%n_comps, &
+					parcel1%imoms+parcel1%n_comps, parcel1%npart_ent, &
+					parcel1%mbin_ent(1:parcel1%n_bin_modew,parcel1%n_comps+1), &
+					parcel1%moments_ent(1:parcel1%n_bin_modew,:), &
+					parcel1%mbin_ent,parcel1%mbinedges_ent)
+			!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+		endif
+        
+        
     endif
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
 
     if (sce_flag.gt.0) then
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -3644,6 +3897,25 @@
                 parcel1%moments(1:parcel1%n_bin_modew,:), &
                 parcel1%mbin,parcel1%mbinedges)
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        if((.not.adiabatic_prof) .and. (entrain_period == 0) ) then 
+!         if((.not.adiabatic_prof) .and. (entrain_period == 0) .and. (parcel1%TT>30._wp)) then
+			where ((parcel1%npart + (1._wp-ratio)*parcel1%npart_ent) > 0._wp)
+			parcel1%y(1:parcel1%n_bin_modew)=parcel1%y(1:parcel1%n_bin_modew)*parcel1%npart + &
+				(1._wp-ratio)*parcel1%mbin_ent(1:parcel1%n_bin_modew,parcel1%n_comps+1) * &
+				parcel1%npart_ent
+			parcel1%y(1:parcel1%n_bin_modew) = parcel1%y(1:parcel1%n_bin_modew)/ &
+				(parcel1%npart + (1._wp-ratio)*parcel1%npart_ent)
+			end where
+			parcel1%moments = parcel1%moments + (1._wp-ratio)*parcel1%moments_ent
+			parcel1%npart = parcel1%npart + (1._wp-ratio)*parcel1%npart_ent
+	
+			call moving_centre(parcel1%n_bin_mode,parcel1%n_bin_modew,&
+					parcel1%n_bins1,parcel1%n_modes, parcel1%n_comps, &
+					parcel1%imoms+parcel1%n_comps, parcel1%npart, &
+					parcel1%y(1:parcel1%n_bin_modew), &
+					parcel1%moments(1:parcel1%n_bin_modew,:), &
+					parcel1%mbin,parcel1%mbinedges)
+        endif
     endif
 
     if(ice_flag .eq. 1) then
@@ -3808,12 +4080,202 @@
     
     
     
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! output to netcdf                                                             !
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>output 1 time-step of model
+	!>@param[inout] new_file
+    function inhomog_mix(dt_guess)
+    use numerics_type
+    implicit none
+    real(wp), intent(in) :: dt_guess
+    real(wp) :: told, tnew, svp1, svp2, wv_old, wv_new, rm_old, rm_new, rho_old, &
+    	rho_new, radfinal, fo, fn, wnew, df, dt_mix, rl, ri=0._wp, &
+    	rl_dil, ri_dil, cfactor, drl, dri, dte, drl_dil, dri_dil
+    real(wp) :: inhomog_mix
     
+    ! 1. calculate density of air
+    told = parcel1%y(parcel1%ite)
+    tnew = told + dt_guess	! this is the new temperature with mixing and evap
+    svp1 = svp_liq(told)
+    svp2 = svp_liq(tnew)
+    wv_old = parcel1%y(parcel1%irh) * eps1*svp1/(parcel1%y(parcel1%ipr)-svp1)
+    wv_new = parcel1%y(parcel1%irh) * eps1*svp2/(parcel1%y(parcel1%ipr)-svp2)
+    rm_old = ra + rv*wv_old
+    rm_new = ra + rv*wv_new
+    rho_old = parcel1%y(parcel1%ipr) / (rm_old*told)
+    rho_new = parcel1%y(parcel1%ipr) / (rm_new*tnew)
     
+    ! 2. calculate the masses / fluxes
+    if(bubble_flag) then
+    	! mass in kg
+    	! radius: 12.22 Pruppacher and Klett (note mistake, 2 should be 3)
+    	radfinal = parcel1%y(parcel1%ira)+onethird*(parcel1%y(parcel1%iz)-parcel1%zlast) * &
+    		ent_rate - onethird*parcel1%y(parcel1%ira)/rho_old*(rho_new-rho_old)
+    	wnew = parcel1%y(parcel1%iw)*(1._wp+(1._wp-radfinal**3*rho_new / &
+    		(parcel1%y(parcel1%ira)**3*rho_old ))/gam_fac_ent2 )
+    	! initial mass of bubble
+    	fo = fourthirds*pi*parcel1%y(parcel1%ira)**3*rho_old
+    	! final mass of bubble
+    	fn = fourthirds*pi*radfinal**3*rho_new
+    else
+    	! flux in kg / s
+    	! radius: 12.23 Pruppacher and Klett
+    	! new vertical velocity just taking acceleration of mass into account
+    	radfinal = parcel1%y(parcel1%ira)+0.5_wp*(parcel1%y(parcel1%iz)-parcel1%zlast)* &
+    		(ent_rate*(1._wp+gam_fac_ent2)/gam_fac_ent2 ) - &
+    		0.5_wp*parcel1%y(parcel1%ira)/rho_old*(rho_new-rho_old)
+    	wnew = parcel1%y(parcel1%iw)*(1._wp+gam_fac_ent2) / (gam_fac_ent2 + &
+    		radfinal*radfinal*rho_new / &
+    		(parcel1%y(parcel1%ira)*parcel1%y(parcel1%ira)*rho_old ))
+    	! initial mass flux 
+    	fo = pi*parcel1%y(parcel1%ira)**2*rho_old*parcel1%y(parcel1%iw)
+    	! final mass flux
+    	fn = pi*radfinal**2*rho_new*wnew
+    endif
+    w_send=wnew
+    radius_send=radfinal
+    ! change in flux / mass
+    df = fn-fo
+    dilute_send = fo/fn !min(fo / fn, 1._wp)
+    ! change in temperature of air after mixing with environmental air (no evaporation)
+	dt_mix=0._wp
+    if(fn > 0._wp) dt_mix = (df*tenv_send+fo*told) / fn - told
+
+    ! conserve total water
+    rl = max(sum(parcel1%npart(1:parcel1%n_bin_modew)* &
+    	parcel1%y(1:parcel1%n_bin_modew)), 1.e-9_wp)
+    if (ice_flag == 1) &
+	    ri = max(sum(parcel1%npartice(1:parcel1%n_bin_modew)* &
+	    	parcel1%yice(1:parcel1%n_bin_modew)), 1.e-9_wp)
+
+	! these are the mixing ratios due to pure dilution (i.e. drops moving further apart)
+	rl_dil = rl * dilute_send
+	ri_dil = ri * dilute_send
+
+	! ratio_send * rl_dil is the mixing ratio required to conserve water
+    ratio_send = (fo*(wv_old+rl+ri)+df*wvenv_send-fn*wv_new) / (fn*(rl+ri))
+ !    ratio_send = rl+ri-rl_dil-ri_dil+(wvenv_send-wv_old-rl_dil-ri_dil)*df/fo-(wv_new-wv_old)
+!     ratio_send = ratio_send/max(rl+ri,1.e-9_wp)
+! 
+! 	! change due to dilution
+! 	drl_dil=rl_dil-rl
+! 	dri_dil=ri_dil-ri
+! 	! total change
+!     drl = rl*ratio_send
+!     dri = ri*ratio_send
+!     
+!     ! change due to evaporation
+!     drl = drl-drl_dil
+!     dri = dri-dri_dil
+!     
+!     ratio_send=(rl_dil+ri_dil+drl+dri)/max(rl_dil+ri_dil,1.e-9_wp)
     
+	!ratio_send = min(max(0._wp, ratio_send), 1._wp)
+! 	wv_send=(fo*(wv_old+rl+ri)+df*wvenv_send-(fn*(rl_dil+ri_dil)))/fn
+! 	print *,'hi',rl, ri, ratio_send, dt_guess, dt_mix, radfinal, tenv_send, wnew
+    ! ratio_send is what we multiply diluted conc by
+    drl = (ratio_send*rl-1.0_wp*rl_dil) ! negative as it is evaporation
+    dri = (ratio_send*ri-1.0_wp*ri_dil) ! negative
     
+!     print *,fo*(wv_old+rl+ri)+wvenv_send*df, fn*(wv_new+ratio_send*rl+ratio_send*ri)
+! 	drl=0._wp
+! 	dri=0._wp
+	wv_send=wv_new
+    ! change in temperature, dt_guess, due to latent cooling and mixing
+    dte = lv / cp * drl + ls / cp * dri + dt_mix
+    inhomog_mix=dte - dt_guess
+    end function inhomog_mix
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! output to netcdf                                                             !
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>output 1 time-step of model
+	!>@param[inout] new_file
+    function homog_mix(dt_guess)
+    use numerics_type
+    implicit none
+    real(wp), intent(in) :: dt_guess
+    real(wp) :: told, tnew, svp1, svp2, wv_old, wv_new, rm_old, rm_new, rho_old, &
+    	rho_new, radfinal, fo, fn, wnew, df, dt_mix, rl, ri=0._wp, &
+    	rl_dil, ri_dil, cfactor, drl, dri, dte
+    real(wp) :: homog_mix
     
+    ! 1. calculate density of air
+    ! conserve total water
+    rl = max(sum(parcel1%npart(1:parcel1%n_bin_modew)* &
+    	parcel1%y(1:parcel1%n_bin_modew)), 1.e-9_wp)
+    if (ice_flag == 1) &
+	    ri = max(sum(parcel1%npartice(1:parcel1%n_bin_modew)* &
+	    	parcel1%yice(1:parcel1%n_bin_modew)), 1.e-9_wp)
+
+    told = parcel1%y(parcel1%ite)
+    tnew = told + dt_guess	! this is the new temperature with mixing and evap
+    svp1 = svp_liq(told)
+    svp2 = svp_liq(tnew)
+    wv_old = parcel1%y(parcel1%irh) * eps1*svp1/(parcel1%y(parcel1%ipr)-svp1)
+    rm_old = ra + rv*wv_old
+    rm_new = rm_old
+    rho_old = parcel1%y(parcel1%ipr) / (rm_old*told)
+    rho_new = parcel1%y(parcel1%ipr) / (rm_new*tnew)
+    
+    ! 2. calculate the masses / fluxes
+    if(bubble_flag) then
+    	! mass in kg
+    	! radius: 12.22 Pruppacher and Klett (note mistake, 2 should be 3)
+    	radfinal = parcel1%y(parcel1%ira)+onethird*(parcel1%y(parcel1%iz)-parcel1%zlast) * &
+    		ent_rate - onethird*parcel1%y(parcel1%ira)/rho_old*(rho_new-rho_old)
+    	wnew = parcel1%y(parcel1%iw)*(1._wp+(1._wp-radfinal**3*rho_new / &
+    		(parcel1%y(parcel1%ira)**3*rho_old ))/gam_fac_ent2 )
+    	! initial mass of bubble
+    	fo = fourthirds*pi*parcel1%y(parcel1%ira)**3*rho_old
+    	! final mass of bubble
+    	fn = fourthirds*pi*radfinal**3*rho_new
+    else
+    	! flux in kg / s
+    	! radius: 12.23 Pruppacher and Klett
+    	! new vertical velocity just taking acceleration of mass into account
+    	radfinal = parcel1%y(parcel1%ira)+0.5_wp*(parcel1%y(parcel1%iz)-parcel1%zlast)* &
+    		(ent_rate*(1._wp+gam_fac_ent2)/gam_fac_ent2 ) - &
+    		0.5_wp*parcel1%y(parcel1%ira)/rho_old*(rho_new-rho_old)
+    	wnew = parcel1%y(parcel1%iw)*(1._wp+gam_fac_ent2) / (gam_fac_ent2 + &
+    		radfinal*radfinal*rho_new / &
+    		(parcel1%y(parcel1%ira)*parcel1%y(parcel1%ira)*rho_old ))
+    	! initial mass flux 
+    	fo = pi*parcel1%y(parcel1%ira)**2*rho_old*parcel1%y(parcel1%iw)
+    	! final mass flux
+    	fn = pi*radfinal**2*rho_new*wnew
+    endif
+    w_send=wnew
+    radius_send=radfinal
+    ! change in flux / mass
+    df = fn-fo
+    dilute_send = min(fo / fn, 1._wp)
+    ! change in temperature of air after mixing with environmental air (no evaporation)
+	dt_mix=0._wp
+    if(fn > 0._wp) dt_mix = (df*tenv_send+fo*told) / fn - told
+    
+
+	! these are the mixing ratios due to pure dilution (i.e. drops moving further apart)
+	rl_dil = rl * dilute_send
+	ri_dil = ri * dilute_send
+	ratio_send=1.0_wp
+	wv_send=(fo*(wv_old+rl+ri)+df*wvenv_send-(fn*(rl_dil+ri_dil)))/fn
+    
+	drl=0._wp
+	dri=0._wp
+    ! change in temperature, dt_guess, due to latent cooling and mixing
+    dte = lv / cp * drl + ls / cp * dri + dt_mix
+    homog_mix=dte - dt_guess
+    end function homog_mix
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! HELPER ROUTINE                                                       !
