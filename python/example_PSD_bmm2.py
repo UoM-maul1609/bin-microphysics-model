@@ -45,6 +45,7 @@ def plot_model_run(fileName='/tmp/output1.nc'):
     
     fig = plt.figure()
     ts=30
+    print(z[ts])
     print(np.shape(dedge1))
     dat=np.transpose(np.real(np.squeeze(nwat[ts,0,:])))
 #     dedges_a=np.linspace(1e-6,1e-4,50)
