@@ -30,6 +30,8 @@
  	entrain_period=0, ! for inhomogeneous mixing (0 entrain only in solver; 1 entrain out
  					  ! side of solver every time-step; 2 every two time-steps, etc)
  	thresh_to_start_hom_mix=-10., ! do inhomogeneous mixing until this seconds, then hom.
+ 	release_aerosol=.true.,		! after inhomogeneous mixing re-release aerosol 
+ 	entrain_aerosol=.true.,		! mix environmental aerosol into cloud parcel
     vert_ent=.false., ! entrain in vertical (.true.); or laterally (.false.)
     z_ctop=5000., ! height of cloud-top for vertical entrainment
  	ent_rate=0.25, ! entrainment parameter C

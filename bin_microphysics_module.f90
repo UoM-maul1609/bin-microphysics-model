@@ -127,7 +127,8 @@
                     alpha_therm_ice, alpha_dep, thresh_to_start_hom_mix
         integer(i4b) :: microphysics_flag=0, kappa_flag,updraft_type, vent_flag, &
                         sce_flag=0,ice_flag=0, bin_scheme_flag=1, entrain_period=0
-        logical :: use_prof_for_tprh, hm_flag, mode1_flag, mode2_flag, bubble_flag
+        logical :: use_prof_for_tprh, hm_flag, mode1_flag, mode2_flag, bubble_flag, &
+        	release_aerosol, entrain_aerosol
         integer(i4b) :: break_flag
         real(wp) :: dz,dt, runtime, t_thresh
         ! sounding spec
@@ -296,7 +297,8 @@
                     microphysics_flag, ice_flag, bin_scheme_flag, sce_flag, &
                     hm_flag, break_flag, mode1_flag, mode2_flag, vent_flag, &
                     kappa_flag, updraft_type,t_thresh, adiabatic_prof, &
-                    entrain_period, thresh_to_start_hom_mix, vert_ent, &
+                    entrain_period, thresh_to_start_hom_mix, release_aerosol, &
+                    entrain_aerosol, vert_ent, &
                     z_ctop, ent_rate,n_levels_s, &
                     alpha_therm,alpha_cond,alpha_therm_ice,alpha_dep
         namelist /aerosol_setup/ n_intern,n_mode,n_sv,sv_flag, n_bins,n_comps
@@ -4098,11 +4100,13 @@
 		real(wp), intent(in) :: tth
 		
 		real(wp) :: pe, qve, te, dummy, dz, delta_t, flux_new, flux_old, &
-			ratio, rhoe, rm_new, rm_old, svp1, wv, rhenv
+			ratio, rhoe, rm_new, rm_old, svp1, wv, rhenv, factor1
 		integer(i4b) :: iloc, i
 
 		if (adiabatic_prof) return
 		
+		dilute_send=1._wp
+		ratio_send=1._wp
 		! locate position
 		pe=0.5*(parcel1%yold(parcel1%ipr)+parcel1%y(parcel1%ipr))
 		iloc=find_pos(parcel1%p_sound(1:n_levels_s),pe)
@@ -4142,12 +4146,17 @@
 			! then will add to parcel PSD
 			
 			parcel1%npart_temp=0._wp
-			if ((ratio_send > 0._wp) .and. (ratio_send<1._wp) ) then			
+			parcel1%moments_temp=0._wp
+			factor1=0.0_wp
+			if ((ratio_send > 0._wp) .and. (ratio_send<1._wp) ) then
+				if (release_aerosol) then
+					factor1 = (1._wp-ratio_send)*max(1._wp-dilute_send,0._wp)
+				endif
+					
 				parcel1%npart_temp(1:parcel1%n_bin_modew) = &
-					parcel1%npart(1:parcel1%n_bin_modew)* &
-						max(1._wp-dilute_send,0._wp)*(1._wp-ratio_send)
-				parcel1%moments_temp = parcel1%moments* &
-					max(1._wp-dilute_send,0._wp)*(1._wp-ratio_send)
+					parcel1%npart(1:parcel1%n_bin_modew)* factor1
+				parcel1%moments_temp = parcel1%moments* factor1
+				
 				parcel1%mbin_temp = parcel1%mbin
 				if(ice_flag == 1) then
 					parcel1%npart_temp2(1:parcel1%n_bin_modew) = &
@@ -4327,7 +4336,8 @@
 
 			! really need to do for ice as well
 		endif    
-    
+    	if (.not.entrain_aerosol) dilute_send=1._wp
+    	if (.not. release_aerosol) ratio_send=1._wp
 	end subroutine entrainment
 	
 	
