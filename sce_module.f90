@@ -1987,7 +1987,7 @@
             
             ! collisions of hail and hail - no size constraint
             a0=4.35e5_wp
-            t0=15._wp
+            t0=-15._wp
             A=a0*oneoverthree+max(2.*a0*oneoverthree-a0*oneovernine*abs(t-ttr-t0),0._wp)
             c=3.31e5_wp
             nmax=1000._wp
