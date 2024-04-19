@@ -38,7 +38,7 @@ def factorialMethod():
     # https://stackoverflow.com/questions/23427181/all-combinations-with-multiple-loops
     loops = c**r
     arrayStore=np.zeros((loops,r),dtype='int')
-    precipStore=np.zeros((loops,1))
+    precipStore=np.zeros(loops)
     for elements in itertools.product(*runToDo[:loops]):
             
         n=str(k)
@@ -58,7 +58,7 @@ def factorialMethod():
         # read the file and store max-ice concentration
         nc=Dataset(fileName)
         print(np.shape(nc['nice']))
-        precipStore[k,0]=np.max(nc['nice'][:],axis=0)
+        precipStore[k]=np.max(nc['nice'][:],axis=0)
         nc.close()
         k += 1
     
