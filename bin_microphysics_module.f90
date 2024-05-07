@@ -620,7 +620,7 @@
                     min(parcel1%z,parcel1%z_sound(n_levels_s)), var,dummy)        
         parcel1%rh=var
         parcel1%rh=0.99_wp
-        parcel1%t=parcel1%t+tpert
+        !parcel1%t=parcel1%t+tpert
         print *,'t,p,rh from sounding: ', parcel1%t, parcel1%p, parcel1%rh
     endif
     parcel1%zlast=parcel1%z
