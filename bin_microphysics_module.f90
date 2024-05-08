@@ -4287,7 +4287,7 @@
 			select case(kappa_flag)
 				case(0)
 					do i=1,parcel1%n_bin_modew
-						if (parcel1%npart_temp(i) == 0._wp) cycle
+						if (parcel1%npart_temp(i) <= 1.e-30_wp) cycle
 						n_sel=i
 						rh_act=0._wp !min(parcel1%rh,0.999_wp)
 						mult=-1._wp
@@ -4302,7 +4302,7 @@
 					enddo
 				case(1)
 					do i=1,parcel1%n_bin_modew
-						if (parcel1%npart_temp(i) == 0._wp) cycle
+						if (parcel1%npart_temp(i) <= 1.e-30_wp) cycle
 						n_sel=i
 						rh_act=0._wp !min(parcel1%rh,0.999_wp)
 						mult=-1._wp
