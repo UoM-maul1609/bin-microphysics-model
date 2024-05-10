@@ -502,13 +502,16 @@
     do k=1,n_mode
         idum=k ! this is sent through to zbrent to select the correct mode
         ! find total number in mode between dmina and dmaxa:
-        call lognormal_n_between_limits(n_aer1(:,k),d_aer1(:,k),sig_aer1(:,k), &
+        ! for this make sure it isnt zero
+        call lognormal_n_between_limits(max(n_aer1(:,k),1.e-6_wp),d_aer1(:,k),sig_aer1(:,k), &
                                         n_intern,dmina,dmaxa, num)
         !print *,num
         ! set up variables for parcel model
         ntot=num
         number_per_bin=ntot/real(n_bins,wp)
-        parcel1%npart(1+(k-1)*n_bins:(k)*n_bins)=number_per_bin
+        ! make sure it is zero if needed
+        parcel1%npart(1+(k-1)*n_bins:(k)*n_bins)=min(number_per_bin, &
+        		sum(n_aer1(:,k))/real(n_bins,wp))
         parcel1%d(1+(k-1)*(n_bins+1))=dmina
         do i=1,n_bins
             d_dummy=parcel1%d(i+(k-1)*(n_bins+1))
@@ -1167,7 +1170,8 @@
         real(wp), intent(in) :: x
         real(wp) :: find_upper_diameter, num
         
-        call lognormal_n_between_limits(n_aer1(:,idum),d_aer1(:,idum),sig_aer1(:,idum), &
+        call lognormal_n_between_limits(max(n_aer1(:,idum),1e-6_wp), &
+        			d_aer1(:,idum),sig_aer1(:,idum), &
                                     n_intern,d_dummy,x, num)
         find_upper_diameter=num-n_dummy
         

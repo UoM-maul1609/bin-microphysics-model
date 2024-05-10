@@ -143,13 +143,13 @@ def plot_model_run(fileName='/tmp/output1.nc'):
     
     
     host.set_ylabel("Height (m)")
-    host.set_xlabel("CDNC (cm$^{-3}$)")
+    host.set_xlabel("CDNC (cm$^{-3}$ STP)")
     if(ice):
-	    par2.set_xlabel("N$_{ice}$ (L$^{-1}$)")
+	    par2.set_xlabel("N$_{ice}$ (L$^{-1}$ STP)")
     
-    p1, = host.plot(ndrop/1.e6,z, label="CDNC")
+    p1, = host.plot(ndrop/1.e6/(101325.0/273.15/287),z, label="CDNC")
     if(ice):
-	    p3, = par2.plot(nice/1.e3, z,label="N$_{ice}$")
+	    p3, = par2.plot(nice/1.e3/(101325.0/273.15/287), z,label="N$_{ice}$")
     
     host.legend(loc=6)
     

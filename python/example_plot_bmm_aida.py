@@ -32,11 +32,15 @@ def plot_model_run(fileName='/tmp/output1.nc'):
     beta_ext=   nc['beta_ext'][:]
     ndrop=      nc['ndrop'][:]
     deff=       nc['deff'][:]
+    nwat=       nc['nwat'][:,:,:]
     mwat=       nc['mwat'][:,:,:]
     qi=         nc['qi'][:]
     nice=       nc['nice'][:]
-    mice=       nc['mice'][:,:,:]
+    mice=       nc['mice'][:,:,:]\
     
+    
+    print(np.max(ndrop)/np.max(np.sum(np.sum(nwat[:,:,:],axis=2),axis=1)))
+    print(np.max(ndrop)/1e6)
 
     from mpl_toolkits.axes_grid1 import host_subplot
     import mpl_toolkits.axisartist as AA
@@ -64,7 +68,7 @@ def plot_model_run(fileName='/tmp/output1.nc'):
     
     host.set_xlabel("Time (s)")
     host.set_ylabel("Mixing ratios (g kg$^{-1}$)")
-    host.set_title('Second aerosol: w=26 m s$^{-1}$, approx (10.0 K min$^{-1}$)')
+    host.set_title('Second aerosol: w=1.3 m s$^{-1}$, approx (0.5 K min$^{-1}$)')
     par1.set_ylabel("Ice")
     par2.set_ylabel("Humidity")
     

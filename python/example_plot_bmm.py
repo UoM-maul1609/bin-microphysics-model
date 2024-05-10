@@ -155,15 +155,22 @@ def plot_model_run(fileName='/tmp/output1.nc'):
     
     host.set_xlabel("Time (s)")
     host.set_ylabel("Drop mass (kg)")
-    
-    p1=host.plot(time, mwat.reshape((mwat.shape[0],-1)), label="Drop masses")
-    
-    for i in range(len(p1)):
-        if i == 0:
-            col=p1[i].get_color()
-        p1[i].set_color(col)
-        host.axis["left"].label.set_color(col)
-    ##########################################################################
+    (r,c,p)=np.shape(mwat)
+    for j in range(c):
+    	mwat1=mwat[:,j,:]
+    	p1=host.plot(time, mwat1.reshape((mwat1.shape[0],-1)), label="Drop masses")
+    	for i in range(len(p1)):
+    		if i == 0:
+    			if j == 0:
+    				col=p1[i].get_color()
+    				lt='-'
+    			else:
+    				col='r'
+    				lt='--'
+    		p1[i].set_color(col)
+    		p1[i].set_linestyle(lt)
+    		host.axis["left"].label.set_color(col)
+		##########################################################################
     host.set_yscale('log')
 
     plt.subplots_adjust(wspace=0.4)
