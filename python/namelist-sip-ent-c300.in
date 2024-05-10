@@ -40,10 +40,10 @@
  	alpha_cond=1.0,
  	alpha_therm_ice=1.0,
  	alpha_dep=1.0,
- 	hm_flag=.true.,
- 	break_flag=2,       ! 0=off, 1=vardiman et al, 2=phillips 2017 scheme
- 	mode1_flag=.true., ! collisional and via nucleation
- 	mode2_flag=.true./
+ 	hm_flag=.false.,
+ 	break_flag=0,       ! 0=off, 1=vardiman et al, 2=phillips 2017 scheme
+ 	mode1_flag=.false., ! collisional and via nucleation
+ 	mode2_flag=.false./
 &aerosol_setup
     n_mode            = 1,
     n_intern          = 4,
