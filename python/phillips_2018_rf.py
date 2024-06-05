@@ -1,6 +1,20 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
+data1=[-20.666666666666668, 0.13779527559055116,-14.476190476190482, 0.21496062992125986, \
+	-12.285714285714288, 0.46574803149606303, -8.666666666666671, 0.231496062992126, \
+	-3.904761904761912, 0.18740157480314956]
+datxc=data1[0::2]
+datyc=data1[1::2]
+data1=[-20.666666666666668, 0.04685039370078736,-14.476190476190482, 0.04685039370078736,\
+	-12.285714285714288, 0.27834645669291336,-8.666666666666671, 0.055118110236220375, \
+	-3.904761904761912, 0.04685039370078736]
+datyl=data1[1::2]
+data1=[-20.666666666666668, 0.2673228346456693,-14.476190476190482, 0.4133858267716536, \
+	-12.285714285714288, 0.6503937007874017,-8.666666666666671, 0.41062992125984255, \
+	-3.80952380952381, 0.33070866141732286]
+datyu=data1[1::2]
+yerr=np.append(np.expand_dims(np.array(datyl),axis=1),np.expand_dims(np.array(datyu),axis=1),axis=1).transpose()
 def CalcFrag(D,t):
 
     Dthresh=np.minimum(D,1.6e-3)
@@ -37,7 +51,7 @@ rhow=1000.
 DT=10e-6
 
 # change diameter to that of interest
-D=0.150e-3 # diameter of freezing drop
+D=0.300e-3 # diameter of freezing drop
 #D=2.6e-3 # diameter of freezing drop
 
 m=rhow*np.pi*D**3/6.
@@ -57,10 +71,11 @@ plt.xlabel('Number of fragments')
 plt.ylabel('T ($^\circ$C)')
 ax=fig.gca()
 ax.invert_yaxis()
-
+plt.errorbar(daty,datx,np.zeros((2,len(datx))),yerr)
 mB=1./2.5*m
 mT=rhoi*np.pi*DT**3/6.
 
 plt.legend(['Small splinters , D$_S$=' + str(round(1e6*(6.*mT/(np.pi*1000))**(1./3.),0)) + ' $\mu$m', \
-    'Large splinters, D$_L$=' + str(round(1e6*(6.*mB/(np.pi*1000))**(1./3.),0)) + ' $\mu$m'])
+    'Large splinters, D$_L$=' + str(round(1e6*(6.*mB/(np.pi*1000))**(1./3.),0)) + ' $\mu$m','Keinert et al. (2020)'])
+
 plt.title('Number of fragments from a D=' +str(round(1000*D,3)) + 'mm freezing drop')
