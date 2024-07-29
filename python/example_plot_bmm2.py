@@ -44,9 +44,9 @@ def plot_model_run(fileName='/tmp/output1.nc'):
     import mpl_toolkits.axisartist as AA
     import matplotlib.pyplot as plt
     
+    plt.figure()
+    plt.plot(time,t)
     fig = plt.figure(figsize=(15,10))
-    
-    
     ##########################################################################
     # First plot
     ##########################################################################

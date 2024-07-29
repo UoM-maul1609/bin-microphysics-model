@@ -25,7 +25,8 @@
         						mass_fragment3=mass_fragment1, &
         						gam_fac_ent=1._wp/(1._wp+0.5_wp), & ! P+K, 12-25
         						gam_fac_ent2=1._wp+0.5_wp, &
-        						onethird=1._wp/3._wp, fourthirds=4._wp/3._wp
+        						onethird=1._wp/3._wp, &
+        						twothirds=2._wp/3._wp, fourthirds=4._wp/3._wp
         logical :: l_inhom		
 
         type parcel
@@ -129,7 +130,7 @@
                         sce_flag=0,ice_flag=0, bin_scheme_flag=1, entrain_period=0
         logical :: use_prof_for_tprh, hm_flag, mode1_flag, mode2_flag, bubble_flag, &
         	release_aerosol, entrain_aerosol
-        integer(i4b) :: break_flag
+        integer(i4b) :: break_flag, ice_nucleation_flag=0
         real(wp) :: dz,dt, runtime, t_thresh
         ! sounding spec
         real(wp) :: psurf, tsurf
@@ -295,6 +296,7 @@
                     zinit,tpert,use_prof_for_tprh,winit,winit2,amplitude2, &
                     tinit,pinit,rhinit, radinit, bubble_flag, &
                     microphysics_flag, ice_flag, bin_scheme_flag, sce_flag, &
+                    ice_nucleation_flag, &
                     hm_flag, break_flag, mode1_flag, mode2_flag, vent_flag, &
                     kappa_flag, updraft_type,t_thresh, adiabatic_prof, &
                     entrain_period, thresh_to_start_hom_mix, release_aerosol, &
@@ -622,7 +624,7 @@
         call poly_int(parcel1%z_sound(iloc:iloc+1), parcel1%rh_sound(iloc:iloc+1), &
                     min(parcel1%z,parcel1%z_sound(n_levels_s)), var,dummy)        
         parcel1%rh=var
-        parcel1%rh=0.99_wp
+        parcel1%rh=rhinit
         !parcel1%t=parcel1%t+tpert
         print *,'t,p,rh from sounding: ', parcel1%t, parcel1%p, parcel1%rh
     endif
@@ -2030,7 +2032,7 @@
       call terminal01(vel,diam,rhoat, t,p,nre,cd,sz)
   
       ! mass ventilation - use dv+++++++++
-      calc = (nsc1**(1._wp/3._wp)) * sqrt(nre)
+      calc = (nsc1**(onethird)) * sqrt(nre)
       where(calc.gt.51.4_wp)
         calc=51.4_wp
       end where
@@ -2043,7 +2045,7 @@
       !-----------------------------------
     
       ! heat ventilation - use ka---------
-      calc = (nsc2**(1._wp/3._wp)) * sqrt(nre)
+      calc = (nsc2**(onethird)) * sqrt(nre)
       where(calc.gt.51.4_wp)
         calc=51.4_wp
       end where
@@ -2155,8 +2157,8 @@
       call terminal02(vel,mwat, t,p,phi,rhoi,nump,rime,nre,sz)
 
       ! mass ventilation - use dv; heat ventilation - use ka +++++++
-      calc1 = nsc1**(1._wp/3._wp)
-      calc2 = nsc2**(1._wp/3._wp)
+      calc1 = nsc1**(onethird)
+      calc2 = nsc2**(onethird)
   
       ! columns
       nre2=min(nre,20._wp)
@@ -2306,7 +2308,7 @@
   
       vol=mwat/rhoice
   
-      a=( 3._wp*vol/(4._wp*pi*phi) )**(1._wp/3._wp)
+      a=( 3._wp*vol/(4._wp*pi*phi) )**(onethird)
       c=a*phi
   
       where(phi.lt.1._wp)
@@ -2765,6 +2767,11 @@
 		demott_2010=min(0.0594_wp*(tc)**3.33_wp * &
 		    (naer05/1.e6_wp)**(0.0264_wp*tc+0.0033_wp),naer05)
 		
+! 		demott_2010=0._wp
+! 		if(t<270.15_wp) then
+! 			demott_2010=(10.e3-1.e3)/(3.0-25.0)*(t-273.15)-227.2727272727273
+! 		endif
+		
 	end function demott_2010
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
@@ -2775,7 +2782,7 @@
                          rhobin,nubin,kappabin,molwbin, &
                          moments,medges, &
                          t,p,nbins1,ncomps,nbinw,nmoms,nmodes,yice,rh,dt,&
-                         sce_flag,mode1_flag) 
+                         sce_flag,mode1_flag, ice_nucleation_flag) 
     use numerics_type
     use sce, only : calculate_mode1
     implicit none
@@ -2790,7 +2797,7 @@
     real(wp), dimension(nbinw,ncomps), intent(in) :: mbin2
     real(wp), dimension(nbinw,ncomps+1), intent(inout) :: mbin2_ice
     real(wp), dimension(nbins1+1,nmodes), intent(in) :: medges
-    integer(i4b), intent(in) :: sce_flag
+    integer(i4b), intent(in) :: sce_flag, ice_nucleation_flag
     logical, intent(in) :: mode1_flag
     
 
@@ -2804,7 +2811,7 @@
     integer(i4b) :: i,j,k, inew, it, ib
     real(wp) :: fracinliq, fracinice, naer05, nprimary
     real(wp) :: n, nt, nb, mt, mb, mnew, nleft, mttot, mbtot, mleft, mall,  &
-            mtot_orig, mtot_mt, mtot_mb
+            mtot_orig, mtot_mt, mtot_mb, ns_nuc
 
     ! (1) calculate the homogeneous nucleation of ice in SC water
     ! (2) calculate the primary nucleation
@@ -2827,10 +2834,10 @@
             rhoat(:)=mwat(:)/rhow+sum(mbin2(:,:)/rhobin(:,:),2)
             rhoat(:)=(mwat(:)+sum(mbin2(:,:),2))/rhoat(:);
 
-            dw(:)=((mwat(:)+sum(mbin2(:,:),2))*6._wp/(pi*rhoat(:)))**(1._wp/3._wp)
+            dw(:)=((mwat(:)+sum(mbin2(:,:),2))*6._wp/(pi*rhoat(:)))**(onethird)
 
             dd(:)=((sum(mbin2(:,:)/rhobin(:,:),2))* &
-                    6._wp/(pi))**(1._wp/3._wp) ! dry diameter
+                    6._wp/(pi))**(onethird) ! dry diameter
                           ! needed for eqn 6, petters and kreidenweis (2007)
             kappa(:)=sum((mbin2(:,:)+1.e-60_wp)/rhobin(:,:)*kappabin(:,:),2) &
                     / sum((mbin2(:,:)+1.e-60_wp)/rhobin(:,:),2)
@@ -2847,38 +2854,66 @@
     dn01(:)=dn01(:)+abs( npart(:)*(1._wp-exp(-jw(:)*mwat(:)/rhow*dt)) )
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
+     
+    select case(ice_nucleation_flag)
+    	case(0)
+		!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+		! (2) second calculate the ice formation over dt using DeMott et al. 2010!
+		!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+		! calculate the dry size of the aerosol particle                         
+		dd(:)=((sum(mbin2(:,:)/rhobin(:,:),2))*6._wp/(pi))**(onethird) ! dry diameter
+		naer05=0._wp
+		! add up the total number > 500 nm
+		do i=1,nbinw
+			if ((dd(i).gt.0.5e-6_wp).and.(rh.ge.1._wp)) naer05=naer05+npart(i)-dn01(i)
+		enddo  
+		! calculate the number of ice crystals according to DeMott et al. 2010
+		nprimary=demott_2010(t,naer05)
+		! ensure the number nucleated is less than the number that can nucleate
+		nprimary=min(naer05,nprimary) 
+		! this is ice moments for total number of monomers (ncomps+2)
+		nprimary=max(nprimary-sum(dn01+moments(nbinw+1:2*nbinw,ncomps+2)),0._wp)
+		!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+		! deplete the aerosols larger than 0.5 microns
+		! (maybe in future will want to deplete the largest first, but at the moment
+		!       it is doing it for all modes - in reverse order)
+		do i=nbinw,1,-1
+			if (nprimary.le.0._wp) exit
+			if ((dd(i).gt.0.5e-6_wp).and.(rh.ge.1._wp)) then
+				! it can nucleate: reduce number of primary ice
+				dn01(i)=dn01(i)+min(nprimary,npart(i)-dn01(i))
+				nprimary=nprimary-min(npart(i)-dn01(i),nprimary)
+			endif
+		enddo    
+		! limit to number of drops / unfrozen aerosol
+		dn01(:)=min(dn01(:),npart(:))
+		
+		case(1) ! ns param - assumption only valid if full-moving
+			!ns_nuc=exp(-0.517*(t-273.15)+8.934)
+			ns_nuc=exp(-1.6*(t-273.15)-16.0067)
+! 			print *,shape(npart)
+! 			print *,sum(pi*npart(1:240)*(((sum(mbin2(1:240,:)/rhobin(1:240,:),2))*6._wp/(pi))**(onethird))**2)
+! 			stop
+			do i=1,nbinw
+				dw(i)=((mwat(i)+sum(mbin2(i,:)))*6._wp/(pi*rhoat(i)))**(onethird)
+				dd(i)=((sum(mbin2(i,:)/rhobin(i,:)))*6._wp/(pi))**(onethird) ! dry diameter
+
+				if((abs(kappa(i)-0.004)/0.004<0.001) .and. &
+					((dw(i).gt.0.0e-6_wp).and.(rh.ge.1._wp))) then
+					
+					dn01(i)=(1.0-exp(-pi*dd(i)**2*ns_nuc))* &
+						(npart(i)+npartice(i))
+				endif
+			enddo
+			dn01=max(dn01-npartice,0.0)
+! 			print *,sum(dn01(1:240))/1000.0,sum((1.0-exp(-pi*dd(1:240)**2*ns_nuc))* &
+! 				(npart(1:240)+npartice(1:240)))/1000.0
+        case default
+            print *,'error ice_nucleation_flag'
+            stop
+    end select
     
     
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! (2) second calculate the ice formation over dt using DeMott et al. 2010!
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! calculate the dry size of the aerosol particle                         
-    dd(:)=((sum(mbin2(:,:)/rhobin(:,:),2))*6._wp/(pi))**(1._wp/3._wp) ! dry diameter
-    naer05=0._wp
-    ! add up the total number > 500 nm
-    do i=1,nbinw
-        if ((dd(i).gt.0.5e-6_wp).and.(rh.ge.1._wp)) naer05=naer05+npart(i)-dn01(i)
-    enddo  
-    ! calculate the number of ice crystals according to DeMott et al. 2010
-    nprimary=demott_2010(t,naer05)
-    ! ensure the number nucleated is less than the number that can nucleate
-    nprimary=min(naer05,nprimary) 
-    ! this is ice moments for total number of monomers (ncomps+2)
-    nprimary=max(nprimary-sum(dn01+moments(nbinw+1:2*nbinw,ncomps+2)),0._wp)
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! deplete the aerosols larger than 0.5 microns
-    ! (maybe in future will want to deplete the largest first, but at the moment
-    !       it is doing it for all modes - in reverse order)
-    do i=nbinw,1,-1
-        if (nprimary.le.0._wp) exit
-        if ((dd(i).gt.0.5e-6_wp).and.(rh.ge.1._wp)) then
-            ! it can nucleate: reduce number of primary ice
-            dn01(i)=dn01(i)+min(nprimary,npart(i)-dn01(i))
-            nprimary=nprimary-min(npart(i)-dn01(i),nprimary)
-        endif
-    enddo    
-    ! limit to number of drops / unfrozen aerosol
-    dn01(:)=min(dn01(:),npart(:))
     if(t.gt.ttr) dn01=0._wp
     ! we now have the total number of ice crystals to 'nucleate'
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -3071,10 +3106,10 @@
           rhoat(:)=mwat(:)/rhow+sum(mbin2(:,:)/rhobin(:,:),2)
           rhoat(:)=(mwat(:)+sum(mbin2(:,:),2))/rhoat(:);
   
-          dw(:)=((mwat(:)+sum(mbin2(:,:),2))*6._wp/(pi*rhoat(:)))**(1._wp/3._wp)
+          dw(:)=((mwat(:)+sum(mbin2(:,:),2))*6._wp/(pi*rhoat(:)))**(onethird)
   
           dd(:)=((sum(mbin2(:,:)/rhobin(:,:),2))* &
-                 6._wp/(pi))**(1._wp/3._wp) ! dry diameter
+                 6._wp/(pi))**(onethird) ! dry diameter
                               ! needed for eqn 6, petters and kreidenweis (2007)
           kappa(:)=sum((mbin2(:,:)+1.e-60_wp)/rhobin(:,:)*kappabin(:,:),2) &
                  / sum((mbin2(:,:)+1.e-60_wp)/rhobin(:,:),2)
@@ -3098,7 +3133,7 @@
       ! calculate the dry size of the aerosol particle                         !
       !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
       dd(:)=((sum(mbin2(:,:)/rhobin(:,:),2))* &
-             6._wp/(pi))**(1._wp/3._wp) ! dry diameter
+             6._wp/(pi))**(onethird) ! dry diameter
       naer05=0._wp
       do i=1,sz2
         if ((dd(i).gt.0.5e-6_wp).and.(rh.ge.1._wp)) naer05=naer05+npart(i)-dn01(i)
@@ -3715,7 +3750,7 @@
         subroutine func4(npart, npartice, mwat,mbin2,mbin2_ice, &
                          rhobin,nubin,kappabin,molwbin,moments,medges, &
                          t,p,nbins1,ncomps,nbinw,nmoms,nmodes,yice,rh,dt,sce_flag, &
-                         mode1_flag) 
+                         mode1_flag, ice_nucleation_flag) 
             use numerics_type
             implicit none
             real(wp), intent(inout) :: t
@@ -3729,7 +3764,7 @@
             real(wp), dimension(nbinw,ncomps+1), intent(inout) :: mbin2_ice
             real(wp), intent(inout), dimension(nbinw) :: yice
             real(wp), intent(in), dimension(nbins1+1,nmodes) :: medges
-            integer(i4b), intent(in) :: sce_flag
+            integer(i4b), intent(in) :: sce_flag, ice_nucleation_flag
             logical, intent(in) :: mode1_flag
         end subroutine func4
     end interface
@@ -3848,7 +3883,7 @@
                 n_comps,parcel1%n_bin_modew,parcel1%imoms+n_comps,parcel1%n_modes, &
                 parcel1%yice(1:parcel1%n_bin_modew), &
                 parcel1%y(parcel1%irh), parcel1%dt,sce_flag, &
-                mode1_flag) 
+                mode1_flag, ice_nucleation_flag) 
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
         
@@ -3980,7 +4015,6 @@
         
     endif    
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    
     end subroutine bin_microphysics
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
@@ -4484,7 +4518,7 @@
         call check( nf90_inq_varid(io1%ncid, "ndrop", io1%a_dimid) )
         ! units
         call check( nf90_put_att(io1%ncid, io1%a_dimid, &
-                   "units", "m-3") )
+                   "units", "#/kg") )
                    
         ! define variable: deff
         call check( nf90_def_var(io1%ncid, "deff", NF90_DOUBLE, &
@@ -4553,7 +4587,7 @@
             call check( nf90_inq_varid(io1%ncid, "nice", io1%a_dimid) )
             ! units
             call check( nf90_put_att(io1%ncid, io1%a_dimid, &
-                       "units", "m-3") )  
+                       "units", "#/kg") )  
                         
             ! define variable: mice
             call check( nf90_def_var(io1%ncid, "mice", NF90_DOUBLE, &
@@ -4676,7 +4710,7 @@
 
     ! write variable: number > 2.5 microns (8.1812e-15 kg)
     parcel1%ndrop=0._wp
-    where (parcel1%y(1:parcel1%n_bin_modew) > 6.5450e-14_wp)
+    where (parcel1%y(1:parcel1%n_bin_modew) > 1.e-15_wp)
         parcel1%ndrop=parcel1%npart(:)
     end where
     
@@ -4691,16 +4725,16 @@
     call check( nf90_inq_varid(io1%ncid, "deff", io1%varid ) )
     
     parcel1%ndrop=0._wp
-    where (parcel1%y(1:parcel1%n_bin_modew) > 6.5450e-14_wp)
+    where (parcel1%y(1:parcel1%n_bin_modew) > 1.e-15_wp)
     	parcel1%ndrop =  (parcel1%y(1:parcel1%n_bin_modew)* &
             6._wp/(rhow*pi))**(3._wp/3._wp)* parcel1%npart(1:parcel1%n_bin_modew)
 	end where
 	sd3 = sum(parcel1%ndrop)
 	
     parcel1%ndrop=0._wp
-    where (parcel1%y(1:parcel1%n_bin_modew) > 6.5450e-14_wp)
+    where (parcel1%y(1:parcel1%n_bin_modew) > 1.e-15_wp)
     	parcel1%ndrop =  (parcel1%y(1:parcel1%n_bin_modew)* &
-            6._wp/(rhow*pi))**(2._wp/3._wp)* parcel1%npart(1:parcel1%n_bin_modew)
+            6._wp/(rhow*pi))**(twothirds)* parcel1%npart(1:parcel1%n_bin_modew)
 	end where
 	sd2 = sum(parcel1%ndrop)
 	
