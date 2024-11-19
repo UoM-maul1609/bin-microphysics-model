@@ -35,14 +35,14 @@ if __name__=="__main__":
     lut1,lut2=doAnalysis()
     
     plt.ion()
-    if lut_flag==0:
-        plt.plot(NaClMR,lut1,'x-')
-        plt.ylabel('CDNC (cm$^{-3}$)')
-        plt.yscale('log')
-    elif lut_flag==1:
-        plt.plot(NaClMR,lut2,'x-')
-        plt.ylabel('Albedo')
-    
-    plt.xscale('log')
-    plt.xlabel('NaCl m.r. (kg kg$^{-1}$)')
-    plt.savefig('/tmp/' + username + '/lut.png')
+#     if lut_flag==0:
+#         plt.plot(NaClMR,lut1,'x-')
+#         plt.ylabel('CDNC (cm$^{-3}$)')
+#         plt.yscale('log')
+#     elif lut_flag==1:
+#         plt.plot(NaClMR,lut2,'x-')
+#         plt.ylabel('Albedo')
+#     
+#     plt.xscale('log')
+#     plt.xlabel('NaCl m.r. (kg kg$^{-1}$)')
+#     plt.savefig('/tmp/' + username + '/lut.png')

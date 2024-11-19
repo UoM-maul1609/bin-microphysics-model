@@ -27,14 +27,16 @@
                         write_sce_to_bmm, &
                         scefile, sce_flag, hm_flag, break_flag, mode1_flag,mode2_flag, &
                         psurf, tsurf, q_read, theta_read, rh_read, z_read, &
-                        runtime, dt, zinit, tpert, use_prof_for_tprh, winit, &
+                        time_chamber, press_chamber, temp_chamber, &
+                        runtime, dt, zinit, tpert, use_prof_for_tprh, chamber_override, &
+                        winit, &
                         winit2, amplitude2, tinit, pinit, &
                         rhinit, radinit, bubble_flag, &
                         microphysics_flag, ice_flag, bin_scheme_flag, vent_flag, &
                         kappa_flag, updraft_type, t_thresh, &
                         adiabatic_prof, entrain_period, thresh_to_start_hom_mix, &
-                        vert_ent, z_ctop, &
-                        ent_rate, n_levels_s, alpha_therm, alpha_cond, alpha_therm_ice, &
+                        vert_ent, z_ctop, ent_rate, &
+                        n_levels_s, n_levels_c, alpha_therm, alpha_cond, alpha_therm_ice, &
                         alpha_dep, n_intern, n_mode, n_sv, sv_flag, n_bins, n_comps, &
                         n_aer1,d_aer1,sig_aer1,dmina,dmaxa,mass_frac_aer1,molw_core1, &
                         density_core1, nu_core1, kappa_core1, org_content1, molw_org1, &
@@ -82,11 +84,14 @@
         endif 
         ! initialise parcel1 arrays in bmm module       
         call initialise_bmm_arrays(psurf, tsurf, q_read, theta_read, rh_read, z_read, &
-                    runtime, dt, zinit, tpert, use_prof_for_tprh, winit, tinit, pinit, &
+        			time_chamber, press_chamber, temp_chamber, &
+                    runtime, dt, zinit, tpert, use_prof_for_tprh, chamber_override, &
+                    winit, tinit, pinit, &
                     rhinit, radinit, bubble_flag, &
                     microphysics_flag, ice_flag, bin_scheme_flag, vent_flag, &
                     kappa_flag, updraft_type, adiabatic_prof, vert_ent, z_ctop, &
-                    ent_rate, n_levels_s, alpha_therm, alpha_cond, alpha_therm_ice, &
+                    ent_rate, n_levels_s, n_levels_c, &
+                    alpha_therm, alpha_cond, alpha_therm_ice, &
                     alpha_dep, n_intern, n_mode, n_sv, sv_flag, n_bins, n_comps, &
                     n_aer1,d_aer1,sig_aer1,dmina,dmaxa,mass_frac_aer1,molw_core1, &
                     density_core1, nu_core1, kappa_core1, org_content1, molw_org1, &

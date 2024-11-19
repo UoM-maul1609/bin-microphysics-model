@@ -36,8 +36,8 @@ def plot_model_run(fileName='/tmp/output1.nc'):
     mwat=       nc['mwat'][:,:,:]
     qi=         nc['qi'][:]
     nice=       nc['nice'][:]
-    mice=       nc['mice'][:,:,:]\
-    
+    mice=       nc['mice'][:,:,:]
+    rhoa= 		p/t/(8.314/29e-3)
     
     print(np.max(ndrop)/np.max(np.sum(np.sum(nwat[:,:,:],axis=2),axis=1)))
     print(np.max(ndrop)/1e6)
@@ -138,7 +138,7 @@ def plot_model_run(fileName='/tmp/output1.nc'):
     host.set_ylabel("CDNC (cm$^{-3}$)")
     par2.set_ylabel("N$_{ice}$ (L$^{-1}$)")
     
-    p1, = host.plot(time, ndrop/1.e6, label="CDNC")
+    p1, = host.plot(time, ndrop/1.e6*rhoa, label="CDNC")
     p3, = par2.plot(time, nice/1.e3, label="N$_{ice}$")
     
     par2.set_xlim(host.get_xlim())

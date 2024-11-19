@@ -32,8 +32,10 @@
         type parcel
             ! variables for bin model
             integer(i4b) :: n_bins1,n_modes,n_comps, n_bin_mode, n_bin_modew, n_bin_mode1, &
-                            n_sound, ice_flag, sce_flag
+                            n_sound, n_chamber, ice_flag, sce_flag
             real(wp) :: dt
+            real(wp), dimension(:), allocatable :: time_chamber, press_chamber, &
+            										temp_chamber, dp_chamber, dt_chamber
             real(wp), dimension(:,:), allocatable :: q_sound
             real(wp), dimension(:), allocatable :: t_sound, z_sound, rh_sound, &
                                                     p_sound, theta_q_sound
@@ -101,6 +103,7 @@
         end type sounding
 
 
+
         type io
             ! variables for io
             integer(i4b) :: ncid, varid, x_dimid, bin_dimid, bin2_dimid, bin3_dimid, &
@@ -128,7 +131,8 @@
                     alpha_therm_ice, alpha_dep, thresh_to_start_hom_mix
         integer(i4b) :: microphysics_flag=0, kappa_flag,updraft_type, vent_flag, &
                         sce_flag=0,ice_flag=0, bin_scheme_flag=1, entrain_period=0
-        logical :: use_prof_for_tprh, hm_flag, mode1_flag, mode2_flag, bubble_flag, &
+        logical :: use_prof_for_tprh, hm_flag, mode1_flag, mode2_flag, &
+        	chamber_override=.false., bubble_flag, &
         	release_aerosol, entrain_aerosol
         integer(i4b) :: break_flag, ice_nucleation_flag=0
         real(wp) :: dz,dt, runtime, t_thresh
@@ -136,10 +140,11 @@
         real(wp) :: psurf, tsurf
         integer(i4b), parameter :: nlevels_r=1000
         integer(i4b), parameter :: nq=3
-        integer(i4b) :: n_levels_s, idum, n_sel
+        integer(i4b) :: n_levels_s, n_levels_c, idum, n_sel
         real(wp) :: mult, rh_act
         real(wp), allocatable, dimension(:,:) :: q_read !nq x nlevels_r
         real(wp), allocatable, dimension(:) :: theta_read,rh_read,  z_read
+        real(wp), allocatable, dimension(:) :: time_chamber, press_chamber, temp_chamber
         ! aerosol setup
         integer(i4b) :: n_intern, n_mode,n_sv,sv_flag,n_bins,n_comps
         ! aerosol_spec
@@ -194,7 +199,9 @@
 	!>@param[in] n_comps: number of different compositions in a mode
 	!>@param[in] nq: number of q-variables in sounding
 	!>@param[in] n_levels_s: number of levels in sounding
+	!>@param[in] n_levels_c: number of levels in chamber data
 	!>@param[inout] q_read, theta_read, rh_read, z_read: sounding	
+	!>@param[inout] time_chamber, press_chamber, temp_chamber: chamber	
 	!>@param[inout] n_aer1: number conc. in modes
 	!>@param[inout] d_aer1: diameter in modes
 	!>@param[inout] sig_aer1: geo std in modes
@@ -212,6 +219,7 @@
 	!>@param[inout] log_c_star1: log_c_star in volatility bins
 	subroutine allocate_arrays(n_intern,n_mode,n_sv,n_bins,n_comps,nq,n_levels_s, &
 		                    q_read,theta_read,rh_read,z_read, &
+		                    n_levels_c, time_chamber, press_chamber, temp_chamber, &
 		                    n_aer1,d_aer1,sig_aer1,mass_frac_aer1, molw_core1, &
 		                    density_core1, nu_core1, kappa_core1, &
 		                    org_content1,molw_org1,kappa_org1,density_org1, &
@@ -219,10 +227,11 @@
 		use numerics_type
 		implicit none
 		integer(i4b), intent(in) :: n_intern, n_mode, n_sv, n_bins,n_comps, nq, &
-		                            n_levels_s
+		                            n_levels_s, n_levels_c
 		real(wp), dimension(:), allocatable, intent(inout) :: theta_read,rh_read,z_read, &
 		                        org_content1,molw_org1,kappa_org1, &
-		                        density_org1,delta_h_vap1,nu_org1,log_c_star1
+		                        density_org1,delta_h_vap1,nu_org1,log_c_star1, &
+		                        time_chamber, press_chamber, temp_chamber
 		real(wp), dimension(:,:), allocatable, intent(inout) :: q_read, &
 		                        n_aer1,d_aer1,sig_aer1,mass_frac_aer1
 		real(wp), dimension(:), allocatable, intent(inout) :: molw_core1,density_core1, &
@@ -236,6 +245,13 @@
 		allocate( rh_read(1:n_levels_s), STAT = AllocateStatus)
 		if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
 		allocate( z_read(1:n_levels_s), STAT = AllocateStatus)
+		if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+		
+		allocate( time_chamber(1:n_levels_c), STAT = AllocateStatus)
+		if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+		allocate( press_chamber(1:n_levels_c), STAT = AllocateStatus)
+		if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+		allocate( temp_chamber(1:n_levels_c), STAT = AllocateStatus)
 		if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
 		
 		allocate( n_aer1(1:n_intern,1:n_mode), STAT = AllocateStatus)
@@ -291,17 +307,19 @@
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         namelist /sounding_spec/ psurf, tsurf,  &
                     q_read, theta_read, rh_read, z_read
+        namelist /chamber_spec/ time_chamber, press_chamber, temp_chamber
         ! define namelists for environment
         namelist /run_vars/ outputfile, scefile,runtime, dt, &
                     zinit,tpert,use_prof_for_tprh,winit,winit2,amplitude2, &
                     tinit,pinit,rhinit, radinit, bubble_flag, &
                     microphysics_flag, ice_flag, bin_scheme_flag, sce_flag, &
                     ice_nucleation_flag, &
-                    hm_flag, break_flag, mode1_flag, mode2_flag, vent_flag, &
+                    hm_flag, break_flag, mode1_flag, mode2_flag, chamber_override, &
+                    vent_flag, &
                     kappa_flag, updraft_type,t_thresh, adiabatic_prof, &
                     entrain_period, thresh_to_start_hom_mix, release_aerosol, &
                     entrain_aerosol, vert_ent, &
-                    z_ctop, ent_rate,n_levels_s, &
+                    z_ctop, ent_rate,n_levels_s, n_levels_c, &
                     alpha_therm,alpha_cond,alpha_therm_ice,alpha_dep
         namelist /aerosol_setup/ n_intern,n_mode,n_sv,sv_flag, n_bins,n_comps
         namelist /aerosol_spec/ n_aer1,d_aer1,sig_aer1, dmina,dmaxa, &
@@ -326,6 +344,7 @@
         ! allocate memory / init
 		call allocate_arrays(n_intern,n_mode,n_sv,n_bins,n_comps,nq,n_levels_s, &
 		                    q_read,theta_read,rh_read,z_read, &
+		                    n_levels_c, time_chamber, press_chamber, temp_chamber, &
 		                    n_aer1,d_aer1,sig_aer1,mass_frac_aer1, molw_core1, &
 		                    density_core1, nu_core1, kappa_core1, &
 		                    org_content1,molw_org1,kappa_org1,density_org1, &
@@ -333,6 +352,10 @@
         
         read(8,nml=sounding_spec)
         read(8,nml=aerosol_spec)
+        if(chamber_override) then 
+        	read(8,nml=chamber_spec)
+        	if(chamber_override) use_prof_for_tprh=.false.
+        endif
         close(8)
         tau2 = 2._wp*pi/winit2*amplitude2
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -353,11 +376,14 @@
 	!>@brief
 	!>interpolates the sounding to the grid
     subroutine initialise_bmm_arrays(psurf, tsurf, q_read, theta_read, rh_read, z_read, &
-                    runtime, dt, zinit, tpert, use_prof_for_tprh, winit, tinit, pinit, &
+    				time_chamber, press_chamber, temp_chamber, &
+                    runtime, dt, zinit, tpert, use_prof_for_tprh, chamber_override, &
+                    winit, tinit, pinit, &
                     rhinit, radinit, bubble_flag, &
                     microphysics_flag, ice_flag, bin_scheme_flag, vent_flag, &
                     kappa_flag, updraft_type, adiabatic_prof, vert_ent, z_ctop, &
-                    ent_rate, n_levels_s, alpha_therm, alpha_cond, alpha_therm_ice, &
+                    ent_rate, n_levels_s, n_levels_c, &
+                    alpha_therm, alpha_cond, alpha_therm_ice, &
                     alpha_dep, n_intern, n_mode, n_sv, sv_flag, n_bins, n_comps, &
                     n_aer1,d_aer1,sig_aer1,dmina,dmaxa,mass_frac_aer1,molw_core1, &
                     density_core1, nu_core1, kappa_core1, org_content1, molw_org1, &
@@ -367,14 +393,18 @@
     use numerics, only : find_pos, poly_int, zeroin, fmin,vode_integrate
 
     implicit none
-    logical, intent(in) :: use_prof_for_tprh, adiabatic_prof, vert_ent, bubble_flag
+    logical, intent(in) :: use_prof_for_tprh, adiabatic_prof, vert_ent, bubble_flag, &
+    				chamber_override
     integer(i4b), intent(in) :: microphysics_flag, ice_flag, bin_scheme_flag, vent_flag, &
-                    kappa_flag, updraft_type, n_levels_s,n_intern, n_mode, n_sv, &
+                    kappa_flag, updraft_type, n_levels_s,n_levels_c, &
+                    n_intern, n_mode, n_sv, &
                     sv_flag, n_bins, n_comps, sce_flag
     real(wp), intent(in) :: psurf, radinit, &
                     tsurf, runtime, dt, zinit, tpert, winit, tinit, &
                     pinit, rhinit, alpha_therm, alpha_cond, alpha_therm_ice, &
                     alpha_dep, dmina,dmaxa, z_ctop, ent_rate
+    real(wp), dimension(1:n_levels_c), intent(in) :: time_chamber, press_chamber, &
+    												temp_chamber
     real(wp), dimension(1:n_levels_s), intent(in) :: theta_read, rh_read, z_read
     real(wp), dimension(1:nq,1:n_levels_s), intent(in) :: q_read
     real(wp), dimension(1:n_intern,1:n_mode), intent(in) :: n_aer1,d_aer1,sig_aer1
@@ -397,6 +427,7 @@
     ! set variables and allocate arrays in parcel                                  !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     parcel1%n_sound=n_levels_s   
+    parcel1%n_chamber=n_levels_c
     parcel1%n_bins1=n_bins    
     parcel1%n_modes=n_mode
     parcel1%n_comps=n_comps
@@ -483,6 +514,17 @@
     allocate( parcel1%rh_sound(1:parcel1%n_sound), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
     allocate( parcel1%theta_q_sound(1:parcel1%n_sound), STAT = AllocateStatus)
+    if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+
+    allocate( parcel1%time_chamber(1:parcel1%n_chamber), STAT = AllocateStatus)
+    if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+    allocate( parcel1%press_chamber(1:parcel1%n_chamber), STAT = AllocateStatus)
+    if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+    allocate( parcel1%temp_chamber(1:parcel1%n_chamber), STAT = AllocateStatus)
+    if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+    allocate( parcel1%dp_chamber(1:parcel1%n_chamber-1), STAT = AllocateStatus)
+    if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+    allocate( parcel1%dt_chamber(1:parcel1%n_chamber-1), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
@@ -628,6 +670,41 @@
         !parcel1%t=parcel1%t+tpert
         print *,'t,p,rh from sounding: ', parcel1%t, parcel1%p, parcel1%rh
     endif
+    
+    ! initialise with chamber conditions
+    if (chamber_override) then
+    	parcel1%time_chamber=time_chamber 
+    	parcel1%press_chamber=press_chamber 
+    	parcel1%temp_chamber=temp_chamber 
+        ! interpolate to find theta
+        iloc=find_pos(parcel1%time_chamber(1:n_levels_c),parcel1%TT)
+        iloc=min(n_levels_c-1,iloc)
+        iloc=max(1,iloc)
+        ! linear interp t
+        call poly_int(parcel1%time_chamber(iloc:iloc+1), &
+        	parcel1%temp_chamber(iloc:iloc+1), &
+        	min(parcel1%TT,parcel1%time_chamber(n_levels_c)), var,dummy)        
+        parcel1%t=var +tpert
+        ! linear interp pressure
+        call poly_int(parcel1%time_chamber(iloc:iloc+1), &
+        	parcel1%press_chamber(iloc:iloc+1), &
+            min(parcel1%TT,parcel1%time_chamber(n_levels_c)), var,dummy)        
+        parcel1%p=var 
+        parcel1%rh=rhinit
+    	
+    	! calculate derivatives
+    	do i=1,n_levels_c-1
+    		parcel1%dp_chamber(i) = &
+    			(parcel1%press_chamber(i+1)-parcel1%press_chamber(i))/ &
+    			(parcel1%time_chamber(i+1)-parcel1%time_chamber(i))
+    		parcel1%dt_chamber(i) = &
+    			(parcel1%temp_chamber(i+1)-parcel1%temp_chamber(i))/ &
+    			(parcel1%time_chamber(i+1)-parcel1%time_chamber(i))
+    	enddo
+        
+        print *,'t,p,rh from chamber: ', parcel1%t, parcel1%p, parcel1%rh
+    endif
+    
     parcel1%zlast=parcel1%z
     parcel1%qinit=parcel1%rh*eps1*svp_liq(parcel1%t)/(parcel1%p-svp_liq(parcel1%t))
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -2488,8 +2565,15 @@
         ! now calculate derivatives
         ! adiabatic parcel model
         ydot(iz )=y(iw)                         ! vertical wind
-        ydot(ipr)=-p/rm/t*grav*ydot(iz)      ! hydrostatic equation
-
+        if(chamber_override) then
+			iloc=find_pos(parcel1%time_chamber(1:n_levels_c),TT)
+			iloc=min(n_levels_c-1,iloc)
+			iloc=max(1,iloc)
+        	ydot(ipr)=parcel1%dp_chamber(iloc)
+        else
+	        ydot(ipr)=-p/rm/t*grav*ydot(iz)      ! hydrostatic equation
+		endif
+		
         ! calculate equilibrium rhs
         select case (kappa_flag)
             case (0)
@@ -2529,8 +2613,15 @@
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         ! change in temperature of parcel                                        !
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        ydot(ite)=rm/p*ydot(ipr)*t/cpm  ! temperature change: expansion
-        ydot(ite)=ydot(ite)-lv/cpm*drv ! temp change: condensation
+        if (chamber_override) then
+        	ydot(ite) = parcel1%dt_chamber(iloc)
+!         	if (rh>0.95_wp) then
+! 	        	drv = drv - (svp_liq(t)-svp_liq(t-1.0))*1e-7
+! 	        endif
+        else
+			ydot(ite)=rm/p*ydot(ipr)*t/cpm  ! temperature change: expansion
+			ydot(ite)=ydot(ite)-lv/cpm*drv ! temp change: condensation
+		endif
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         
         
@@ -3774,7 +3865,7 @@
     ! mass balance                                                         !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 	parcel1%yold=parcel1%y ! store old
-    if(adiabatic_prof) then
+    if(adiabatic_prof.and.(.not.chamber_override)) then
         call mass_balance(parcel1%neq,parcel1%neqice,parcel1%y,&
                     parcel1%yice,parcel1%npart,parcel1%npartice, &
                         mass1,parcel1%n_bin_modew,&
@@ -4001,7 +4092,7 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! mass balance                                                         !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    if(adiabatic_prof) then
+    if(adiabatic_prof.and.(.not.chamber_override)) then
         ! total water after:
         call mass_balance(parcel1%neq,parcel1%neqice,parcel1%y,&
                     parcel1%yice,parcel1%npart,parcel1%npartice, &
