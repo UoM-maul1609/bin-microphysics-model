@@ -4368,8 +4368,8 @@
 					! has to be less than the peak moles of water at activation
 					dummy=fmin(1.e-50_wp,1.e1_wp, koehler02_ent,1.e-30_wp)
 					mult=1._wp
-					!rh_act=koehler02_ent(dummy)
-					rh_act=min(parcel1%y(parcel1%irh),rhenv)
+					rh_act=koehler02_ent(dummy)
+					rh_act=min(parcel1%y(parcel1%irh),rhenv,rh_act)
 					d_dummy=zeroin(1.e-30_wp, dummy, koehler02_ent,1.e-30_wp)* &
 						molw_water 
 					parcel1%mbin_ent(i,n_comps+1)= d_dummy
@@ -4383,8 +4383,8 @@
 					! has to be less than the peak moles of water at activation
 					dummy=fmin(1.e-50_wp,1.e1_wp, kkoehler02_ent,1.e-30_wp)
 					mult=1._wp
-					!rh_act=kkoehler02_ent(dummy)
-					rh_act=min(parcel1%y(parcel1%irh),rhenv)
+					rh_act=kkoehler02_ent(dummy)
+					rh_act=min(parcel1%y(parcel1%irh),rhenv,rh_act)
 					d_dummy=zeroin(1.e-30_wp, dummy, kkoehler02_ent,1.e-30_wp)* &
 						molw_water 
 					parcel1%mbin_ent(i,n_comps+1)= d_dummy

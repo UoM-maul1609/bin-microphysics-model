@@ -28,7 +28,7 @@ Fgeo = -0.087
 # feedbacks
 feedback_flag=True
 Acloud=0.448
-
+Acloud=0.47890218881836016*0.94
 
 def cloud_fit(Ts,a,b):
 	return 1.0/(1.0+10**(a*(Ts-b)))
