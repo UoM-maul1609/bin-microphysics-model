@@ -6,7 +6,7 @@
 	zinit=4863.61,
 	tpert=1.,
 	use_prof_for_tprh=.true.,
-	winit=5.0,
+	winit=2.0,
 	winit2=0.5,         ! only used if updraft_type=3 - peak updraft (m/s) in oscillatory phase
 	amplitude2=100.,    ! only used if updraft_type=3 - amplitude (m) in oscillatory phase
 	!tinit=276.869,
