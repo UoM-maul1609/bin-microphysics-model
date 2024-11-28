@@ -76,7 +76,7 @@
                                                     moments_ent, mbinedges_ent, &
                                                     moments_temp, mbinedges_temp, &
                                                     mbinedges_temp2 
-            real(wp), allocatable, dimension(:) :: momtemp, vel
+            real(wp), allocatable, dimension(:) :: momtemp, vel, cd, nre
             integer(i4b), allocatable, dimension(:) :: momenttype
             integer(i4b), dimension(:,:), allocatable :: indexc                            
                                           
@@ -501,6 +501,10 @@
     allocate( parcel1%indexc(1:parcel1%n_bin_mode,1:parcel1%n_bin_mode), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
     allocate( parcel1%vel(1:parcel1%n_bin_mode), STAT = AllocateStatus)
+    if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+    allocate( parcel1%cd(1:parcel1%n_bin_mode), STAT = AllocateStatus)
+    if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+    allocate( parcel1%nre(1:parcel1%n_bin_mode), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
 
     allocate( parcel1%q_sound(1:parcel1%n_sound,1:nq), STAT = AllocateStatus)
@@ -4503,7 +4507,7 @@
     implicit none
     logical, intent(inout) :: new_file
     character (len=*),intent(in) :: outputfile
-    real(wp) :: phi, sd2, sd3, deff
+    real(wp) :: phi, sd2, sd3, deff, precip
     ! output to netcdf file
     if(new_file) then
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -4658,6 +4662,14 @@
         call check( nf90_put_att(io1%ncid, io1%a_dimid, &
                    "units", "kg") )
 
+        ! define variable: precip
+        call check( nf90_def_var(io1%ncid, "precip", NF90_DOUBLE, &
+                    (/io1%x_dimid/), io1%varid) )
+        ! get id to a_dimid
+        call check( nf90_inq_varid(io1%ncid, "precip", io1%a_dimid) )
+        ! units
+        call check( nf90_put_att(io1%ncid, io1%a_dimid, &
+                   "units", "mm hr-1") )
                    
                    
         if(ice_flag .eq. 1) then
@@ -4856,6 +4868,25 @@
             1:parcel1%n_comps), &
         (/parcel1%n_bins1,parcel1%n_modes,parcel1%n_comps/)), start = (/1,1,1,io1%icur/)))
 
+
+	! precipitation
+	call terminal01(parcel1%vel(1:parcel1%n_bin_modew), &
+		parcel1%dw,parcel1%rhoat, &
+		parcel1%y(parcel1%ite), parcel1%y(parcel1%ipr), &
+		parcel1%nre(1:parcel1%n_bin_modew),&
+		parcel1%cd(1:parcel1%n_bin_modew),parcel1%n_bin_modew)
+		
+	precip = sum(parcel1%vel(1:parcel1%n_bin_modew)* &
+		parcel1%y(1:parcel1%n_bin_modew)* &
+		parcel1%npart(1:parcel1%n_bin_modew)/rhow*1000._wp*3600._wp)
+
+	if(ice_flag .eq. 0) then
+		! write variable: precip
+		call check( nf90_inq_varid(io1%ncid, "precip", io1%varid ) )
+		call check( nf90_put_var(io1%ncid, io1%varid, precip, &
+					start = (/io1%icur/)))
+	endif
+
     if(ice_flag .eq. 1) then
         ! write variable: qi
         call check( nf90_inq_varid(io1%ncid, "qi", io1%varid ) )
@@ -4913,6 +4944,22 @@
             (/parcel1%n_bins1,parcel1%n_modes,parcel1%n_comps/)), start = (/1,1,1,io1%icur/)))
 
             
+		! precipitation
+		
+		call terminal02(parcel1%vel(1:parcel1%n_bin_modew), &
+			parcel1%yice(1:parcel1%n_bin_modew), &
+			parcel1%y(parcel1%ite), parcel1%y(parcel1%ipr), &
+			parcel1%phi,parcel1%rhoi,parcel1%nump,parcel1%rime, &
+			parcel1%nre(1:parcel1%n_bin_modew),parcel1%n_bin_modew)
+			
+		precip = precip + sum(parcel1%vel(1:parcel1%n_bin_modew)* &
+			parcel1%yice(1:parcel1%n_bin_modew)* &
+			parcel1%npartice(1:parcel1%n_bin_modew)/rhow*1000._wp*3600._wp)
+	
+		! write variable: precip
+		call check( nf90_inq_varid(io1%ncid, "precip", io1%varid ) )
+		call check( nf90_put_var(io1%ncid, io1%varid, precip, &
+					start = (/io1%icur/)))
             
     endif
     
