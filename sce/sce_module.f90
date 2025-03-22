@@ -99,7 +99,9 @@
         ! aerosol_spec
         real(wp), allocatable, dimension(:,:) :: n_aer1,d_aer1,sig_aer1, mass_frac_aer1
         real(wp), allocatable, dimension(:) ::  molw_core1,density_core1,nu_core1, &
-                                        kappa_core1, ncloud
+                                        kappa_core1, ncloud,  &
+								org_content1, molw_org1,kappa_org1,density_org1, &
+		                    	delta_h_vap1, nu_org1, log_c_star1
 
         ! cloud spec
         real(wp), allocatable, dimension(:,:) :: lwc, dbar, iwc, dbari
@@ -161,7 +163,10 @@
 	!>@param[inout] ncloud: for initialisation
 	subroutine allocate_arrays(n_intern,n_mode,n_sv,n_bins,n_comps, &
 		                    n_aer1,d_aer1,sig_aer1,mass_frac_aer1, molw_core1, &
-		                    density_core1, nu_core1, kappa_core1,lwc,dbar,&
+		                    density_core1, nu_core1, kappa_core1, &
+		                    org_content1, molw_org1,kappa_org1,density_org1, &
+		                    delta_h_vap1, nu_org1, log_c_star1,&
+		                    lwc,dbar,&
 		                    iwc,dbari, ncloud)
 		                    
 		                    
@@ -172,7 +177,9 @@
 		                        n_aer1,d_aer1,sig_aer1,mass_frac_aer1,lwc,dbar, &
 		                        iwc, dbari
 		real(wp), dimension(:), allocatable, intent(inout) :: molw_core1,density_core1, &
-		                        nu_core1,kappa_core1,ncloud
+		                        nu_core1,kappa_core1,ncloud, &
+		                        org_content1, molw_org1,kappa_org1,density_org1, &
+		                    	delta_h_vap1, nu_org1, log_c_star1
 		
 		integer(i4b) :: AllocateStatus
 		
@@ -210,6 +217,21 @@
         iwc=0._wp
         dbari=10._wp
 
+		allocate( org_content1(1:n_sv), STAT = AllocateStatus)
+		if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+		allocate( molw_org1(1:n_sv), STAT = AllocateStatus)
+		if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+		allocate( kappa_org1(1:n_sv), STAT = AllocateStatus)
+		if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+		allocate( density_org1(1:n_sv), STAT = AllocateStatus)
+		if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+		allocate( delta_h_vap1(1:n_sv), STAT = AllocateStatus)
+		if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+		allocate( nu_org1(1:n_sv), STAT = AllocateStatus)
+		if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+		allocate( log_c_star1(1:n_sv), STAT = AllocateStatus)
+		if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+
 	end subroutine allocate_arrays
 	
 	
@@ -222,9 +244,10 @@
 	!>@brief
 	!>read in the data from the namelists for the sce microphysics model
 	!>@param[in] nmlfile
-	subroutine read_in_sce_namelist(nmlfile)
+	subroutine read_in_sce_namelist(nmlfile, nmlfile_b)
 		implicit none
         character (len=200), intent(in) :: nmlfile
+        character (len=200), optional, intent(in) :: nmlfile_b
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         ! namelists                                                            !
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -236,7 +259,9 @@
         namelist /aerosol_setup/ n_intern,n_mode,n_sv,sv_flag, n_bins,n_comps
         namelist /aerosol_spec/ n_aer1,d_aer1,sig_aer1, dmina,dmaxa, &
                                 mass_frac_aer1, molw_core1, &
-                                density_core1,nu_core1,kappa_core1
+                                density_core1,nu_core1,kappa_core1, &
+								org_content1, molw_org1,kappa_org1,density_org1, &
+		                    	delta_h_vap1, nu_org1, log_c_star1
         namelist /cloud_setup/ n_binsc,kfac,dminc,dmaxc
         namelist /cloud_spec/ lwc,dbar,iwc,dbari
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -252,17 +277,37 @@
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         open(8,file=nmlfile,status='old', recl=80, delim='apostrophe')
         read(8,nml=run_vars)
-        read(8,nml=aerosol_setup)
-        read(8,nml=cloud_setup)
-        ! allocate memory / init
-		call allocate_arrays(n_intern,n_mode,n_sv,n_bins,n_comps, &
-		                    n_aer1,d_aer1,sig_aer1,mass_frac_aer1, molw_core1, &
-		                    density_core1, nu_core1, kappa_core1, lwc, dbar, &
-		                    iwc,dbari,ncloud)
-        
-        read(8,nml=aerosol_spec)
-        read(8,nml=cloud_spec)
-        close(8)
+        if(present(nmlfile_b)) then
+			read(8,nml=cloud_setup)
+	        open(9,file=nmlfile_b,status='old', recl=80, delim='apostrophe')
+			read(9,nml=aerosol_setup)
+			! allocate memory / init
+			call allocate_arrays(n_intern,n_mode,n_sv,n_bins,n_comps, &
+								n_aer1,d_aer1,sig_aer1,mass_frac_aer1, molw_core1, &
+								density_core1, nu_core1, kappa_core1, &
+								org_content1, molw_org1,kappa_org1,density_org1, &
+		                    	delta_h_vap1, nu_org1, log_c_star1,&
+		                        lwc, dbar, &
+								iwc,dbari,ncloud)
+			
+			read(9,nml=aerosol_spec)	        
+        	close(9)
+        else
+			read(8,nml=aerosol_setup)
+			read(8,nml=cloud_setup)
+			! allocate memory / init
+			call allocate_arrays(n_intern,n_mode,n_sv,n_bins,n_comps, &
+								n_aer1,d_aer1,sig_aer1,mass_frac_aer1, molw_core1, &
+								density_core1, nu_core1, kappa_core1,  &
+								org_content1, molw_org1,kappa_org1,density_org1, &
+		                    	delta_h_vap1, nu_org1, log_c_star1,&
+		                    	lwc, dbar, &
+								iwc,dbari,ncloud)
+			
+			read(8,nml=aerosol_spec)
+		endif
+		read(8,nml=cloud_spec)
+		close(8)
         n_binst=n_bins+n_binsc
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 	end subroutine read_in_sce_namelist
