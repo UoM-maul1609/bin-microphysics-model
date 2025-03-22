@@ -28,7 +28,8 @@ def plot_model_run(fileName='/tmp/output1.nc'):
     nicem=      nc['nicem'][:]
     mwat=       nc['mwat'][:]
     nwat =      nc['nwat'][:]
-    medge =      nc['mbinedges'][:]
+    medge =      nc['mbinedges'][0,:]
+    medge = np.reshape(medge,(1,len(medge)))
     dedge=((6.*medge/(np.pi*1000.))**(1./3.))
     dedge_ice=((6.*medge/(np.pi*920.))**(1./3.))
     
@@ -46,7 +47,7 @@ def plot_model_run(fileName='/tmp/output1.nc'):
     plt.subplot(211)
     plt.pcolor(time,dmean, \
         np.transpose(np.real(np.squeeze(nwat[:,0,:]))), \
-         norm=colors.LogNorm(vmin=10**-5, vmax=nwat.max()))
+         norm=colors.LogNorm(vmin=10**-5, vmax=np.maximum(nwat.max(),10**-4)))
 #     plt.pcolor(time,dmean, \
 #         np.transpose(np.real(np.log10(np.squeeze(nwat[:,0,:]) / np.diff(dedge1,axis=1) ))), \
 #          norm=colors.LogNorm(vmin=10**-3, vmax=nwat.max()))
@@ -57,7 +58,7 @@ def plot_model_run(fileName='/tmp/output1.nc'):
     plt.subplot(212)
     plt.pcolor(time,dmean_ice, \
         np.transpose(np.real(np.squeeze(nicem[:,0,:]))), \
-         norm=colors.LogNorm(vmin=10**-5, vmax=nicem.max()))
+         norm=colors.LogNorm(vmin=10**-5, vmax=np.maximum(nicem.max(),10**-4)))
 #     plt.pcolor(time,dmean, \
 #         np.transpose(np.real(np.log10(np.squeeze(nicem[:,0,:])/ np.diff(dedge1,axis=1) ))), \
 #          norm=colors.LogNorm(vmin=10**-5, vmax=nicem.max()))

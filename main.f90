@@ -59,7 +59,7 @@
         call getarg(1,nmlfile)
         call read_in_bmm_namelist(nmlfile)
         if (sce_flag.gt.0) then
-            call read_in_sce_namelist(scefile)
+            call read_in_sce_namelist(scefile,nmlfile)
         endif
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 

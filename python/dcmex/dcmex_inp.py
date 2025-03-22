@@ -18,7 +18,7 @@ if __name__=="__main__":
 	Adust = Adust*1e6 # micrometers ^2 m^-3
 	Adust = Adust/(1e12) # m^2 m^-3
 	NINP1 = Adust*0.05*ns
-	NINP1[:] = 0.0
+	#NINP1[:] = 0.0
 	ax=plt.plot(Tc,NINP1/1000.)
 	plt.ylabel('N$_{INP}$ (L$^{-1}$)')
 	plt.xlabel('T ($\circ$C)')

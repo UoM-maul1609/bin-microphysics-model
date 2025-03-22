@@ -3795,6 +3795,7 @@
     implicit none
     real(wp) :: mass1, mass2, deltam, vapour_mass, liquid_mass, x1,x2 , cpm, &
         var, dummy, gamma_t, dep_density, rhoa, qv, qvsat, wv
+    real(wp), dimension(parcel1%n_bin_modew) :: stk, vd, impaction_time, loss_rate
     integer(i4b) :: iloc, i
     
     interface
@@ -3901,7 +3902,14 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 	call entrainment(thresh_to_start_hom_mix)
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
+!     stk = (6._wp*parcel1%y(1:parcel1%n_bin_modew)/(pi*rhow))**(twothirds) * &
+!     	235._wp/(18._wp*1.8e-5_wp*0.1)
+!     stk = min(stk,1.0_wp)
+!     vd = (stk*235._wp)/(1.0+stk)
+!     impaction_time = 0.1_wp/vd
+!     loss_rate=stk/impaction_time
+!     	
+! 	parcel1%npart=parcel1%npart*exp(-loss_rate*parcel1%dt)
 
 
     if (sce_flag.gt.0) then
