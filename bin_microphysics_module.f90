@@ -2947,6 +2947,7 @@
     dn01=0._wp
     ! the number of ice crystals nucleated by homogeneous nucleation:
     dn01(:)=dn01(:)+abs( npart(:)*(1._wp-exp(-jw(:)*mwat(:)/rhow*dt)) )
+    !dn01(:)=dn01(:)+npart(:)*min(jw(:)*mwat(:)/rhow*dt,1.0_wp)
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
      
@@ -2985,7 +2986,8 @@
 		
 		case(1) ! ns param - assumption only valid if full-moving
 			!ns_nuc=exp(-0.517*(t-273.15)+8.934)
-			ns_nuc=exp(-1.6*(t-273.15)-16.0067)
+			!ns_nuc=exp(-1.6*(t-273.15)-16.0067)
+			ns_nuc=exp(-0.13*(t-273.15)+2.66)
 ! 			print *,shape(npart)
 ! 			print *,sum(pi*npart(1:240)*(((sum(mbin2(1:240,:)/rhobin(1:240,:),2))*6._wp/(pi))**(onethird))**2)
 ! 			stop
@@ -2993,16 +2995,18 @@
 				dw(i)=((mwat(i)+sum(mbin2(i,:)))*6._wp/(pi*rhoat(i)))**(onethird)
 				dd(i)=((sum(mbin2(i,:)/rhobin(i,:)))*6._wp/(pi))**(onethird) ! dry diameter
 
-				if((abs(kappa(i)-0.004)/0.004<0.001) .and. &
-					((dw(i).gt.0.0e-6_wp).and.(rh.ge.1._wp))) then
+				!if((abs(kappa(i)-0.004)/0.004<0.001) .and. &
+				!	((dw(i).gt.0.0e-6_wp).and.(rh.ge.1._wp))) then
 					
-					dn01(i)=(1.0-exp(-pi*dd(i)**2*ns_nuc))* &
-						(npart(i)+npartice(i))
-				endif
+					dn01(i)=dn01(i)+(1.0-exp(-pi*dd(i)**2*ns_nuc))* &
+						(npart(i)+npartice(i))*0.1_wp
+				!endif
 			enddo
 			dn01=max(dn01-npartice,0.0)
 ! 			print *,sum(dn01(1:240))/1000.0,sum((1.0-exp(-pi*dd(1:240)**2*ns_nuc))* &
 ! 				(npart(1:240)+npartice(1:240)))/1000.0
+		case(2) ! nothing at the moment
+			
         case default
             print *,'error ice_nucleation_flag'
             stop
