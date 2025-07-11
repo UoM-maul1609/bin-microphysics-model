@@ -35,13 +35,14 @@
                             n_sound, n_chamber, ice_flag, sce_flag
             real(wp) :: dt
             real(wp), dimension(:), allocatable :: time_chamber, press_chamber, &
-            										temp_chamber, dp_chamber, dt_chamber
+            										temp_chamber, dp_chamber, dt_chamber, &
+            										qtot_chamber,dqtot_chamber
             real(wp), dimension(:,:), allocatable :: q_sound
             real(wp), dimension(:), allocatable :: t_sound, z_sound, rh_sound, &
                                                     p_sound, theta_q_sound
             real(wp) :: z,p,t,w,rh, rad,qinit, t_cbase, q_cbase, p_cbase, z_cbase, &
                         t_ctop, q_ctop, p_ctop, z_ctop, theta_q_cbase, theta_q_ctop, &
-                        x_ent, theta_q, zlast
+                        x_ent, theta_q, zlast, qtot
                         
                         
             ! liquid water
@@ -144,7 +145,8 @@
         real(wp) :: mult, rh_act
         real(wp), allocatable, dimension(:,:) :: q_read !nq x nlevels_r
         real(wp), allocatable, dimension(:) :: theta_read,rh_read,  z_read
-        real(wp), allocatable, dimension(:) :: time_chamber, press_chamber, temp_chamber
+        real(wp), allocatable, dimension(:) :: time_chamber, press_chamber, temp_chamber, &
+        	qtot_chamber
         ! aerosol setup
         integer(i4b) :: n_intern, n_mode,n_sv,sv_flag,n_bins,n_comps
         ! aerosol_spec
@@ -201,7 +203,7 @@
 	!>@param[in] n_levels_s: number of levels in sounding
 	!>@param[in] n_levels_c: number of levels in chamber data
 	!>@param[inout] q_read, theta_read, rh_read, z_read: sounding	
-	!>@param[inout] time_chamber, press_chamber, temp_chamber: chamber	
+	!>@param[inout] time_chamber, press_chamber, temp_chamber, qtot_chamber: chamber	
 	!>@param[inout] n_aer1: number conc. in modes
 	!>@param[inout] d_aer1: diameter in modes
 	!>@param[inout] sig_aer1: geo std in modes
@@ -220,6 +222,7 @@
 	subroutine allocate_arrays(n_intern,n_mode,n_sv,n_bins,n_comps,nq,n_levels_s, &
 		                    q_read,theta_read,rh_read,z_read, &
 		                    n_levels_c, time_chamber, press_chamber, temp_chamber, &
+		                    qtot_chamber, &
 		                    n_aer1,d_aer1,sig_aer1,mass_frac_aer1, molw_core1, &
 		                    density_core1, nu_core1, kappa_core1, &
 		                    org_content1,molw_org1,kappa_org1,density_org1, &
@@ -231,7 +234,7 @@
 		real(wp), dimension(:), allocatable, intent(inout) :: theta_read,rh_read,z_read, &
 		                        org_content1,molw_org1,kappa_org1, &
 		                        density_org1,delta_h_vap1,nu_org1,log_c_star1, &
-		                        time_chamber, press_chamber, temp_chamber
+		                        time_chamber, press_chamber, temp_chamber, qtot_chamber
 		real(wp), dimension(:,:), allocatable, intent(inout) :: q_read, &
 		                        n_aer1,d_aer1,sig_aer1,mass_frac_aer1
 		real(wp), dimension(:), allocatable, intent(inout) :: molw_core1,density_core1, &
@@ -252,6 +255,8 @@
 		allocate( press_chamber(1:n_levels_c), STAT = AllocateStatus)
 		if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
 		allocate( temp_chamber(1:n_levels_c), STAT = AllocateStatus)
+		if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+		allocate( qtot_chamber(1:n_levels_c), STAT = AllocateStatus)
 		if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
 		
 		allocate( n_aer1(1:n_intern,1:n_mode), STAT = AllocateStatus)
@@ -307,7 +312,7 @@
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         namelist /sounding_spec/ psurf, tsurf,  &
                     q_read, theta_read, rh_read, z_read
-        namelist /chamber_spec/ time_chamber, press_chamber, temp_chamber
+        namelist /chamber_spec/ time_chamber, press_chamber, temp_chamber, qtot_chamber
         ! define namelists for environment
         namelist /run_vars/ outputfile, scefile,runtime, dt, &
                     zinit,tpert,use_prof_for_tprh,winit,winit2,amplitude2, &
@@ -345,6 +350,7 @@
 		call allocate_arrays(n_intern,n_mode,n_sv,n_bins,n_comps,nq,n_levels_s, &
 		                    q_read,theta_read,rh_read,z_read, &
 		                    n_levels_c, time_chamber, press_chamber, temp_chamber, &
+		                    qtot_chamber, &
 		                    n_aer1,d_aer1,sig_aer1,mass_frac_aer1, molw_core1, &
 		                    density_core1, nu_core1, kappa_core1, &
 		                    org_content1,molw_org1,kappa_org1,density_org1, &
@@ -376,7 +382,7 @@
 	!>@brief
 	!>interpolates the sounding to the grid
     subroutine initialise_bmm_arrays(psurf, tsurf, q_read, theta_read, rh_read, z_read, &
-    				time_chamber, press_chamber, temp_chamber, &
+    				time_chamber, press_chamber, temp_chamber, qtot_chamber, &
                     runtime, dt, zinit, tpert, use_prof_for_tprh, chamber_override, &
                     winit, tinit, pinit, &
                     rhinit, radinit, bubble_flag, &
@@ -404,7 +410,7 @@
                     pinit, rhinit, alpha_therm, alpha_cond, alpha_therm_ice, &
                     alpha_dep, dmina,dmaxa, z_ctop, ent_rate
     real(wp), dimension(1:n_levels_c), intent(in) :: time_chamber, press_chamber, &
-    												temp_chamber
+    												temp_chamber, qtot_chamber
     real(wp), dimension(1:n_levels_s), intent(in) :: theta_read, rh_read, z_read
     real(wp), dimension(1:nq,1:n_levels_s), intent(in) :: q_read
     real(wp), dimension(1:n_intern,1:n_mode), intent(in) :: n_aer1,d_aer1,sig_aer1
@@ -526,9 +532,13 @@
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
     allocate( parcel1%temp_chamber(1:parcel1%n_chamber), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+    allocate( parcel1%qtot_chamber(1:parcel1%n_chamber), STAT = AllocateStatus)
+    if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
     allocate( parcel1%dp_chamber(1:parcel1%n_chamber-1), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
     allocate( parcel1%dt_chamber(1:parcel1%n_chamber-1), STAT = AllocateStatus)
+    if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+    allocate( parcel1%dqtot_chamber(1:parcel1%n_chamber-1), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
@@ -680,6 +690,7 @@
     	parcel1%time_chamber=time_chamber 
     	parcel1%press_chamber=press_chamber 
     	parcel1%temp_chamber=temp_chamber 
+    	parcel1%qtot_chamber=qtot_chamber 
         ! interpolate to find theta
         iloc=find_pos(parcel1%time_chamber(1:n_levels_c),parcel1%TT)
         iloc=min(n_levels_c-1,iloc)
@@ -695,6 +706,12 @@
             min(parcel1%TT,parcel1%time_chamber(n_levels_c)), var,dummy)        
         parcel1%p=var 
         parcel1%rh=rhinit
+        ! linear interp qtot
+        call poly_int(parcel1%time_chamber(iloc:iloc+1), &
+        	parcel1%qtot_chamber(iloc:iloc+1), &
+            min(parcel1%TT,parcel1%time_chamber(n_levels_c)), var,dummy)        
+        parcel1%qtot=var 
+        parcel1%rh=parcel1%qtot/ (eps1*svp_liq(parcel1%t)/(parcel1%p-svp_liq(parcel1%t)))
     	
     	! calculate derivatives
     	do i=1,n_levels_c-1
@@ -703,6 +720,9 @@
     			(parcel1%time_chamber(i+1)-parcel1%time_chamber(i))
     		parcel1%dt_chamber(i) = &
     			(parcel1%temp_chamber(i+1)-parcel1%temp_chamber(i))/ &
+    			(parcel1%time_chamber(i+1)-parcel1%time_chamber(i))
+    		parcel1%dqtot_chamber(i) = &
+    			(parcel1%qtot_chamber(i+1)-parcel1%qtot_chamber(i))/ &
     			(parcel1%time_chamber(i+1)-parcel1%time_chamber(i))
     	enddo
         
@@ -2619,6 +2639,8 @@
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         if (chamber_override) then
         	ydot(ite) = parcel1%dt_chamber(iloc)
+        	! we have total water
+        	drv = drv + parcel1%dqtot_chamber(iloc)
 !         	if (rh>0.95_wp) then
 ! 	        	drv = drv - (svp_liq(t)-svp_liq(t-1.0))*1e-7
 ! 	        endif
@@ -3798,7 +3820,8 @@
     use sce, only : qsmall
     implicit none
     real(wp) :: mass1, mass2, deltam, vapour_mass, liquid_mass, x1,x2 , cpm, &
-        var, dummy, gamma_t, dep_density, rhoa, qv, qvsat, wv
+        var, dummy, gamma_t, dep_density, rhoa, qv, qvsat, wv, &
+    	ql, qtot_m,qtot
     real(wp), dimension(parcel1%n_bin_modew) :: stk, vd, impaction_time, loss_rate
     integer(i4b) :: iloc, i
     
@@ -3899,6 +3922,28 @@
                    parcel1%mf,parcel1%rpar,parcel1%ipar)
     enddo
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+! 	if(chamber_override .and.(parcel1%y(parcel1%irh)>=1.0_wp) ) then
+! 		! rh, p, t, npart ywater, moments
+! 		! calculate the total vapour
+! 		qv = parcel1%y(parcel1%irh)*eps1*svp_liq(parcel1%y(parcel1%ite))/ &
+! 			(parcel1%y(parcel1%ipr)-svp_liq(parcel1%y(parcel1%ite)))
+! 		ql = sum(parcel1%y(1:parcel1%n_bin_modew)*parcel1%npart)
+! 		qtot = qv+ql
+! 
+! 		iloc=find_pos(parcel1%time_chamber(1:n_levels_c),parcel1%TT)
+! 		iloc=min(n_levels_c-1,iloc)
+! 		iloc=max(1,iloc)
+! 		qtot_m=qtot_chamber(iloc)
+! 		parcel1%npart=parcel1%npart*(qtot_m)/qtot
+! ! 		call adjust_due_to_chamber_loss(parcel1%y(parcel1%irh), &
+! ! 			parcel1%y(parcel1%ipr), &
+! ! 			parcel1%y(parcel1%ite)m &
+! ! 			parcel1%y(1:parcel1%n_bin_modew), &
+! ! 			parcel1%npart, &
+! ! 			parcel1%moments(1:parcel1%n_bin_modew,:))
+! 	endif
+	
 
 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
