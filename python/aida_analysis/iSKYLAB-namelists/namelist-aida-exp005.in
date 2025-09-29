@@ -42,7 +42,8 @@
  	break_flag=0,       ! 0=off, 1=vardiman et al, 2=phillips 2017 scheme
  	mode1_flag=.false., ! collisional and via nucleation
  	mode2_flag=.false., ! collisional with ice crystals that are more massive
- 	chamber_override=.true./ ! if true run along time trace that is read in 
+ 	chamber_override=.true., ! if true run along time trace that is read in 
+ 	chamber_inhom=0.20/ ! inhomogeneous mixing fraction
 &aerosol_setup
     n_mode            = 2,
     n_intern          = 3,

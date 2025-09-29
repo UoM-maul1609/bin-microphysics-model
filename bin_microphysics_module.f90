@@ -129,7 +129,8 @@
         real(wp) :: ent_rate, dmina,dmaxa
         real(wp) :: zinit,tpert,winit,winit2, amplitude2, tau2, &
                     tinit,pinit,rhinit,radinit,z_ctop, alpha_therm, alpha_cond, &
-                    alpha_therm_ice, alpha_dep, thresh_to_start_hom_mix
+                    alpha_therm_ice, alpha_dep, thresh_to_start_hom_mix, &
+                    chamber_inhom=0.0_wp
         integer(i4b) :: microphysics_flag=0, kappa_flag,updraft_type, vent_flag, &
                         sce_flag=0,ice_flag=0, bin_scheme_flag=1, entrain_period=0
         logical :: use_prof_for_tprh, hm_flag, mode1_flag, mode2_flag, &
@@ -320,7 +321,7 @@
                     microphysics_flag, ice_flag, bin_scheme_flag, sce_flag, &
                     ice_nucleation_flag, &
                     hm_flag, break_flag, mode1_flag, mode2_flag, chamber_override, &
-                    vent_flag, &
+                    chamber_inhom, vent_flag, &
                     kappa_flag, updraft_type,t_thresh, adiabatic_prof, &
                     entrain_period, thresh_to_start_hom_mix, release_aerosol, &
                     entrain_aerosol, vert_ent, &
@@ -1447,6 +1448,40 @@
 
 	end function calc_theta_q3    
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! dq_total_water                                                               !
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>calculates the rate of change of total water
+	!>@param[in] t: time
+	!>@param[in] q: total water
+	!>@param[inout] dqdt: rate of change of total water
+	!>@return calc_theta_q3: moist potential temperature
+	subroutine dq_total_water(t,q,dqdt)
+	use numerics_type
+	implicit none
+	real(wp), intent(in) :: t
+	real(wp), dimension(:), intent(in) :: q
+	real(wp), dimension(:), intent(out) :: dqdt
+	real(wp) :: var, dummy
+	integer(i4b) :: iloc
+
+
+	! interpolate to find dq/dt
+	iloc=find_pos(parcel1%time_chamber(1:n_levels_c),t)
+	iloc=min(n_levels_c-1,iloc)
+	iloc=max(1,iloc)
+	dqdt(1)=parcel1%dqtot_chamber(iloc)
+
+	
+	
+	end subroutine dq_total_water
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
 
 
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -2640,7 +2675,10 @@
         if (chamber_override) then
         	ydot(ite) = parcel1%dt_chamber(iloc)
         	! we have total water
-        	drv = drv + parcel1%dqtot_chamber(iloc)
+        	!
+        	if ((rh>1.0_wp)) &
+        		drv = drv + parcel1%dqtot_chamber(iloc)*(1._wp-chamber_inhom)
+        	
 !         	if (rh>0.95_wp) then
 ! 	        	drv = drv - (svp_liq(t)-svp_liq(t-1.0))*1e-7
 ! 	        endif
@@ -3816,12 +3854,13 @@
 	!>calculates one time-step of bin-microphysics
     subroutine bin_microphysics(func1,func2,func3,func4)
     use numerics_type
-    use numerics, only : zeroin, dvode, fmin
+    use numerics, only : zeroin, dvode, fmin, vode_integrate
     use sce, only : qsmall
     implicit none
     real(wp) :: mass1, mass2, deltam, vapour_mass, liquid_mass, x1,x2 , cpm, &
         var, dummy, gamma_t, dep_density, rhoa, qv, qvsat, wv, &
-    	ql, qtot_m,qtot
+    	ql, qtot_m,qtot, eps2=1.e-4_wp,hmin=0.0_wp,htry=1.e-1_wp
+    real(wp), dimension(1) :: ql_inhom
     real(wp), dimension(parcel1%n_bin_modew) :: stk, vd, impaction_time, loss_rate
     integer(i4b) :: iloc, i
     
@@ -3944,6 +3983,26 @@
 ! ! 			parcel1%moments(1:parcel1%n_bin_modew,:))
 ! 	endif
 	
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! Adjust total water by altering number concentration chamber          !                                           
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	if(chamber_override.and. &
+		(parcel1%y(parcel1%irh)>1.0_wp ) ) then
+	    ql=sum(parcel1%y(1:parcel1%n_bin_modew)*parcel1%npart)
+		ql_inhom(1) = 0.0_wp !sum(parcel1%y(1:parcel1%n_bin_modew)*parcel1%npart)
+		!print *,parcel1%tout,parcel1%dt, ql_inhom,ql
+		call vode_integrate(ql_inhom,parcel1%tout-parcel1%dt, &
+			parcel1%tout,eps2,htry,hmin,dq_total_water)
+		ql_inhom=ql_inhom*chamber_inhom
+		dummy = 1._wp+ql_inhom(1)/ql
+		! only if the factor is greater than 10%
+		if (dummy.gt.0.1_wp) then
+			parcel1%npart = parcel1%npart*dummy
+			parcel1%moments = parcel1%moments*dummy
+		endif
+	endif
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
 
 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -4653,7 +4712,21 @@
         ! units
         call check( nf90_put_att(io1%ncid, io1%a_dimid, &
                    "units", "kg kg-1") )
-                   
+        
+        if(.not.adiabatic_prof) then
+			! define variable: radius of parcel
+			call check( nf90_def_var(io1%ncid, "rad_par", NF90_DOUBLE, &
+						(/io1%x_dimid/), io1%varid) )
+			! get id to a_dimid
+			call check( nf90_inq_varid(io1%ncid, "rad_par", io1%a_dimid) )
+			! units
+			call check( nf90_put_att(io1%ncid, io1%a_dimid, &
+					   "units", "m") )
+		endif                   
+
+
+
+
         ! define variable: extinction
         call check( nf90_def_var(io1%ncid, "beta_ext", NF90_DOUBLE, &
                     (/io1%x_dimid/), io1%varid) )
@@ -4860,6 +4933,13 @@
         sum(parcel1%y(1:parcel1%n_bin_modew)*parcel1%npart(1:parcel1%n_bin_modew)), &
                 start = (/io1%icur/)))
 
+	if(.not.adiabatic_prof) then
+		! write variable: ql
+		call check( nf90_inq_varid(io1%ncid, "rad_par", io1%varid ) )
+		call check( nf90_put_var(io1%ncid, io1%varid, &
+			parcel1%y(parcel1%ira), start = (/io1%icur/)))	
+	endif
+	
     ! write variable: beta_ext
     call check( nf90_inq_varid(io1%ncid, "beta_ext", io1%varid ) )
     call check( nf90_put_var(io1%ncid, io1%varid, &
