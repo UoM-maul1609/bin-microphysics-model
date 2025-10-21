@@ -45,7 +45,7 @@ def batchRuns():
         
     
     
-    nRuns=len(NaClMR)
+    (nMode,nRuns)=np.shape(N_aer)
     for k in range(nRuns):
                     
         n=str(k)
@@ -53,13 +53,23 @@ def batchRuns():
 
         fileName=outputDir + '/' + username + '/output' + n.zfill(3) + '.nc'
         changeFile(inputFile,dumpFile,'/tmp/output1.nc',fileName)
+        
+        # build replace string
+        nStr='n_aer1(1:3,2:2)        = '
+        dStr='d_aer1(1:3,2:2)        = '
+        sigStr='sig_aer1(1:3,2:2)      = '
+        for l in range(nMode):
+        	nStr=nStr + str(N_aer[l,k]) + ','
+        	dStr=dStr + str(Dm[l]) + ','
+        	sigStr=sigStr + str(logSig[l]) + ','
+        
 
         changeFile(dumpFile,tmpFile,'n_aer1(1:3,2:2)        = 0e6, 0.e6, 0.e6,',\
-            'n_aer1(1:3,2:2)        = ' + str(N_aer[k]) + ', 0.e6, 0.e6,')
+            nStr)
         changeFile(tmpFile,tmpFile,'d_aer1(1:3,2:2)        = 100e-9   , 1e-9, 1.e-9, ',\
-            'd_aer1(1:3,2:2)        = ' + str(Dm) + '   , 1e-9, 1.e-9, ')
+            dStr)
         changeFile(tmpFile,tmpFile,'sig_aer1(1:3,2:2)      = 0.5   , 0.3, 0.3, ',\
-            'sig_aer1(1:3,2:2)      = ' + str(logSig) + '   , 0.3, 0.3, ')
+            sigStr)
         
         
         
