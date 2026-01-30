@@ -2107,7 +2107,15 @@
         x = log10(dthresh*1000._wp)
         
         ! table 3, phillips et al.
-        beta1 = 0.
+        if(d < 0.4_wp) then
+	        beta1 = 0.
+    	else
+    		beta = -0.1839_wp*x*x-0.2017_wp*x-0.0512_wp
+    	endif
+    	
+    	    
+        dthresh = max(min(d,1.6e-3),0.06e-3)
+        x = log10(dthresh*1000._wp)
         log10zeta = 2.4268_wp*x*x*x + 3.3274_wp*x*x + 2.0783_wp*x + 1.2927_wp
         log10nabla = 0.1242_wp*x*x*x - 0.2316_wp*x*x - 0.9874_wp*x - 0.0827_wp
         t0 = -1.3999_wp*x*x*x - 5.3285_wp*x*x - 3.9847_wp*x - 15.0332_wp
@@ -2124,7 +2132,9 @@
             ((tc-t0)**2+(10._wp*log10nabla)**2+beta1*tc)
         
         ! total number of fragments
-        n=n*d/dthresh
+        if (d>1.6e-3_wp) then
+	        n=n*d/dthresh
+	    endif
         ! number of large fragments
         nb = min(sigma*omega*(zetab*nablab**2/((tc-tb0)**2+nablab**2)),n)
         ! number of small fragments
