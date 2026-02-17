@@ -8,7 +8,7 @@ from scipy.optimize import curve_fit
 """
 sigma_sb=5.67e-8
 S0=1362.9
-ecc=0.0167 # eccentricity of earth's orbit
+ecc=0.01671 # eccentricity of earth's orbit
 a=1.0 # AU distance of earth from sun
 S=S0/(a**2*np.sqrt(1.0-ecc**2)) # equation 8
 Asurf=0.295 # surface shortwave albedo
@@ -27,8 +27,11 @@ PO3  = 0.004 #0.039
 Fgeo = -0.087 
 # feedbacks
 feedback_flag=True
-Acloud=0.448
-Acloud=0.47890218881836016*0.94
+Acloudu=0.448
+Acloudu=0.47890218881836016*0.94
+ngeou=0.10 # fraction of earth's total clouds covered with these, convert to fraction of cloud cover, including thin, 67.5%
+n_with_thin=0.675
+deltaA_geo=0.06
 
 def cloud_fit(Ts,a,b):
 	return 1.0/(1.0+10**(a*(Ts-b)))
@@ -40,9 +43,16 @@ def do_calc(Tguess):
 	n=0.53
 	n=0.54
 	if feedback_flag:
-		PH2O = 402*np.exp(0.0698*(Tguess-288))
+		PH2O = 402*np.exp(0.0698*(Tguess-288))[0]
 		#n=1.0/(1.0+10**(0.0079223*(Tguess-294.69)))
-		n=1.0/(1.0+10**(7.43733582e-03*(Tguess-2.97363021e+02)))
+		n=1.0/(1.0+10**(7.43733582e-03*(Tguess-2.97363021e+02)))[0]
+
+	ngeo=n_with_thin/n*ngeou
+	
+	AcloudGeo=Acloudu+deltaA_geo
+	Acloud=Acloudu*(1.0-ngeo)+ngeo*AcloudGeo
+
+
 	# equation 11 (12-17) for longwave partial optical depths
 	# note that total pressure is in atmospheres
 	tau_lw_CH4 = 0.0656*PCH4**0.336*P**0.461
@@ -59,12 +69,12 @@ def do_calc(Tguess):
 	tau_sw_H2O = 0.0551/frac*PH2O**0.315
 	tau_sw_O3 = 0.351/frac*PO3**0.336
 	tau_sw_cld = 0.0791/frac*n**0.112
-	
+
 	tau_sw=tau_sw_CO2+tau_sw_H2O+tau_sw_O3+tau_sw_cld
-	
 	# calculate consistent with OD, surface illumination
 	Fsi = 0.25*S*np.exp(-tau_sw) # or set to 188
 	#tau_sw = -np.log(Fsi/(0.25*S))
+
 	
 	# now we need to calculate the albedo, see Fig 2.
 	# first step is the calculate:
@@ -87,7 +97,7 @@ def do_calc(Tguess):
 	Fsolar=(1.0-Asurf)*Fsi
 	Acover=n*Acloud+(1.0-n)*Asurf # equation 24
 	C=1.0+1.5*PCO2/Ps # eqaution 30
-	
+
 	# rayleigh scattering
 	tau_ray=0.062*P**0.858*C # slight edit
 	Aray=1.0-np.exp(-tau_ray) # equation 29
@@ -104,7 +114,7 @@ def do_calc(Tguess):
 	F=0.25*S*(1.0-A) # equation 4
 	
 	Te=(F/sigma_sb)**(0.25)
-	Fgreen=3/4*alpha*(sigma_sb*Te**4)*tau_lw # absorbed atmospheric back radiation
+	Fgreen=3/4*alpha*(sigma_sb*Te**4)*tau_lw # absorbed atmospheric back radiation - equation 5d
 	
 	k1=0.0999
 	k2=1.23
