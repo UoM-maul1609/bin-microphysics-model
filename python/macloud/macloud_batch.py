@@ -159,3 +159,4 @@ for c, lab in enumerate(col_labels):
     x = (ax.get_position().x0 + ax.get_position().x1) / 2
     fig.text(x, 0.985, lab, va='top', ha='center', fontsize=8)
 
+fig.savefig('/tmp/calcs.png')
