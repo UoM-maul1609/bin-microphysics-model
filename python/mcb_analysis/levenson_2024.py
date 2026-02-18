@@ -29,9 +29,12 @@ Fgeo = -0.087
 feedback_flag=True
 Acloudu=0.448
 Acloudu=0.47890218881836016*0.94
+Asg=Acloudu
 ngeou=0.10 # fraction of earth's total clouds covered with these, convert to fraction of cloud cover, including thin, 67.5%
 n_with_thin=0.675
 deltaA_geo=0.06
+Asgn=Asg+deltaA_geo
+ttr=273.15
 
 def cloud_fit(Ts,a,b):
 	return 1.0/(1.0+10**(a*(Ts-b)))
@@ -49,9 +52,10 @@ def do_calc(Tguess):
 
 	ngeo=n_with_thin/n*ngeou
 	
-	AcloudGeo=Acloudu+deltaA_geo
-	Acloud=Acloudu*(1.0-ngeo)+ngeo*AcloudGeo
-
+	#AcloudGeo=Acloudu+deltaA_geo
+	#Acloud=Acloudu*(1.0-ngeo)+ngeo*AcloudGeo
+	
+	Acloud=Acloudu+(Asgn-Asg)*ngeo
 
 	# equation 11 (12-17) for longwave partial optical depths
 	# note that total pressure is in atmospheres
@@ -136,7 +140,7 @@ if __name__=="__main__":
 		Ts=roots[0]
 	else:
 		Ts=do_calc(0.)
-	print(Ts-273.15)
+	print(Ts-ttr)
 	
 # 	popt,pcov = curve_fit(cloud_fit,np.array([288.,252.]),\
 # 		np.array([0.54,0.685]),p0=[0.0079223,294.69],method='trf')

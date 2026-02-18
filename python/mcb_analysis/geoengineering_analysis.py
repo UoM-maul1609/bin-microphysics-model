@@ -10,8 +10,35 @@ sys.path.insert(1, '../')
 import lutMCB
 from scipy.optimize import fsolve
 import multi_root
+import levenson_2024
+import scipy.optimize as sco
+from scipy.signal import savgol_filter, find_peaks
 
 username=getpass.getuser()
+
+
+def smooth(y, box_pts):
+    box = np.ones(box_pts)/box_pts
+    y_smooth = np.convolve(y, box, mode='same')
+    return y_smooth
+
+def maxAmaxMR(mr,A):
+	
+	diff2=np.flip(np.gradient(np.gradient(A)))
+	diff1=np.flip(np.gradient(A))
+	for i in range(len(diff1)-1):
+		if ((diff1[i]<0) and (diff1[i+1]>=0) and (diff2[i]<0) ):
+			break
+	
+	mr2=np.flip(mr)
+	A2=np.flip(A)
+	mr_peak=0.5*(mr2[i]+mr2[i+1])
+	A_peak=0.5*(A2[i]+A2[i+1])
+	
+		
+	
+	return (mr_peak,A_peak)
+	
 
 """"++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 % this function outputs the cloud albedo given the mixing ratio of NaCl and
@@ -50,12 +77,17 @@ if __name__=="__main__":
     %--------------------------------------------------------------------------
     """
     lut_flag = True
+    new_figs = False
     f=1.0;
     D_aerosol=45.;               # size of the aerosol particles generated (nm)
     
     if(lut_flag):
-        (lut1,lut2)=lutMCB.doAnalysis()
-        D_aerosol=lutMCB.Dm*1e9
+        (lut1,lut2,lut3,lut4)=lutMCB.doAnalysis()
+        # calculate the average size, number weighted
+        numer=np.sum(batchRunsMCB.N_aer1* \
+        	np.exp(np.log(batchRunsMCB.Dm)+0.5*batchRunsMCB.logSig**2))
+        D_aerosol=numer/np.sum(batchRunsMCB.N_aer1)*1e9
+        #D_aerosol=lutMCB.Dm*1e9
     
     frac_tot1=f*17.5/100;     # fraction of earth geoengineered
     num_ship=f*1500;           # 1500 ships needed for 17.5% seeding
@@ -63,11 +95,20 @@ if __name__=="__main__":
     cost_energy=3.9e-8;         # cost of energy - dollars per joule 
 
     RAYLEIGH_JET=1;
-    TAYLOR_CONE=2;
+    TAYLOR_CONE=2; # not added this PSD yet
     SUPERCRITICAL=3;
     EFFERVESCENT=4;
-
-    method=RAYLEIGH_JET;
+    
+    if batchRunsMCB.spray_method==batchRunsMCB.COOPER:
+    	method=EFFERVESCENT;
+    if batchRunsMCB.spray_method==batchRunsMCB.HARRISON_EFFERVESCENCE:
+    	method=EFFERVESCENT;
+    if batchRunsMCB.spray_method==batchRunsMCB.HARRISON_DELAVAL:
+    	method=SUPERCRITICAL;
+    if batchRunsMCB.spray_method==batchRunsMCB.EDMUND_SCF:
+    	method=SUPERCRITICAL;
+    if batchRunsMCB.spray_method==batchRunsMCB.RAYLEIGH:
+    	method=RAYLEIGH_JET;
 
 
     """
@@ -81,7 +122,11 @@ if __name__=="__main__":
 
     mr=np.logspace(-14,-4,100)
     mr1=mr
-    plt.figure() #(name='albedo relationship');
+    if new_figs:
+    	fig1=plt.figure() #(name='albedo relationship');
+    else:
+    	plt.figure(fig1.number)
+		
     D=100.e-9
     A=cloud_albedo(mr,D,beta);
     if (lut_flag):
@@ -103,16 +148,26 @@ if __name__=="__main__":
     %++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
     """
     frac_tot,co2ppm=np.mgrid[0:1+0.001:0.001,400:1510:10]
+    frac_tot=np.logspace(-5,0,100)
+    co2ppm=np.linspace(400,1500,111)
+    frac_tot,co2ppm=np.meshgrid(frac_tot,co2ppm)
+    frac_tot=frac_tot.transpose()
+    co2ppm=co2ppm.transpose()
     # make the albedo 0.04 higher than baseline
-    albedo_geog=A[0]+0.03;
+    (mr_peak,A_peak)=maxAmaxMR(mr1,A)
+#     albedo_geog=A[0]+0.02;
+    albedo_geog=A_peak
 
     num_ship=frac_tot*1500;
     # in order to achieve albedo_geog we need to have the following mr
     if lut_flag:
+    	#A(mr) and mr(A)
         scint=interp1d(A,mr1,fill_value='extrapolate')
         scint1=interp1d(mr1,A,fill_value='extrapolate')
+        # find the mixing ratio that achieved albedo_geog
         mr=np.min(10**multi_root.multi_root( \
         	solve1,[np.log10(mr1[0]),np.log10(mr1[-1])]))
+        mr=mr_peak
     else:
         scint=interp1d(A,mr,fill_value='extrapolate')
         scint1=interp1d(mr,A,fill_value='extrapolate')
@@ -131,7 +186,19 @@ if __name__=="__main__":
     Qsea=(Q)/(35);                 # m^3 of sea water per second
 
 
-    tsurface = greenhouse_func_geo.surface_temp(albedo_geog,frac_tot,co2ppm )
+    #tsurface = greenhouse_func_geo.surface_temp(albedo_geog,frac_tot,co2ppm )
+    
+    (r,c)=np.shape(co2ppm)
+    tsurface = np.zeros((r,c))  
+    for i in range(r):
+    	for j in range(c):  
+    		levenson_2024.PCO2 = co2ppm[i][j]*levenson_2024.Ps*1e-6
+    		levenson_2024.ngeou = frac_tot[i][j]
+    		levenson_2024.Asg=A[0]
+    		levenson_2024.Asgn=albedo_geog
+    		roots=sco.fsolve(levenson_2024.do_calc, 289.)
+    		tsurface[i][j]=roots[0]
+
     #tsurface=albedo_geo(albedo_geog,frac_tot,co2ppm);   # call climate model 
                                                         # for all co2s
     #--------------------------------------------------------------------------
@@ -142,8 +209,11 @@ if __name__=="__main__":
     % lower, actual, and upper bounds
     %++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
     """
-    plt.figure() #('name','cost vs co2 vs delta T');
-
+    if new_figs:
+    	fig2=plt.figure() #('name','cost vs co2 vs delta T');
+    else:
+    	plt.figure(fig2.number)
+    
     for j in range(3):
         # loss to society, which is dependent on temperature rise
         if (j==0):  # estimated from Stern review - lower bound
@@ -203,33 +273,39 @@ if __name__=="__main__":
         % this calculates the point where the curve starts to increase quickly
         %++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
         """
-        r,c,=np.shape(loss_in_GDP);
-        costval=np.zeros(r);
-        co2val=np.zeros(r);
-        for i in range(r):
-           ind,=np.where(loss_in_GDP[i,:]+cost[i,:]== \
-               np.min(loss_in_GDP[i,:]+cost[i,:]));
-       
-           co2val[i]=co2ppm[i,ind[-1]];
-           costval[i]=cost[i,ind[-1]];
-        #----------------------------------------------------------------------
-
-        plt.plot(costval,co2val,color=col,linewidth=lin,linestyle=ls1);
-    
-    plt.xlabel('Cost of implementation (dollars)')
-    plt.ylabel('CO_2 mixing ratio (ppm)')
-    plt.title('Point at which the gross cost drastically increases with errors')
-    plt.savefig('/tmp/' + username + '/co2_vs_cost_sweet_spot.png')
+#         r,c,=np.shape(loss_in_GDP);
+#         costval=np.zeros(r);
+#         co2val=np.zeros(r);
+#         for i in range(r):
+#            ind,=np.where(loss_in_GDP[i,:]+cost[i,:]== \
+#                np.min(loss_in_GDP[i,:]+cost[i,:]));
+#        
+#            co2val[i]=co2ppm[i,ind[-1]];
+#            costval[i]=cost[i,ind[-1]];
+#         #----------------------------------------------------------------------
+# 
+#         plt.plot(costval,co2val,color=col,linewidth=lin,linestyle=ls1);
+#     
+#     plt.xlabel('Cost of implementation (dollars)')
+#     plt.ylabel('CO_2 mixing ratio (ppm)')
+#     plt.title('Point at which the gross cost drastically increases with errors')
+#     plt.savefig('/tmp/' + username + '/co2_vs_cost_sweet_spot.png')
     #--------------------------------------------------------------------------
-
-
-
+    Z=loss_in_GDP+cost
+    ind,=np.where(co2ppm[0,:]<=800)
+    ind=ind[-1]
+    plt.plot(cost[:,ind],Z[:,ind])
+    plt.xlabel('Cost of implementation (dollars)')
+    plt.ylabel('Cost to society (including negative impact of $\\Delta T$ dollars)')
+    plt.yscale('log')
+    plt.savefig('/tmp/' + username + '/co2_doubling.png')
+    plt.title('Doubling CO$_2$ to 800 ppm')
+	
     """++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
     % color plot of cost
     %++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
     """
-    plt.figure() #('name','cost vs co2 vs delta T');
-    Z=loss_in_GDP+cost
+    fig3=plt.figure() #('name','cost vs co2 vs delta T');
     plt.pcolor(cost,co2ppm,Z, \
         norm=colors.LogNorm());
     h=plt.colorbar();
