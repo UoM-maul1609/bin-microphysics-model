@@ -12,8 +12,9 @@ HARRISON_EFFERVESCENCE=2
 HARRISON_DELAVAL=3
 EDMUND_SCF=4
 RAYLEIGH=5
+TAYLOR_CONE=6
 
-spray_method=RAYLEIGH
+spray_method=EDMUND_SCF
 
 # N_aer1=np.array([7246000,3132000,49800])*1e6
 # #N_aer1=np.array([7246000,3132000,0])*1e6
@@ -40,6 +41,10 @@ elif spray_method==RAYLEIGH:
 	N_aer1		=np.array([1.0])*1e6
 	logSig		=np.array([0.25])
 	Dm			=np.array([0.162])*1e-6
+elif spray_method==TAYLOR_CONE:
+	N_aer1		=np.array([1.0])*1e6
+	logSig		=np.log(np.array([1.19]))
+	Dm			=np.array([0.0826])*1e-6
 
 N_aer1=N_aer1/np.sum(N_aer1)
 

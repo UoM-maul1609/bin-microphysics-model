@@ -16,6 +16,61 @@ from scipy.signal import savgol_filter, find_peaks
 
 username=getpass.getuser()
 
+# stern review
+def scenario(temp_C, kind="central"):
+    base = loss_pct(temp_C)
+    if kind == "central":
+        return base
+    if kind == "upper":
+        return loss_upper(temp_C)
+    if kind == "lower":
+        return loss_lower(temp_C)
+    if kind == "ineq_125":
+        return 1.25 * base
+    if kind == "nonmarket_add12":
+        return base + 12.0
+    if kind == "amp_add6":
+        return base + 6.0
+    raise ValueError("unknown scenario")
+
+def loss_lower(temp_C):
+    temp_C = np.asarray(temp_C)
+    out = np.zeros_like(temp_C, dtype=float)
+    # below 2.5°C: ~0%
+    # above: ramp with a power law anchored at 5.5°C -> 5%
+    mask = temp_C > 2.5
+    # one-point anchored curve: choose exponent ~3 like the central fit
+    b_l = b
+    a_l = 5.0 / (5.5**b_l)
+    temp_C = np.maximum(temp_C,0.0)
+    out[mask] = a_l * temp_C[mask]**b_l
+    return out
+
+
+def loss_upper(temp_C):
+	T2 = np.array([2.5, 5.5])
+	L_upper = np.array([3.0, 10.0])
+	
+	b_u = np.log(L_upper[1]/L_upper[0]) / np.log(T2[1]/T2[0])
+	a_u = L_upper[0] / (T2[0]**b_u)
+	temp_C = np.asarray(temp_C)
+	temp_C = np.maximum(temp_C,0.0)
+	return a_u * temp_C**b_u
+
+
+def loss_pct(temp_C):
+	# Midpoint “targets”
+	T = np.array([2.5, 5.5])
+	L = np.array([1.5, 7.5])  # percent GDP loss
+	
+	# Fit L = a*T^b using log regression
+	b = np.log(L[1]/L[0]) / np.log(T[1]/T[0])
+	a = L[0] / (T[0]**b)
+	temp_C = np.asarray(temp_C)
+	temp_C = np.maximum(temp_C,0.0)
+	return a * temp_C**b
+
+
 
 def smooth(y, box_pts):
     box = np.ones(box_pts)/box_pts
@@ -32,8 +87,8 @@ def maxAmaxMR(mr,A):
 	
 	mr2=np.flip(mr)
 	A2=np.flip(A)
-	mr_peak=0.5*(mr2[i]+mr2[i+1])
-	A_peak=0.5*(A2[i]+A2[i+1])
+	mr_peak=0.5*(mr2[i+1]+mr2[i+1])
+	A_peak=0.5*(A2[i+1]+A2[i+1])
 	
 		
 	
@@ -91,9 +146,11 @@ if __name__=="__main__":
     
     frac_tot1=f*17.5/100;     # fraction of earth geoengineered
     num_ship=f*1500;           # 1500 ships needed for 17.5% seeding
-    time1=50;                   # implement for 50 years
+    time1=1;                   # implement for 1 year, 
     cost_energy=3.9e-8;         # cost of energy - dollars per joule 
-
+    ship_lifetime=30 # 30 year lifetime
+    cost_fac=4e9*(1./ship_lifetime+0.025) # 4 billion, but 2.5% of that per year maintenance
+	
     RAYLEIGH_JET=1;
     TAYLOR_CONE=2; # not added this PSD yet
     SUPERCRITICAL=3;
@@ -109,6 +166,8 @@ if __name__=="__main__":
     	method=SUPERCRITICAL;
     if batchRunsMCB.spray_method==batchRunsMCB.RAYLEIGH:
     	method=RAYLEIGH_JET;
+    if batchRunsMCB.spray_method==batchRunsMCB.TAYLOR_CONE:
+    	method=TAYLOR_CONE;
 
 
     """
@@ -210,10 +269,13 @@ if __name__=="__main__":
     %++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
     """
     if new_figs:
-    	fig2=plt.figure() #('name','cost vs co2 vs delta T');
+    	fig2,axes=plt.subplots()
     else:
     	plt.figure(fig2.number)
-    
+    	
+    # cost of ships - 5 billion, plus 10% of cost per year - taken from
+    # literature
+    cost=cost_fac*frac_tot * time1
     for j in range(3):
         # loss to society, which is dependent on temperature rise
         if (j==0):  # estimated from Stern review - lower bound
@@ -227,52 +289,37 @@ if __name__=="__main__":
         elif(j==2):     # estimated from Stern review - center
                 loss_in_GDP=(2*(tsurface-tsurface[0,0])-3.5)* \
                     1e12/100;
+                loss_in_GDP=scenario(tsurface-tsurface[0,0], kind='central')* \
+                    1e12/100;
                 col='r';lin=3;ls1='-'
                 
-        loss_in_GDP=np.maximum(loss_in_GDP,0);
+        # this is loss every year
+        loss_in_GDP=np.maximum(loss_in_GDP,0)*time1;
     
+    if method==RAYLEIGH_JET:
+    	# Rayleigh jet instability - equation A8
+    	power_of_sprayers=(0.45/(D_aerosol*1e-9)+3.2e6)*Qsea;
+    elif method==TAYLOR_CONE:
+    	# Taylor cone jets - equation A12
+    	Qs=5.6e-10;
+    	L=1e-3;
+    	sig=72e-3;
+    	power_of_sprayers= \
+    	(128.*8.9e-4*L*Qs/(np.pi*16e-6**4) + 4.*sig/16e-6+1.2e9)*Qsea;
+    elif method==SUPERCRITICAL:
+    	# Supercritical flow - equation A15
+    	power_of_sprayers=4e9*Qsea;
+    elif method==EFFERVESCENT:
+    	# Effervescent spraying - equation A17
+    	power_of_sprayers=3.4e8*Qsea;
+    	
+    # total cost of the scheme:
+    cost=cost+power_of_sprayers*cost_energy*time1*86400*365.25;
     
-    
-        # cost of ships - 5 billion, plus 10% of cost per year - taken from
-        # literature
-        cost=4e9*(frac_tot+0.025*time1*frac_tot);
-#         cost=0.
-    
-    
-        if method==RAYLEIGH_JET:
-                # Rayleigh jet instability - equation A8
-                power_of_sprayers=(0.45/(D_aerosol*1e-9)+3.2e6)*Qsea;
-
-        elif method==TAYLOR_CONE:
-                # Taylor cone jets - equation A12
-                Qs=5.6e-10;
-                L=1e-3;
-                sig=72e-3;
-                power_of_sprayers= \
-                    (128.*8.9e-4*L*Qs/(np.pi*16e-6**4) + 4.*sig/16e-6+1.2e9)*Qsea;
-
-        elif method==SUPERCRITICAL:
-                # Supercritical flow - equation A15
-                power_of_sprayers=4e9*Qsea;
-
-        elif method==EFFERVESCENT:
-                # Effervescent spraying - equation A17
-                power_of_sprayers=3.4e8*Qsea;
-    
-    
-    
-    
-
-    
-        # total cost of the scheme:
-        cost=cost+power_of_sprayers*cost_energy*time1*86400*365; 
-
-    
-    
-        """++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-        % this calculates the point where the curve starts to increase quickly
-        %++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-        """
+    """++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    % this calculates the point where the curve starts to increase quickly
+    %++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    """
 #         r,c,=np.shape(loss_in_GDP);
 #         costval=np.zeros(r);
 #         co2val=np.zeros(r);
@@ -294,10 +341,18 @@ if __name__=="__main__":
     Z=loss_in_GDP+cost
     ind,=np.where(co2ppm[0,:]<=800)
     ind=ind[-1]
-    plt.plot(cost[:,ind],Z[:,ind])
-    plt.xlabel('Cost of implementation (dollars)')
-    plt.ylabel('Cost to society (including negative impact of $\\Delta T$ dollars)')
-    plt.yscale('log')
+    if new_figs:
+	    axC=axes
+    axC.plot(cost[:,ind],Z[:,ind])
+    if new_figs:
+	    axT = axC.twinx()
+    axT.plot(cost[:,ind],tsurface[:,ind]-tsurface[0,0],'--')
+
+    axC.set_xlabel('Cost of implementation (dollars)')
+    axC.set_ylabel('Cost to society (including negative impact of $\\Delta T$ dollars)')
+    axT.set_ylabel('$\\Delta T$ (global temp, dashed)')
+    axC.set_yscale('log')
+    #axC.legend(['Copper Eff','Harrison Eff','Harrison de Laval','Edmund','Rayleigh','Taylor Cone'])
     plt.savefig('/tmp/' + username + '/co2_doubling.png')
     plt.title('Doubling CO$_2$ to 800 ppm')
 	
