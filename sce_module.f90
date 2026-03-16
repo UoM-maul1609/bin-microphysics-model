@@ -2110,7 +2110,7 @@
         if(d < 0.4_wp) then
 	        beta1 = 0.
     	else
-    		beta = -0.1839_wp*x*x-0.2017_wp*x-0.0512_wp
+    		beta1 = -0.1839_wp*x*x-0.2017_wp*x-0.0512_wp
     	endif
     	
     	    
