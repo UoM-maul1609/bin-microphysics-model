@@ -132,7 +132,7 @@ if __name__=="__main__":
     %--------------------------------------------------------------------------
     """
     lut_flag = True
-    new_figs = False
+    new_figs = True
     f=1.0;
     D_aerosol=45.;               # size of the aerosol particles generated (nm)
     
@@ -308,7 +308,8 @@ if __name__=="__main__":
     	(128.*8.9e-4*L*Qs/(np.pi*16e-6**4) + 4.*sig/16e-6+1.2e9)*Qsea;
     elif method==SUPERCRITICAL:
     	# Supercritical flow - equation A15
-    	power_of_sprayers=4e9*Qsea;
+    	#power_of_sprayers=4e9*Qsea;
+    	power_of_sprayers=7.5e8*Qsea;
     elif method==EFFERVESCENT:
     	# Effervescent spraying - equation A17
     	power_of_sprayers=3.4e8*Qsea;

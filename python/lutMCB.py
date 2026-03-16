@@ -35,7 +35,7 @@ def doAnalysis():
 
 if __name__=="__main__":
 
-    lut_flag=0
+    lut_flag=1
     
     lut1,lut2,lut3,lut4=doAnalysis()
     NumberConc=np.sum(N_aer,axis=0)

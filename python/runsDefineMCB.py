@@ -13,6 +13,7 @@ HARRISON_DELAVAL=3
 EDMUND_SCF=4
 RAYLEIGH=5
 TAYLOR_CONE=6
+TOPAZ=7
 
 spray_method=EDMUND_SCF
 
@@ -35,6 +36,7 @@ elif spray_method==HARRISON_DELAVAL:
 	Dm			=np.array([0.0156,0.123,0.398])*1e-6
 elif spray_method==EDMUND_SCF:
 	N_aer1		=np.array([6460000,3830000,32700])*1e6
+	#N_aer1		=np.array([6460000,3830000,0])*1e6
 	logSig		=np.array([0.571,0.391,0.739])
 	Dm			=np.array([0.0366,0.109,0.696])*1e-6
 elif spray_method==RAYLEIGH:
@@ -45,6 +47,10 @@ elif spray_method==TAYLOR_CONE:
 	N_aer1		=np.array([1.0])*1e6
 	logSig		=np.log(np.array([1.19]))
 	Dm			=np.array([0.0826])*1e-6
+elif spray_method==TOPAZ:
+	N_aer1		=np.array([3530,190,0.00378])*1e6
+	logSig		=np.array([0.424,0.374,0.01])
+	Dm			=np.array([0.0848,0.198,0.915])*1e-6
 
 N_aer1=N_aer1/np.sum(N_aer1)
 
