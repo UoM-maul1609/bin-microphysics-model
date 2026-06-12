@@ -5,8 +5,12 @@ from scipy.interpolate import interp1d
 import svp
 
 path1='/Volumes/REFLECT/data/20260512/'
+path1='/Volumes/REFLECT/data/20260526/'
 file1='20260512-temp.csv'
 file2='20260512-pressure.S30'
+
+file1='20260526-temp.csv'
+file2='20260526-pressure.S30'
 
 def add_datetime_and_seconds_in_day(df):
     # Clean column names
@@ -64,10 +68,11 @@ intp=interp1d(np.array(pressure['seconds_in_day'][ind1]), \
 press_temp=intp(thermo['seconds_in_day'])
 
 # now define a start point, which we will call t0, also define an initial RH, and conserve water
-t0=43111
-tlen=43450-t0
+t0=46736
+t0=55278
+tlen=805
 tf=t0+tlen
-rhinit=0.90
+rhinit=0.97
 r_gas=8.314
 mair=29e-3
 mh2o=18e-3

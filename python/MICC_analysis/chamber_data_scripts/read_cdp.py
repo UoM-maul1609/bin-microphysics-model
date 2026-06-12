@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 
 path1='/Volumes/REFLECT/data/20260512/cdp/20260512115456/'
+path1='/Volumes/REFLECT/data/20260526/cdp/20260526152153_exp2/'
 
 
 import re
@@ -96,7 +97,7 @@ def read_cdp_pbp(filename):
     }
 
 
-filename = path1 + "00CDP PBP20260512115456.csv"
+filename = path1 + "00CDP PBP20260526152153.csv"
 
 cdp = read_cdp_pbp(filename)
 
