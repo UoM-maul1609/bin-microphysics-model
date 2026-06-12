@@ -35,9 +35,21 @@ aerosol['sig']=np.log(np.array([1.35,1.60,1.16]))
 
 path1="/Volumes/REFLECT/data/20260526/"
 
-t0=55278
-rhinit=0.97
+t0=46736
+rhinit=0.94
 tlen=805
+
+aerosol['N']=np.array([6.59e2,3.61e3,1.05e2])*1e6
+aerosol['D']=np.array([77,120,318])*1e-9
+aerosol['sig']=np.log(np.array([1.32,1.61,1.18]))
+
+path1="/Volumes/REFLECT/data/20260612/"
+
+t0=57637
+rhinit=0.88
+tlen=805
+
+
 """
 	shouldn't need to change anything below
 """
@@ -62,35 +74,11 @@ cdp = read_cdp2.add_cdp_concentration_and_lwc(cdp,airspeed_m_s=10.0)
 
 
 
-"""
-	plot
-"""
-nc=Dataset(modelfilename,'r')
-plt.ion()
-plt.figure()
-plt.subplot(511)
-plt.plot(nc['time'][:],nc['t'][:]-273.15)
-plt.plot(tp['thermo']['seconds_in_day']-tp['chamber']['t0'],tp['temperature']-273.15,'--')
-plt.xlim((-10,260))
-plt.ylim((np.min(nc['t'][:]-273.15),np.max(nc['t'][:]-273.15)))
 
-plt.subplot(512)
-plt.plot(nc['time'][:],nc['p'][:]/100)
-plt.plot(tp['thermo']['seconds_in_day']-tp['chamber']['t0'],tp['press_temp']/100,'--')
-plt.xlim((-10,260))
-plt.ylim((np.min(nc['p'][:]/100),np.max(nc['p'][:]/100)))
 
-plt.subplot(513)
-plt.plot(nc['time'][:],nc['ndrop'][:]/1e6*nc['p'][:]/(nc['t'][:]*read_p_t2.rair))
-plt.plot(cdp['data']['seconds_in_day']-tp['chamber']['t0'],np.nansum(cdp['cdp_conc_cm3'],axis=1))
-plt.xlim((-10,260))
 
-plt.subplot(514)
-plt.plot(nc['time'][:],nc['ql'][:]*1000.)
-plt.plot(cdp['data']['seconds_in_day']-tp['chamber']['t0'],cdp['data']['LWC_g_m3']/cdp['data']['rho_air_kg_m3'])
-plt.xlim((-10,260))
 
-nc.close()
+
 
 """
     0. function to change file
@@ -162,5 +150,47 @@ if __name__=="__main__":
 	runModel()
 	
 	
+	"""
+		plot
+	"""
+	nc=Dataset(modelfilename,'r')
+	plt.ion()
+	fig=plt.figure()
+	plt.subplot(511)
+	plt.plot(nc['time'][:],nc['t'][:]-273.15)
+	plt.plot(tp['thermo']['seconds_in_day']-tp['chamber']['t0'],tp['temperature']-273.15,'--')
+	plt.xlim((-10,260))
+	plt.ylim((np.min(nc['t'][:]-273.15),np.max(nc['t'][:]-273.15)))
+	plt.ylabel('T ($^\\circ$C)')
 	
+	plt.subplot(512)
+	plt.plot(nc['time'][:],nc['p'][:]/100)
+	plt.plot(tp['thermo']['seconds_in_day']-tp['chamber']['t0'],tp['press_temp']/100,'--')
+	plt.xlim((-10,260))
+	plt.ylim((np.min(nc['p'][:]/100),np.max(nc['p'][:]/100)))
+	plt.ylabel('P (hPa)')
+	
+	plt.subplot(513)
+	plt.plot(nc['time'][:],nc['ndrop'][:]/1e6*nc['p'][:]/(nc['t'][:]*read_p_t2.rair))
+	plt.plot(cdp['data']['seconds_in_day']-tp['chamber']['t0'],np.nansum(cdp['cdp_conc_cm3'],axis=1))
+	plt.xlim((-10,260))
+	plt.ylabel('CDNC (cm$^{-3}$)')
+	
+	plt.subplot(514)
+	plt.plot(nc['time'][:],nc['ql'][:]*1000.)
+	plt.plot(cdp['data']['seconds_in_day']-tp['chamber']['t0'],cdp['data']['LWC_g_m3']/cdp['data']['rho_air_kg_m3'])
+	plt.xlim((-10,260))
+	plt.ylabel('$q_l$ (g kg$^{-1}$)')
+	
+	plt.subplot(515)
+	plt.plot(nc['time'][:],nc['deff'][:]*1e6)
+	plt.plot(cdp['data']['seconds_in_day']-tp['chamber']['t0'],cdp['data']['ED (um)'])
+	plt.xlim((-10,260))
+	plt.xlabel('time (s)')
+	plt.ylabel('$D_{eff}$ ($\\mu$m)')
+	
+	fig.tight_layout()
+	
+	nc.close()
+
 	
