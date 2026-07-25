@@ -2863,8 +2863,10 @@
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         ! change in temperature of parcel                                        !
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        ydot(ite)=rm/p*ydot(ipr)*t/cpm  ! temperature change: expansion
-        ydot(ite)=ydot(ite)-ls/cpm*drv ! temp change: sublimation
+        ydot(ite)=rm/p*ydot(ipr)*t/cpm  ! temperature change: expansion 
+        								! the pressure change is zero, so 0
+        if (.not.chamber_override) &
+	        ydot(ite)=ydot(ite)-ls/cpm*drv ! temp change: sublimation
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
@@ -3189,7 +3191,8 @@
 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! latent heat of fusion (these freeze so this is how much heat is released):
-    t=t+lf/cp*sum(mwat(:)*dn01(:))
+    if (.not.chamber_override) &
+	    t=t+lf/cp*sum(mwat(:)*dn01(:))
     end subroutine noncollisional_iceformation
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
@@ -5242,7 +5245,7 @@
                                 parcel1%ecoll,parcel1%indexc, &
                                 parcel1%mbinall(:,n_comps+1),parcel1%dt, &
                                 parcel1%y(parcel1%ite))
-                ! latent heat of fusion
+                ! just set the ice solver temperature to the liquid temperature
                 if(ice_flag.eq.1) parcel1%yice(parcel1%itei)=parcel1%y(parcel1%ite)
             elseif(sce_flag.eq.2) then
                 call sce_sip_microphysics(parcel1%n_bins1,parcel1%n_bin_mode,&
@@ -5256,8 +5259,10 @@
                                 hm_flag,break_flag,mode1_flag, mode2_flag )
                 ! latent heat of fusion
                 if(ice_flag.eq.1) then
-                    call adjust_t_rh(parcel1%totaddto,parcel1%y(parcel1%ite), &
+                	if(.not.chamber_override) then
+	                    call adjust_t_rh(parcel1%totaddto,parcel1%y(parcel1%ite), &
                                 parcel1%y(parcel1%irh), parcel1%y(parcel1%ipr))
+                    endif
                     parcel1%yice(parcel1%irhi)=parcel1%y(parcel1%irh)
                     parcel1%yice(parcel1%itei)=parcel1%y(parcel1%ite)
                 endif

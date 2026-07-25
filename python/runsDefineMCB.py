@@ -35,10 +35,22 @@ elif spray_method==HARRISON_DELAVAL:
 	logSig		=np.array([0.703,0.534,0.9])
 	Dm			=np.array([0.0156,0.123,0.398])*1e-6
 elif spray_method==EDMUND_SCF:
+	"""
 	N_aer1		=np.array([6460000,3830000,32700])*1e6
 	#N_aer1		=np.array([6460000,3830000,0])*1e6
 	logSig		=np.array([0.571,0.391,0.739])
 	Dm			=np.array([0.0366,0.109,0.696])*1e-6
+	"""
+	# new with small
+	N_aer1		=np.array([250000,789000,2050000])*1e6
+	logSig		=np.array([0.2,0.3,0.751])
+	Dm			=np.array([0.00941,0.0168,0.0467])*1e-6
+	"""
+	# new without small
+	N_aer1		=np.array([28200,92700,860000])*1e6
+	logSig		=np.array([0.185,0.3,0.826])
+	Dm			=np.array([0.00818,0.0139,0.0529])*1e-6
+	"""
 elif spray_method==RAYLEIGH:
 	N_aer1		=np.array([1.0])*1e6
 	logSig		=np.array([0.25])
