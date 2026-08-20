@@ -184,8 +184,12 @@
         dthresh = min(d,1.6e-3)
         x = log10(dthresh*1000._wp)
         
-        ! table 3, phillips et al.
-        beta1 = 0.
+        ! table 3, Phillips et al.
+        if (dthresh < 0.4e-3_wp) then
+            beta1 = 0._wp
+        else
+            beta1 = -0.1839_wp*x*x - 0.2017_wp*x - 0.0512_wp
+        endif
         log10zeta = 2.4268_wp*x*x*x + 3.3274_wp*x*x + 2.0783_wp*x + 1.2927_wp
         log10nabla = 0.1242_wp*x*x*x - 0.2316_wp*x*x - 0.9874_wp*x - 0.0827_wp
         t0 = -1.3999_wp*x*x*x - 5.3285_wp*x*x - 3.9847_wp*x - 15.0332_wp
@@ -216,7 +220,11 @@
         ! mass of small fragments
         mt=oneoversix*rhoice*pi*dtt**3
         
-        fac1=min((mt*nt+mb*nb)/min1,1._wp)
+        if ((mt*nt+mb*nb) > 0._wp) then
+            fac1=min(min1/(mt*nt+mb*nb),1._wp)
+        else
+            fac1=1._wp
+        endif
         nt = nt *fac1
         nb = nb *fac1
         n=nt+nb
@@ -534,8 +542,13 @@
 
     subroutine fex (neq, t, y, ydot, rpar, ipar)
         use numerics_type
-        real(wp) :: rpar, t
-        real(wp), dimension(neq) :: y,ydot
+        implicit none
+        integer(i4b), intent(in) :: neq
+        real(wp), intent(in) :: t
+        real(wp), dimension(neq), intent(in) :: y
+        real(wp), dimension(neq), intent(out) :: ydot
+        real(wp), dimension(*), intent(in) :: rpar
+        integer(i4b), dimension(*), intent(in) :: ipar
         ydot(1) = -.04e0_wp*y(1) + 1.e4_wp*y(2)*y(3)
         ydot(3) = 3.e7_wp*y(2)*y(2)
         ydot(2) = -ydot(1) - ydot(3)
@@ -552,11 +565,15 @@
     end subroutine func2
 
     subroutine jex (neq, t, y, ml, mu, pd, nrpd, rpar, ipar)
-        use numerics_type
-        real(wp) :: rpar, t
-        real(wp), dimension(neq) :: y
-        real(wp), dimension(nrpd,neq) :: pd
-        pd(1,1) = -.04e0_wp
+		use numerics_type
+		implicit none
+		integer(i4b), intent(in) :: neq, ml, mu, nrpd
+		real(wp), intent(in) :: t
+		real(wp), dimension(neq), intent(in) :: y
+		real(wp), dimension(nrpd, neq), intent(out) :: pd
+		real(wp), dimension(*), intent(inout) :: rpar
+		integer(i4b), dimension(*), intent(inout) :: ipar        
+		pd(1,1) = -.04e0_wp
         pd(1,2) = 1.e4_wp*y(3)
         pd(1,3) = 1.e4_wp*y(2)
         pd(2,1) = .04e0_wp
