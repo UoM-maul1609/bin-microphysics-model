@@ -5219,6 +5219,7 @@
     logical, intent(in) :: hm_flag, mode1_flag, mode2_flag
     integer(i4b), intent(in) :: break_flag
     integer(i4b) :: i, j, nt
+    real(wp) :: rhoa
     
     nt=ceiling(runtime / real(dt,kind=wp))
     do i=1,nt
@@ -5232,6 +5233,8 @@
             icenucleation, noncollisional_iceformation)
         
         if(sce_flag.gt.0) then
+        	! calculate the density of air
+        	rhoa=parcel1%y(parcel1%ipe)/(parcel1%y(parcel1%ite)*ra)
             
             ! Map the BMM variables to the SCE variables
             call map_to_sce(ice_flag)
@@ -5244,7 +5247,7 @@
                                 parcel1%npartall,parcel1%moments,parcel1%momenttype, &
                                 parcel1%ecoll,parcel1%indexc, &
                                 parcel1%mbinall(:,n_comps+1),parcel1%dt, &
-                                parcel1%y(parcel1%ite))
+                                parcel1%y(parcel1%ite),rhoa)
                 ! just set the ice solver temperature to the liquid temperature
                 if(ice_flag.eq.1) parcel1%yice(parcel1%itei)=parcel1%y(parcel1%ite)
             elseif(sce_flag.eq.2) then
@@ -5254,7 +5257,7 @@
                                 parcel1%npartall,parcel1%moments,parcel1%momenttype, &
                                 parcel1%ecoll,parcel1%indexc, &
                                 parcel1%mbinall(:,n_comps+1),parcel1%vel,parcel1%dt, &
-                                parcel1%y(parcel1%ite),parcel1%totaddto, &
+                                parcel1%y(parcel1%ite),rhoa, parcel1%totaddto, &
                                 mass_fragment1, mass_fragment2, mass_fragment3, &
                                 hm_flag,break_flag,mode1_flag, mode2_flag )
                 ! latent heat of fusion
