@@ -30,7 +30,8 @@
             ans=IEEE_VALUE(0._wp,IEEE_POSITIVE_INF)
             return
         elseif((x==-1._wp) ) then
-            ans=IEEE_VALUE(0._wp,IEEE_POSITIVE_INF)
+            ans=IEEE_VALUE(0._wp,IEEE_NEGATIVE_INF)
+            return
         endif
         
         
