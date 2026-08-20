@@ -2101,7 +2101,7 @@
     !>The collision-event rate is 0.5*Kii*Ni**2; each event removes two
     !>particles from bin i and creates one particle of mass 2*xn(i).
     subroutine sce_self_collection(i,n_binst,n_bin_mode,n_moments,npart,moments, &
-                                   momtype,ecoll,indexc,xn,dt)
+                                   momtype,ecoll,indexc,xn,rhoa,dt)
     use numerics_type
     implicit none
 
@@ -2111,7 +2111,7 @@
     real(wp), dimension(n_bin_mode), intent(inout) :: npart,xn
     real(wp), dimension(n_bin_mode,n_moments), intent(inout) :: moments
     integer(i4b), dimension(n_moments), intent(in) :: momtype
-    real(wp), intent(in) :: dt
+    real(wp), intent(in) :: dt, rhoa
 
     real(wp) :: ncoll,remove,massn,massaddto,frac
     real(wp), dimension(n_moments) :: momtemp,oldprop
@@ -2121,7 +2121,7 @@
 
     ! Number of self-collision events.  The factor 1/2 is required only
     ! for the diagonal because an i-i pair would otherwise be counted twice.
-    ncoll=0.5_wp*ecoll(i,i)*npart(i)*npart(i)*dt
+    ncoll=0.5_wp*rhoa*ecoll(i,i)*npart(i)*npart(i)*dt
 
     ! Each collision event consumes two particles from bin i.
     ncoll=min(ncoll,0.5_wp*npart(i))
@@ -2251,7 +2251,7 @@
 	!>@brief
 	!>calculates one time-step of sce-microphysics
     subroutine sce_microphysics(n_binst,n_bin_mode,n_moments,npart,moments,momtype, &
-                                ecoll,indexc,xn,dt,t)
+                                ecoll,indexc,xn,dt,t,rhoa)
     use numerics_type
     use numerics, only : zeroin, dvode
     implicit none
@@ -2263,6 +2263,8 @@
     integer(i4b), dimension(n_moments), intent(in) :: momtype
     real(wp), intent(in) :: dt
     real(wp), intent(inout) :: t
+    real(wp), intent(in) :: rhoa
+
     
     real(wp) :: remove1,remove2,massn,massaddto,nnew,gk,beta1,cw,fk05, &
                 frac1, frac2, fracl, fracadj1, fracadj2, totloss,totaddto
@@ -2293,7 +2295,7 @@
         ! Diagonal (i=i) self collection is handled separately because each
         ! collision event removes two particles from the same source bin.
         call sce_self_collection(i,n_binst,n_bin_mode,n_moments,npart,moments, &
-                                 momtype,ecoll,indexc,xn,dt)
+                                 momtype,ecoll,indexc,xn,rhoa,dt)
         if (npart(i).lt.qsmall2) cycle
 
         do j=i+1,ih
@@ -2302,7 +2304,7 @@
             phase2=(j-1)/parcel1%n_bin_modew
 
             ! numbers removed from each bin:
-            remove2=min(npart(i)*ecoll(j,i)*npart(j)*dt,npart(j),npart(i))
+            remove2=min(rhoa*npart(i)*ecoll(j,i)*npart(j)*dt,npart(j),npart(i))
             remove1=remove2
             totloss=remove1+remove2
 
@@ -2424,7 +2426,7 @@
 	!>@brief
 	!>calculates one time-step of sce-sip_microphysics
     subroutine sce_sip_microphysics(n_binst,n_bin_mode,n_moments,npart,moments,momtype, &
-                                ecoll,indexc,xn,vel,dt,t, totaddto, &
+                                ecoll,indexc,xn,vel,dt,t, rhoa, totaddto, &
                                 mass_hm_splinter, mass_coll_splinter, &
                                 mass_mode2_frag, hm_flag, break_flag, mode1_flag, &
                                 mode2_flag)
@@ -2442,6 +2444,7 @@
     logical, intent(in) :: hm_flag, mode1_flag, mode2_flag
     integer(i4b), intent(in) :: break_flag
     real(wp), intent(inout) :: t, totaddto
+    real(wp), intent(in) :: rhoa
     
     real(wp) :: remove1,remove2,massn,massaddto,nnew,gk,beta1,cw,fk05, &
                 frac1, frac2, fracl1,fracl2, fracadj1, fracadj2, totloss, &
@@ -2477,13 +2480,13 @@
         ! Diagonal (i=i) self collection is handled separately because each
         ! collision event removes two particles from the same source bin.
         call sce_self_collection(i,n_binst,n_bin_mode,n_moments,npart,moments, &
-                                 momtype,ecoll,indexc,xn,dt)
+                                 momtype,ecoll,indexc,xn,rhoa,dt)
         if (npart(i).lt.qsmall2) cycle
 
         do j=i+1,ih
             if (npart(j).lt.qsmall2) cycle
             ! numbers removed from each bin:
-            remove2=min(npart(i)*ecoll(j,i)*npart(j)*dt,npart(j),npart(i))
+            remove2=min(rhoa*npart(i)*ecoll(j,i)*npart(j)*dt,npart(j),npart(i))
             remove1=remove2
             totloss=remove1+remove2
             
@@ -3043,10 +3046,14 @@
     implicit none
     integer(i4b) :: i, nt,j
     real(wp), dimension(parcel1%n_bin_mode) :: tmp
+    real(wp) :: rhoa
     
     
     nt=ceiling(runtime / real(dt,kind=wp))
     do i=1,nt
+    	! calculate density
+    	rhoa = parcel1%p/(parcel1%t*ra)
+    	
         ! output to file
         call output(io1%new_file,outputfile)
         
@@ -3056,7 +3063,7 @@
                             parcel1%imoms,&
                             parcel1%npart,parcel1%moments,parcel1%momenttype, &
                             parcel1%ecoll,parcel1%indexc, &
-                            parcel1%mbin(:,n_comps+1),parcel1%dt,parcel1%t)
+                            parcel1%mbin(:,n_comps+1),parcel1%dt,parcel1%t,rhoa)
         
         
         ! redefine the mass of each component of aerosol
