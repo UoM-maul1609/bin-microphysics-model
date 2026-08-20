@@ -3568,7 +3568,7 @@
         
         ! factor to convert between R and a - derived from equating volume of sphere to 
         ! volume of spheroid and taking the ratio of a / r
-        fac1=(1._wp/(phi))**(1/3)
+        fac1=(1._wp/(phi))**onethird
         
         ! factor to convert between a and capacitance
         if(phi<0.99_wp) then
