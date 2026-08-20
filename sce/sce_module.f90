@@ -2959,8 +2959,14 @@
     ! courant number - equation 8 of Bott 2000
     cw=(log(mass_s)-log(xn(lf1))) / (log(xn(lf1+1))-log(xn(lf1)))
     ! exponential flux - equation 7 of Bott 2000, but wrong in paper!
-    fk05=mass_stot/beta1*(exp(beta1*0.5_wp)-exp(beta1*(0.5_wp-cw)))
-    fk05=min(fk05,mass_stot)
+	if (abs(beta1) < 1.e-12_wp) then
+		fk05 = mass_stot*cw
+	else
+		fk05 = mass_stot/beta1 * &
+			   (exp(beta1*0.5_wp) - &
+				exp(beta1*(0.5_wp-cw)))
+	endif	
+	fk05 = max(0._wp,min(fk05,mass_stot))
     !-------------------------------------------------------------------------
 
     ! this puts the correct number in new "small" category - same+++++++++++++
