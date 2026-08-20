@@ -5234,7 +5234,7 @@
         
         if(sce_flag.gt.0) then
         	! calculate the density of air
-        	rhoa=parcel1%y(parcel1%ipe)/(parcel1%y(parcel1%ite)*ra)
+        	rhoa=parcel1%y(parcel1%ipr)/(parcel1%y(parcel1%ite)*ra)
             
             ! Map the BMM variables to the SCE variables
             call map_to_sce(ice_flag)
