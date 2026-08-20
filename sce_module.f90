@@ -1627,7 +1627,7 @@
 !       ! area ratio
 !       ar=area/(pi/4._wp* (dmax**2._wp))
 !       ar=min(max(ar,0.1_wp),1._wp)
-      dmax=(mwat/rhoice*6._wp/pi)**(1/3)
+      dmax=(mwat/rhoice*6._wp/pi)**oneoverthree
       ar=1._wp
   
       ! heymsfield and westbrook
