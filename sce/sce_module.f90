@@ -900,12 +900,26 @@
             
             ! Brownian Diffusion Enhancement kernel +++++++++
             ! Equation 15.35, Jacobson, page 510 
-            sc1=va/d1
-            if ((nre(j).le.1._wp).and.(dw(j).ge.dw(i))) then
-                kde=kbrown*0.45_wp*nre(j)**(1._wp/3._wp)*sc1**(1._wp/3._wp)
-            elseif ((nre(j).gt.1._wp).and.(dw(j).ge.dw(i))) then
-                kde=kbrown*0.45_wp*nre(j)**(0.5_wp)*sc1**(1._wp/3._wp)
-            endif
+			! Brownian diffusion enhancement kernel
+			! Use Reynolds number of large particle,
+			! Schmidt number of small particle.
+			if (dw(j) >= dw(i)) then
+				! i = small particle, j = large particle
+				sc1 = va/d1
+				re1 = nre(j)
+			else
+				! j = small particle, i = large particle
+				sc1 = va/d2
+				re1 = nre(i)
+			endif
+			
+			if (re1 <= 1._wp) then
+				kde = kbrown * 0.45_wp * re1**oneoverthree * &
+					  sc1**(1._wp/3._wp)
+			else
+				kde = kbrown * 0.45_wp * sqrt(re1) * &
+					  sc1**oneoverthree
+			endif
             !------------------------------------------------
             
             ecoll(i,j)=ecoll(i,j) +kbrown+kde+kti+kts
@@ -2078,6 +2092,77 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
     
+
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! self collection for one bin                                                !
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    !>@brief
+    !>performs the diagonal (i=i) part of the stochastic collection equation.
+    !>The collision-event rate is 0.5*Kii*Ni**2; each event removes two
+    !>particles from bin i and creates one particle of mass 2*xn(i).
+    subroutine sce_self_collection(i,n_binst,n_bin_mode,n_moments,npart,moments, &
+                                   momtype,ecoll,indexc,xn,dt)
+    use numerics_type
+    implicit none
+
+    integer(i4b), intent(in) :: i,n_binst,n_bin_mode,n_moments
+    real(wp), dimension(n_bin_mode,n_bin_mode), intent(in) :: ecoll
+    integer(i4b), dimension(n_bin_mode,n_bin_mode), intent(in) :: indexc
+    real(wp), dimension(n_bin_mode), intent(inout) :: npart,xn
+    real(wp), dimension(n_bin_mode,n_moments), intent(inout) :: moments
+    integer(i4b), dimension(n_moments), intent(in) :: momtype
+    real(wp), intent(in) :: dt
+
+    real(wp) :: ncoll,remove,massn,massaddto,frac
+    real(wp), dimension(n_moments) :: momtemp,oldprop
+    integer(i4b) :: k,l,jl,jh,modeinto,phase
+
+    if (npart(i).lt.qsmall2) return
+
+    ! Number of self-collision events.  The factor 1/2 is required only
+    ! for the diagonal because an i-i pair would otherwise be counted twice.
+    ncoll=0.5_wp*ecoll(i,i)*npart(i)*npart(i)*dt
+
+    ! Each collision event consumes two particles from bin i.
+    ncoll=min(ncoll,0.5_wp*npart(i))
+    if (ncoll.lt.qsmall2) return
+
+    remove=2._wp*ncoll
+    massn=2._wp*xn(i)
+    massaddto=xn(i)*remove
+
+    ! Self collection remains in the same phase.  indexc determines
+    ! which mass mode receives the product.
+    phase=(i-1)/parcel1%n_bin_modew
+    modeinto=indexc(i,i)
+    jl=(modeinto-1)*n_binst+1+phase*parcel1%n_bin_modew
+    jh=modeinto*n_binst+phase*parcel1%n_bin_modew
+
+    do k=jl,jh
+        if (xn(k).gt.massn) exit
+    enddo
+    l=k-1
+
+    ! Do not perform the interaction if the product lies off the grid.
+    if (l.eq.jh) return
+
+    ! Transfer the moments belonging to the two particles removed
+    ! in each self-collision event.
+    frac=remove/npart(i)
+    momtemp=moments(i,:)*frac
+    oldprop=0._wp
+
+    moments(i,:)=moments(i,:)*(1._wp-frac)
+    npart(i)=npart(i)-remove
+
+    ! Reuse the existing Bott gain integral to place the collision products.
+    call add_moments_to_new_bin(l,n_moments,n_bin_mode, &
+        massaddto,massn,massaddto,remove,0._wp,momtype,xn, &
+        momtemp,oldprop,npart,moments,phase,phase)
+
+    end subroutine sce_self_collection
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! one time-step of the bin-microphysics                                        !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -2204,12 +2289,20 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     do i=il,ih
         if (npart(i).lt.qsmall2) cycle
+
+        ! Diagonal (i=i) self collection is handled separately because each
+        ! collision event removes two particles from the same source bin.
+        call sce_self_collection(i,n_binst,n_bin_mode,n_moments,npart,moments, &
+                                 momtype,ecoll,indexc,xn,dt)
+        if (npart(i).lt.qsmall2) cycle
+
         do j=i+1,ih
+        	if (npart(j).lt.qsmall2) cycle
             phase1=(i-1)/parcel1%n_bin_modew
             phase2=(j-1)/parcel1%n_bin_modew
 
             ! numbers removed from each bin:
-            remove2=min(npart(i)*ecoll(j,i)*npart(j)*dt,npart(j),npart(i))*0.5_wp
+            remove2=min(npart(i)*ecoll(j,i)*npart(j)*dt,npart(j),npart(i))
             remove1=remove2
             totloss=remove1+remove2
 
@@ -2380,10 +2473,17 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     do i=il,ih
         if (npart(i).lt.qsmall2) cycle
+
+        ! Diagonal (i=i) self collection is handled separately because each
+        ! collision event removes two particles from the same source bin.
+        call sce_self_collection(i,n_binst,n_bin_mode,n_moments,npart,moments, &
+                                 momtype,ecoll,indexc,xn,dt)
+        if (npart(i).lt.qsmall2) cycle
+
         do j=i+1,ih
-            
+            if (npart(j).lt.qsmall2) cycle
             ! numbers removed from each bin:
-            remove2=min(npart(i)*ecoll(j,i)*npart(j)*dt,npart(j),npart(i))*0.5_wp
+            remove2=min(npart(i)*ecoll(j,i)*npart(j)*dt,npart(j),npart(i))
             remove1=remove2
             totloss=remove1+remove2
             
