@@ -2213,8 +2213,9 @@
         sigma = min(max((d-50.e-6_wp)/10.e-6_wp,0._wp), 1._wp)
         omega = min(max((-3._wp-tc)/3._wp,0._wp),1._wp)
         
-        n = sigma*omega*(10._wp**log10zeta *(10**log10nabla)**2) / &
-            ((tc-t0)**2+(10._wp*log10nabla)**2+beta1*tc)
+        n = sigma*omega*(10._wp**log10zeta *(10**log10nabla)**2 / &
+            ((tc-t0)**2+(10._wp*log10nabla)**2)+beta1*tc )
+
         
         ! total number of fragments
         if (d>1.6e-3_wp) then
