@@ -568,9 +568,9 @@
         ! set up variables for parcel model
         ntot=num
         number_per_bin=ntot/real(n_bins,wp)
-        ! make sure it is zero if needed
-        parcel1%npart(1+(k-1)*n_bins:(k)*n_bins)=min(number_per_bin, &
-        		sum(n_aer1(:,k))/real(n_bins,wp))
+!         ! make sure it is zero if needed
+!         parcel1%npart(1+(k-1)*n_bins:(k)*n_bins)=min(number_per_bin, &
+!         		sum(n_aer1(:,k))/real(n_bins,wp))
         parcel1%d(1+(k-1)*(n_bins+1))=dmina
         do i=1,n_bins
             d_dummy=parcel1%d(i+(k-1)*(n_bins+1))
@@ -585,18 +585,54 @@
     
 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! aerosol mass - total                                                         !
+    ! aerosol number and dry mass                                                  !
+    !                                                                              !
+    ! Calculate the actual number and third diameter moment between the            !
+    ! bin edges. The representative aerosol mass is then the mean aerosol          !
+    ! mass in the bin. This conserves both aerosol number and dry aerosol mass.     !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     do k=1,parcel1%n_modes
         do j=1,parcel1%n_bins1
+            ! index of diameter edges
             i=j+(k-1)*(n_bins+1)
-            parcel1%maer(j+(k-1)*(n_bins))= &
-                pi/6._wp*(0.5_wp*(parcel1%d(i+1)+parcel1%d(i)))**3 * &
-                parcel1%rho_core(k)
+            ! actual number represented by this bin
+            call lognormal_n_between_limits( &
+                n_aer1(:,k), &
+                d_aer1(:,k), &
+                sig_aer1(:,k), &
+                n_intern, &
+                parcel1%d(i), &
+                parcel1%d(i+1), &
+                num)
+
+            parcel1%npart(j+(k-1)*n_bins)=num
+            ! third diameter moment represented by this bin
+            call lognormal_m3_between_limits( &
+                n_aer1(:,k), &
+                d_aer1(:,k), &
+                sig_aer1(:,k), &
+                n_intern, &
+                parcel1%d(i), &
+                parcel1%d(i+1), &
+                var)
+                
+            if (num > tiny(1._wp)) then
+                ! mean dry aerosol mass per particle
+                parcel1%maer(j+(k-1)*n_bins)= &
+                    pi/6._wp * parcel1%rho_core(k) * var/num
+            else
+                ! Empty bin: mass is irrelevant because npart=0.
+                ! Retain a sensible positive representative mass to avoid
+                ! problems in routines that evaluate every bin.
+                parcel1%maer(j+(k-1)*n_bins)= &
+                    pi/6._wp * &
+                    (0.5_wp*(parcel1%d(i+1)+parcel1%d(i)))**3 * &
+                    parcel1%rho_core(k)
+            endif
         enddo
     enddo
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
+    
 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! calculate the mass of each component in a bin, including water (Koehler eq)
@@ -1256,7 +1292,52 @@
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
     
-    
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    !>@author
+    !>Paul J. Connolly, The University of Manchester
+    !>@brief
+    !>calculates the third diameter moment of a lognormal aerosol distribution
+    !>between two diameter limits
+    !>@param[in] n_aer1,d_aer1,sig_aer1: lognormal parameters
+    !>@param[in] n_intern: number of internal modes
+    !>@param[in] dmin,dmax: lower / upper diameter limits
+    !>@param[out] m3: integral of D^3 n(D) dD between dmin and dmax
+    subroutine lognormal_m3_between_limits(n_aer1,d_aer1,sig_aer1, &
+                                           n_intern,dmin,dmax,m3)
+
+        implicit none
+
+        integer(i4b), intent(in) :: n_intern
+        real(wp), intent(in) :: dmin,dmax
+        real(wp), dimension(n_intern), intent(in) :: n_aer1,d_aer1,sig_aer1
+
+        real(wp), intent(out) :: m3
+
+        integer(i4b) :: i
+        real(wp) :: zmin,zmax,sig
+
+        m3=0._wp
+
+        do i=1,n_intern
+
+            if (n_aer1(i) <= 0._wp) cycle
+
+            sig=sig_aer1(i)
+
+            zmin=log(dmin/d_aer1(i))/sig
+            zmax=log(dmax/d_aer1(i))/sig
+
+            m3=m3 + n_aer1(i)*d_aer1(i)**3 * &
+                exp(4.5_wp*sig**2) * &
+                ( &
+                0.5_wp*erfc(-(zmax-3._wp*sig)/sqrt(2._wp)) - &
+                0.5_wp*erfc(-(zmin-3._wp*sig)/sqrt(2._wp)) &
+                )
+
+        enddo
+
+    end subroutine lognormal_m3_between_limits
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!    
 
 
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
