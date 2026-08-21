@@ -3563,29 +3563,40 @@
         implicit none
         real(wp), intent(in) :: phi
         real(wp) :: chen_and_lamb_cap_fac
-        real(wp) :: fac1,fac2,ecc
+        real(wp) :: ecc, phi1
 
         
-        ! factor to convert between R and a - derived from equating volume of sphere to 
+        ! convert between R and a - derived from equating volume of sphere to 
         ! volume of spheroid and taking the ratio of a / r
-        fac1=(1._wp/(phi))**onethird
+        phi1=max(phi,1.e-8_wp)
         
         ! factor to convert between a and capacitance
-        if(phi<0.99_wp) then
+        if(phi1<0.99_wp) then
+			! Oblate spheroid (plate)
+			! Chen and Lamb (1994), Eq. 39:
+			! C = a*ecc/asin(ecc)
+			! R = a*phi^(1/3)
             ! see equation 39 of Chen and Lamb (1994)
-            ecc=sqrt(1._wp-phi**2)
-            fac2=ecc/asin(ecc)
-        elseif(phi>1.01_wp) then
+            ecc=sqrt(1._wp-phi1**2)
+            chen_and_lamb_cap_fac=ecc/asin(ecc)*phi1**(-onethird)
+        elseif(phi1>1.01_wp) then
+			! Prolate spheroid (column)
+			! Chen and Lamb (1994), Eq. 40:
+			! C = c*ecc/log[(1+ecc)*phi]
+			! R = a*phi^(1/3), c=a*phi
             ! see equation 40 of Chen and Lamb (1994)
-            ecc=sqrt(1._wp-(1._wp/phi)**2)
-            fac2=1._wp/phi/log((1._wp+ecc)*phi)
+			ecc=sqrt(max(1._wp-phi1**(-2._wp),0._wp))
+	
+			chen_and_lamb_cap_fac = &
+				phi1**(twothirds) * ecc / &
+				log((1._wp+ecc)*phi1)
         else
-            fac2=1._wp
+	        ! Spherical limit
+            chen_and_lamb_cap_fac=1._wp
         endif
         
-        ! total factor
-        chen_and_lamb_cap_fac=fac1*fac2
         
+          
     end function chen_and_lamb_cap_fac
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
