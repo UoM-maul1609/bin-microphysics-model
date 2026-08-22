@@ -5039,6 +5039,10 @@
     logical, intent(inout) :: new_file
     character (len=*),intent(in) :: outputfile
     real(wp) :: phi, sd2, sd3, deff, precip
+    real(wp) :: svp1,qv,rm,rhod,beta_ext
+	real(wp) :: phi_mean,nmon_mean,rhoi_mean
+	real(wp) :: denom
+    
     ! output to netcdf file
     if(new_file) then
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -5246,6 +5250,7 @@
             call check( nf90_put_att(io1%ncid, io1%a_dimid, &
                        "units", "kg") )
                    
+                   
             ! define variable: phi
             call check( nf90_def_var(io1%ncid, "phi", NF90_DOUBLE, &
                         (/io1%x_dimid/), io1%varid) )
@@ -5300,8 +5305,7 @@
 
         ! write variable: mbinedges
         call check( nf90_inq_varid(io1%ncid, "mbinedges", io1%varid ) )
-        call check( nf90_put_var(io1%ncid, io1%varid, parcel1%mbinedges, &
-                    start = (/io1%icur/)))
+        call check( nf90_put_var(io1%ncid, io1%varid, parcel1%mbinedges))
 
         call check( nf90_close(io1%ncid) )
 
@@ -5355,15 +5359,23 @@
 			parcel1%y(parcel1%ira), start = (/io1%icur/)))	
 	endif
 	
-    ! write variable: beta_ext
-    call check( nf90_inq_varid(io1%ncid, "beta_ext", io1%varid ) )
-    call check( nf90_put_var(io1%ncid, io1%varid, &
-        2._wp*sum((parcel1%y(1:parcel1%n_bin_modew)* &
-            6._wp/(rhow*pi))**(2._wp/3._wp)* pi*onequarter* &
-            parcel1%npart(1:parcel1%n_bin_modew)), &
-                start = (/io1%icur/)))
-
-    ! write variable: number > 2.5 microns (8.1812e-15 kg)
+	svp1=svp_liq(parcel1%y(parcel1%ite))
+	qv=eps1*parcel1%y(parcel1%irh)*svp1 / &
+		(parcel1%y(parcel1%ipr)-svp1)
+	rm=ra+qv*rv
+	! Dry-air density, consistent with number/mass mixing ratios
+	rhod=parcel1%y(parcel1%ipr) / &
+		(rm*parcel1%y(parcel1%ite))
+	beta_ext = 2._wp*pi*rhod*sum(onequarter*parcel1%dw**2 * parcel1%npart)
+    
+    if(ice_flag .eq. 0) then
+		! write variable: beta_ext
+		call check( nf90_inq_varid(io1%ncid, "beta_ext", io1%varid ) )
+		call check( nf90_put_var(io1%ncid, io1%varid, beta_ext, &
+					start = (/io1%icur/)))
+	endif
+	
+    ! write variable: number > 1.24 microns (1.e-15 kg)
     parcel1%ndrop=0._wp
     where (parcel1%y(1:parcel1%n_bin_modew) > 1.e-15_wp)
         parcel1%ndrop=parcel1%npart(:)
@@ -5376,7 +5388,7 @@
 
 
 
-    ! write variable: effective radius
+    ! write variable: effective diameter
     call check( nf90_inq_varid(io1%ncid, "deff", io1%varid ) )
     
     parcel1%ndrop=0._wp
@@ -5422,7 +5434,7 @@
 
 
 	! liquid precipitation		
-	precip = sum(parcel1%vel(1:parcel1%n_bin_modew)* &
+	precip = rhod*sum(parcel1%vel(1:parcel1%n_bin_modew)* &
 		parcel1%y(1:parcel1%n_bin_modew)* &
 		parcel1%npart(1:parcel1%n_bin_modew)/rhow*1000._wp*3600._wp)
 
@@ -5434,6 +5446,13 @@
 	endif
 
     if(ice_flag .eq. 1) then
+    	beta_ext = beta_ext + 2._wp*rhod*sum(parcel1%areaice*parcel1%npartice)
+		! write variable: beta_ext
+		call check( nf90_inq_varid(io1%ncid, "beta_ext", io1%varid ) )
+		call check( nf90_put_var(io1%ncid, io1%varid, beta_ext, &
+					start = (/io1%icur/)))
+    	
+    	
         ! write variable: qi
         call check( nf90_inq_varid(io1%ncid, "qi", io1%varid ) )
         call check( nf90_put_var(io1%ncid, io1%varid, &
@@ -5453,30 +5472,49 @@
              start = (/1,1,io1%icur/)))
 
         ! write variable: phi
-        phi=sum(parcel1%moments(parcel1%n_bin_modew+1:parcel1%n_bin_mode, &
-            parcel1%n_comps+1)) / sum(parcel1%moments(parcel1%n_bin_modew+1:parcel1%n_bin_mode, &
-            parcel1%n_comps+2))
+		denom=sum(parcel1%moments( &
+			parcel1%n_bin_modew+1:parcel1%n_bin_mode, &
+			parcel1%n_comps+2))			
+		if(denom > tiny(1._wp)) then
+			phi_mean=sum(parcel1%moments( &
+				parcel1%n_bin_modew+1:parcel1%n_bin_mode, &
+				parcel1%n_comps+1))/denom
+		else
+			phi_mean=0._wp
+		endif
         call check( nf90_inq_varid(io1%ncid, "phi", io1%varid ) )
         call check( nf90_put_var(io1%ncid, io1%varid, &
-            phi, start = (/io1%icur/)))
+            phi_mean, start = (/io1%icur/)))
     
         ! write variable: nmon
-        phi=sum(parcel1%moments(parcel1%n_bin_modew+1:parcel1%n_bin_mode, &
-            parcel1%n_comps+2)) / sum(parcel1%npartice)
+		denom=sum(parcel1%npartice)		
+		if(denom > tiny(1._wp)) then
+			nmon_mean=sum(parcel1%moments( &
+				parcel1%n_bin_modew+1:parcel1%n_bin_mode, &
+				parcel1%n_comps+2))/denom
+		else
+			nmon_mean=0._wp
+		endif
         call check( nf90_inq_varid(io1%ncid, "nmon", io1%varid ) )
         call check( nf90_put_var(io1%ncid, io1%varid, &
-            phi, start = (/io1%icur/)))
+            nmon_mean, start = (/io1%icur/)))
     
         ! write variable: rhoi
-        phi=sum(parcel1%yice(1:parcel1%n_bin_modew)* &
-                parcel1%npartice(1:parcel1%n_bin_modew) - &
-                parcel1%moments(parcel1%n_bin_modew+1:parcel1%n_bin_mode, &
-            parcel1%n_comps+4)) / &
-                sum(parcel1%moments(parcel1%n_bin_modew+1:parcel1%n_bin_mode, &
-                parcel1%n_comps+3))
+		denom=sum(parcel1%moments( &
+			parcel1%n_bin_modew+1:parcel1%n_bin_mode, &
+			parcel1%n_comps+3))		
+		if(denom > tiny(1._wp)) then
+			rhoi_mean = &
+				(sum(parcel1%yice*parcel1%npartice) - &
+				 sum(parcel1%moments( &
+					 parcel1%n_bin_modew+1:parcel1%n_bin_mode, &
+					 parcel1%n_comps+4))) / denom
+		else
+			rhoi_mean=0._wp
+		endif
         call check( nf90_inq_varid(io1%ncid, "rhoi", io1%varid ) )
         call check( nf90_put_var(io1%ncid, io1%varid, &
-            phi, start = (/io1%icur/)))
+            rhoi_mean, start = (/io1%icur/)))
             
         call check( nf90_inq_varid(io1%ncid, "nicem", io1%varid ) )
         call check( nf90_put_var(io1%ncid, io1%varid, &
@@ -5491,7 +5529,7 @@
 
             
 		! ice precipitation
-		precip = precip + sum( &
+		precip = precip + rhod*sum( &
 			parcel1%vel(parcel1%n_bin_modew+1:parcel1%n_bin_mode) * &
 			parcel1%yice(1:parcel1%n_bin_modew) * &
 			parcel1%npartice(1:parcel1%n_bin_modew) / &
