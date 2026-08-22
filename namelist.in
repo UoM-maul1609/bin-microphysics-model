@@ -36,6 +36,8 @@
     z_ctop=5000., ! height of cloud-top for vertical entrainment
  	ent_rate=1.e-4, 
  	n_levels_s = 151,
+	fallout_flag = .false.,	! flag to allow particles to sediment
+	residence_depth = 100.0, ! sedimentation height scale
  	alpha_therm=1.0,
  	alpha_cond=1.0,
  	alpha_therm_ice=1.0,

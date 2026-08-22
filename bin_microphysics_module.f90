@@ -35,6 +35,20 @@
             integer(i4b) :: n_bins1,n_modes,n_comps, n_bin_mode, n_bin_modew, n_bin_mode1, &
                             n_sound, n_chamber, ice_flag, sce_flag
             real(wp) :: dt
+			! Cumulative hydrometeor mass removed by fallout
+			! kg hydrometeor / kg dry air
+			real(wp) :: qfall_liq=0._wp
+			real(wp) :: qfall_ice=0._wp
+			
+			! Hydrometeor mass removed during most recent timestep
+			! kg hydrometeor / kg dry air
+			real(wp) :: qfall_step_liq=0._wp
+			real(wp) :: qfall_step_ice=0._wp
+			
+			! Cumulative particle number removed
+			! particles / kg dry air
+			real(wp) :: nfall_liq=0._wp
+			real(wp) :: nfall_ice=0._wp
             real(wp), dimension(:), allocatable :: time_chamber, press_chamber, &
             										temp_chamber, dp_chamber, dt_chamber, &
             										qtot_chamber,dqtot_chamber
@@ -128,6 +142,8 @@
         ! some namelist variables
         logical :: micro_init=.true., adiabatic_prof=.false., vert_ent=.false.
         real(wp) :: ent_rate, dmina,dmaxa
+		logical :: fallout_flag=.false.
+		real(wp) :: residence_depth=100._wp        
         real(wp) :: zinit,tpert,winit,winit2, amplitude2, tau2, &
                     tinit,pinit,rhinit,radinit,z_ctop, alpha_therm, alpha_cond, &
                     alpha_therm_ice, alpha_dep, thresh_to_start_hom_mix, &
@@ -327,6 +343,7 @@
                     entrain_period, thresh_to_start_hom_mix, release_aerosol, &
                     entrain_aerosol, vert_ent, &
                     z_ctop, ent_rate,n_levels_s, n_levels_c, &
+                    fallout_flag,residence_depth, &
                     alpha_therm,alpha_cond,alpha_therm_ice,alpha_dep
         namelist /aerosol_setup/ n_intern,n_mode,n_sv,sv_flag, n_bins,n_comps
         namelist /aerosol_spec/ n_aer1,d_aer1,sig_aer1, dmina,dmaxa, &
@@ -448,6 +465,16 @@
     parcel1%rh=rhinit
     parcel1%rad=radinit
     parcel1%dt=dt
+	! Fallout diagnostics
+	parcel1%qfall_liq=0._wp
+	parcel1%qfall_ice=0._wp
+	
+	parcel1%qfall_step_liq=0._wp
+	parcel1%qfall_step_ice=0._wp
+	
+	parcel1%nfall_liq=0._wp
+	parcel1%nfall_ice=0._wp
+    
 
     parcel1%ice_flag=ice_flag
     parcel1%n_bin_mode=&
@@ -5005,6 +5032,84 @@
 	end subroutine update_terminal_velocities
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 	
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! Particle fallout from finite-depth parcel
+	!
+	! Treat parcel as a well-mixed volume of vertical depth residence_depth.
+	! Particles are removed with residence time:
+	!
+	!      tau = residence_depth / terminal_velocity
+	!
+	! Hence:
+	!
+	!      N(t+dt) = N(t) exp(-Vt dt / residence_depth)
+	!
+	! Per-particle masses and properties are unchanged.  All extensive moments
+	! must be reduced by the same factor as particle number.
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	subroutine apply_particle_fallout()
+		implicit none
+		integer(i4b) :: i,n
+		real(wp) :: survival, qfall,nfall
+		if (.not.fallout_flag) return
+		
+		if (residence_depth <= 0._wp) then
+			error stop 'residence_depth must be > 0'
+		endif
+		n=parcel1%n_bin_modew
+		parcel1%qfall_step_liq=0._wp
+		parcel1%qfall_step_ice=0._wp
+		!------------------------------------------------------------------
+		! Liquid particles
+		!------------------------------------------------------------------
+		do i=1,n
+			survival=exp( &
+				-max(parcel1%vel(i),0._wp) * &
+				 parcel1%dt/residence_depth)	
+			! Number removed during this timestep
+			nfall=parcel1%npart(i)*(1._wp-survival)
+			! Liquid-water mass removed
+			qfall=parcel1%y(i)*nfall
+			! Timestep diagnostics
+			parcel1%qfall_step_liq = &
+				parcel1%qfall_step_liq + qfall
+			! Cumulative diagnostics
+			parcel1%qfall_liq = &
+				parcel1%qfall_liq + qfall
+			parcel1%nfall_liq = &
+				parcel1%nfall_liq + nfall
+			! Remaining particles
+			parcel1%npart(i)= &
+				parcel1%npart(i)*survival
+			! All extensive moments lose the same fraction
+			parcel1%moments(i,:)= &
+				parcel1%moments(i,:)*survival
+		enddo
+		!------------------------------------------------------------------
+		! Ice particles
+		!------------------------------------------------------------------
+		if (parcel1%ice_flag.eq.1) then
+			do i=1,n
+				survival=exp( &
+					-max(parcel1%vel(n+i),0._wp) * &
+					 parcel1%dt/residence_depth)
+				nfall=parcel1%npartice(i)*(1._wp-survival)
+				qfall=parcel1%yice(i)*nfall
+				parcel1%qfall_step_ice = &
+					parcel1%qfall_step_ice + qfall
+				parcel1%qfall_ice = &
+					parcel1%qfall_ice + qfall
+				parcel1%nfall_ice = &
+					parcel1%nfall_ice + nfall
+				parcel1%npartice(i)= &
+					parcel1%npartice(i)*survival
+				parcel1%moments(n+i,:)= &
+					parcel1%moments(n+i,:)*survival
+			enddo
+		endif
+	end subroutine apply_particle_fallout
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
     
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! HELPER ROUTINE                                                       !
@@ -5042,6 +5147,7 @@
     real(wp) :: svp1,qv,rm,rhod,beta_ext
 	real(wp) :: phi_mean,nmon_mean,rhoi_mean
 	real(wp) :: denom
+	real(wp) :: fallrate_liq,fallrate_ice
     
     ! output to netcdf file
     if(new_file) then
@@ -5221,6 +5327,30 @@
                    "units", "mm hr-1") )
                    
                    
+  		if(fallout_flag) then
+			! Cumulative liquid-water fallout
+			call check(nf90_def_var(io1%ncid,"qfall_liq",NF90_DOUBLE, &
+				(/io1%x_dimid/),io1%varid))
+			call check(nf90_put_att(io1%ncid,io1%varid, &
+				"units","kg kg-1"))
+			call check(nf90_put_att(io1%ncid,io1%varid, &
+				"long_name","cumulative liquid water removed by fallout"))
+			! Cumulative liquid particle-number fallout
+			call check(nf90_def_var(io1%ncid,"nfall_liq",NF90_DOUBLE, &
+				(/io1%x_dimid/),io1%varid))
+			call check(nf90_put_att(io1%ncid,io1%varid, &
+				"units","kg-1"))
+			call check(nf90_put_att(io1%ncid,io1%varid, &
+				"long_name","cumulative liquid particle number removed by fallout"))
+			! Actual timestep-mean liquid fallout rate
+			call check(nf90_def_var(io1%ncid,"fallrate_liq",NF90_DOUBLE, &
+				(/io1%x_dimid/),io1%varid))
+			call check(nf90_put_att(io1%ncid,io1%varid, &
+				"units","mm h-1"))
+			call check(nf90_put_att(io1%ncid,io1%varid, &
+				"long_name","liquid fallout rate from residence-time sink"))
+        endif         
+                   
         if(ice_flag .eq. 1) then
             ! define variable: qi
             call check( nf90_def_var(io1%ncid, "qi", NF90_DOUBLE, &
@@ -5297,8 +5427,27 @@
             ! units
             call check( nf90_put_att(io1%ncid, io1%a_dimid, &
                        "units", "kg") ) 
-                   
-                   
+                       
+            if(fallout_flag) then
+				call check(nf90_def_var(io1%ncid,"qfall_ice",NF90_DOUBLE, &
+					(/io1%x_dimid/),io1%varid))
+				call check(nf90_put_att(io1%ncid,io1%varid, &
+					"units","kg kg-1"))
+				call check(nf90_put_att(io1%ncid,io1%varid, &
+					"long_name","cumulative ice water removed by fallout"))
+				call check(nf90_def_var(io1%ncid,"nfall_ice",NF90_DOUBLE, &
+					(/io1%x_dimid/),io1%varid))
+				call check(nf90_put_att(io1%ncid,io1%varid, &
+					"units","kg-1"))
+				call check(nf90_put_att(io1%ncid,io1%varid, &
+					"long_name","cumulative ice particle number removed by fallout"))
+				call check(nf90_def_var(io1%ncid,"fallrate_ice",NF90_DOUBLE, &
+					(/io1%x_dimid/),io1%varid))
+				call check(nf90_put_att(io1%ncid,io1%varid, &
+					"units","mm h-1"))
+				call check(nf90_put_att(io1%ncid,io1%varid, &
+					"long_name","ice fallout rate from residence-time sink"))
+            endif  
         endif
         
         call check( nf90_enddef(io1%ncid) )
@@ -5367,7 +5516,26 @@
 	rhod=parcel1%y(parcel1%ipr) / &
 		(rm*parcel1%y(parcel1%ite))
 	beta_ext = 2._wp*pi*rhod*sum(onequarter*parcel1%dw**2 * parcel1%npart)
-    
+
+	if(fallout_flag) then
+		fallrate_liq=0._wp
+		fallrate_ice=0._wp	
+		fallrate_liq = &
+			parcel1%qfall_step_liq * &
+			rhod*residence_depth/rhow / &
+			parcel1%dt * &
+			1000._wp*3600._wp
+		if(ice_flag.eq.1) then
+			fallrate_ice = &
+				parcel1%qfall_step_ice * &
+				rhod*residence_depth/rhow / &
+				parcel1%dt * &
+				1000._wp*3600._wp
+		endif
+	endif
+
+
+ 
     if(ice_flag .eq. 0) then
 		! write variable: beta_ext
 		call check( nf90_inq_varid(io1%ncid, "beta_ext", io1%varid ) )
@@ -5444,6 +5612,20 @@
 		call check( nf90_put_var(io1%ncid, io1%varid, precip, &
 					start = (/io1%icur/)))
 	endif
+
+	if(fallout_flag) then
+		call check(nf90_inq_varid(io1%ncid,"qfall_liq",io1%varid))
+		call check(nf90_put_var(io1%ncid,io1%varid, &
+			parcel1%qfall_liq,start=(/io1%icur/)))
+
+		call check(nf90_inq_varid(io1%ncid,"nfall_liq",io1%varid))
+		call check(nf90_put_var(io1%ncid,io1%varid, &
+			parcel1%nfall_liq,start=(/io1%icur/)))
+			
+		call check(nf90_inq_varid(io1%ncid,"fallrate_liq",io1%varid))
+		call check(nf90_put_var(io1%ncid,io1%varid, &
+			fallrate_liq,start=(/io1%icur/)))
+	endif    
 
     if(ice_flag .eq. 1) then
     	beta_ext = beta_ext + 2._wp*rhod*sum(parcel1%areaice*parcel1%npartice)
@@ -5539,6 +5721,20 @@
 		call check( nf90_inq_varid(io1%ncid, "precip", io1%varid ) )
 		call check( nf90_put_var(io1%ncid, io1%varid, precip, &
 					start = (/io1%icur/)))
+
+		if(fallout_flag) then					
+			call check(nf90_inq_varid(io1%ncid,"qfall_ice",io1%varid))
+			call check(nf90_put_var(io1%ncid,io1%varid, &
+				parcel1%qfall_ice,start=(/io1%icur/)))
+			
+			call check(nf90_inq_varid(io1%ncid,"nfall_ice",io1%varid))
+			call check(nf90_put_var(io1%ncid,io1%varid, &
+				parcel1%nfall_ice,start=(/io1%icur/)))
+			
+			call check(nf90_inq_varid(io1%ncid,"fallrate_ice",io1%varid))
+			call check(nf90_put_var(io1%ncid,io1%varid, &
+				fallrate_ice,start=(/io1%icur/)))
+		endif    					
             
     endif
     
@@ -5859,7 +6055,20 @@
 			call update_terminal_velocities()
             
         endif    
-             
+
+        !--------------------------------------------------------------
+        ! Sedimentation / finite parcel residence time
+        !
+        ! If SCE is off, velocities are those calculated after
+        ! bin_microphysics.
+        !
+        ! If SCE is on, velocities have just been recalculated after SCE.
+        !--------------------------------------------------------------
+        if(fallout_flag) then
+            call apply_particle_fallout()
+        endif
+
+
         ! break-out if flag has been set 
         if(parcel1%break_flag) exit
     enddo
