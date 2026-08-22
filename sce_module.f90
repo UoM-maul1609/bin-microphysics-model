@@ -743,7 +743,7 @@
             parcel1%moments(i,parcel1%n_comps+5)=parcel1%npart(i)* &
                 parcel1%mbin(i,parcel1%n_comps+1)
         enddo        
-        parcel1%momenttype(parcel1%n_comps+1:parcel1%n_comps+parcel1%imoms)=[1,1,1,1,1]
+        parcel1%momenttype(parcel1%n_comps+1:parcel1%n_comps+parcel1%imoms)=[2,2,1,1,1]
     endif
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
@@ -2079,22 +2079,41 @@
         real(wp) :: phillips_br
         
         ! calculate particle properties from moments
-        vol1 = mom1(parcel1%n_comps+3) / n1
-        vol2 = mom2(parcel1%n_comps+3) / n2
-        frime1 = mom1(parcel1%n_comps+4) / (n1*m1)
-        frime2 = mom2(parcel1%n_comps+4) / (n2*m2)
-        phi1 = mom1(parcel1%n_comps+1) / n1
-        phi2 = mom2(parcel1%n_comps+1) / n2
-        rhoi1 = (m1*n1-mom1(parcel1%n_comps+4)) / mom1(parcel1%n_comps+3)
-        rhoi2 = (m2*n2-mom2(parcel1%n_comps+4)) / mom2(parcel1%n_comps+3)
-        
+		vol1 = mom1(parcel1%n_comps+3) / max(n1,qsmall2)
+		vol2 = mom2(parcel1%n_comps+3) / max(n2,qsmall2)
+		frime1 = mom1(parcel1%n_comps+4) / max(n1*m1,qsmall2)
+		frime2 = mom2(parcel1%n_comps+4) / max(n2*m2,qsmall2)		
+		frime1=min(max(frime1,0._wp),1._wp)
+		frime2=min(max(frime2,0._wp),1._wp)
+		if (mom1(parcel1%n_comps+2) > qsmall2) then
+			phi1 = mom1(parcel1%n_comps+1) / mom1(parcel1%n_comps+2)
+		else
+			phi1 = 1._wp
+		endif
+		if (mom2(parcel1%n_comps+2) > qsmall2) then
+			phi2 = mom2(parcel1%n_comps+1) / mom2(parcel1%n_comps+2)
+		else
+			phi2 = 1._wp
+		endif
+		phi1=max(phi1,1.e-6_wp)
+		phi2=max(phi2,1.e-6_wp)
+		if (mom1(parcel1%n_comps+3) > qsmall2) then
+			rhoi1 = max(m1*n1-mom1(parcel1%n_comps+4),0._wp) / mom1(parcel1%n_comps+3)
+		else
+			rhoi1=rhoice
+		endif
+		if (mom2(parcel1%n_comps+3) > qsmall2) then
+			rhoi2 = max(m2*n2-mom2(parcel1%n_comps+4),0._wp) / mom2(parcel1%n_comps+3)
+		else
+			rhoi2=rhoice
+		endif
         
         ! calculate the max length of the ice crystals
         twicea1 = (6._wp*vol1 / (pi*phi1))**oneoverthree
-        dmax1 = max(twicea1, dmax1*phi1  )
+        dmax1 = max(twicea1, twicea1*phi1  )
         
         twicea2=(6._wp*vol2 / (pi*phi2))**oneoverthree
-        dmax2 = max(twicea2, dmax2*phi2  )
+        dmax2 = max(twicea2, twicea2*phi2  )
         
         ! calculate the max dimension of the particle assuming rime fills in like a sphere
         dmax1=max(dmax1,  &
@@ -2363,8 +2382,8 @@
     real(wp), intent(in) :: rhoa
 
     
-    real(wp) :: remove1,remove2,massn,massaddto,nnew,gk,beta1,cw,fk05, &
-                frac1, frac2, fracl, fracadj1, fracadj2, totloss,totaddto
+    real(wp) :: remove1,remove2,massn,massaddto,nnew, &
+                frac1, frac2,totaddto
     real(wp), dimension(n_moments) :: momtemp, oldprop
     integer(i4b) :: i,j,k,l,il,ih,jl,jh, modeinto, phase, phase1,phase2
     
@@ -2403,7 +2422,6 @@
             ! numbers removed from each bin:
             remove2=min(rhoa*npart(i)*ecoll(j,i)*npart(j)*dt,npart(j),npart(i))
             remove1=remove2
-            totloss=remove1+remove2
 
             ! interaction creates a drops of this mass:
             massn = xn(i) + xn(j)
@@ -2453,51 +2471,20 @@
             npart(i)=npart(i)-remove1
             npart(j)=npart(j)-remove2  
             
-
-            ! add the mass into the new bin:
-            gk=npart(l)*xn(l)+massaddto
-            ! now for the flux, equation 6 of Bott 2000, but wrong in paper!:
-            beta1=log(npart(l+1)*xn(l+1)/gk+qsmall)
-
-            ! courant number - equation 8 of Bott 2000
-            cw=(log(massn)-log(xn(l))) / (log(xn(l+1))-log(xn(l)))
-       
-
-            ! exponential flux - equation 7 of Bott 2000, but wrong in paper!
-            fk05=massaddto/beta1*(exp(beta1*0.5_wp)-exp(beta1*(0.5_wp-cw)))
-            fk05=min(fk05,gk,massaddto)
-
-            ! now apply the flux:
-            fracadj1=(massaddto-fk05)/xn(l)
-            fracadj2=(fk05)/xn(l+1)
-
-            !*****
-            ! the partitioning between bin l and l+1 is by mass fraction
-            ! for mass variables. Fraction of total going into l:
-            fracadj1=fracadj1/(totloss)
-            fracadj2=fracadj2/(totloss)
-            fracl=(massaddto-fk05)/(massaddto)
-            ! add the 'loss' moments to the new bin
-
-
-
-            
-            do k=1,n_moments
-                if ((momtype(k).eq.2).and. &
-                    ((phase1==0).and.(phase2==1))) then    ! number-based
-                    momtemp(k)=oldprop(k)*(massaddto*fracl/xn(l)+ &
-                        massaddto*(1._wp-fracl)/xn(l+1))
-                endif
-                moments(l,k)=moments(l,k)+momtemp(k)*fracl
-                moments(l+1,k)=moments(l+1,k)+momtemp(k)*(1._wp-fracl)
-            enddo
-            !*****
-            npart(l)=npart(l)+massaddto*fracl/xn(l)
-            npart(l+1)=npart(l+1)+massaddto*(1._wp-fracl)/xn(l+1)
-            
-!             npart(l)=npart(l)+(massaddto-fk05)/xn(l)
-!             npart(l+1)=npart(l+1)+fk05/xn(l+1)
-
+			! -------------------------------------------------------------
+			! Gain integral.
+			!
+			! Use the same routine as the SIP scheme so that ordinary
+			! collection propagates all conserved moments identically in
+			! both SCE implementations.
+			! -------------------------------------------------------------
+			
+			call add_moments_to_new_bin( l, n_moments, n_bin_mode, &
+				massaddto, &       ! total product mass concentration
+				massn, &           ! mass of one physical collision product
+				massaddto, &       ! original total mass for this product class
+				remove1, remove2, momtype, xn, momtemp, oldprop, &
+				npart, moments, phase1, phase2)
 
             
 
