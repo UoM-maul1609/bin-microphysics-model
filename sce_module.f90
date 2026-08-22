@@ -2063,13 +2063,13 @@
 	!> Phillips et al (2017)
 	!>@param[in] m1,m2,v1,v2
 	!>@return phillips_br: number of fragments
-    function phillips_br(t,m1,m2,vel1,vel2,n_moments,n1,n2,mom1,mom2)
+    function phillips_br(t,m1,m2,vel1,vel2,n_comps,n_moments,n1,n2,mom1,mom2)
     
 
         use numerics_type
         implicit none
         real(wp), intent(in) :: t, m1,m2,vel1,vel2,n1,n2
-        integer(i4b), intent(in) :: n_moments
+        integer(i4b), intent(in) :: n_comps, n_moments
         real(wp), dimension(n_moments), intent(in) :: mom1, mom2
         
         real(wp) :: dmax1, dmax2, twicea1, twicea2, dsmall, frimes, frimel, &
@@ -2079,31 +2079,31 @@
         real(wp) :: phillips_br
         
         ! calculate particle properties from moments
-		vol1 = mom1(parcel1%n_comps+3) / max(n1,qsmall2)
-		vol2 = mom2(parcel1%n_comps+3) / max(n2,qsmall2)
-		frime1 = mom1(parcel1%n_comps+4) / max(n1*m1,qsmall2)
-		frime2 = mom2(parcel1%n_comps+4) / max(n2*m2,qsmall2)		
+		vol1 = mom1(n_comps+3) / max(n1,qsmall2)
+		vol2 = mom2(n_comps+3) / max(n2,qsmall2)
+		frime1 = mom1(n_comps+4) / max(n1*m1,qsmall2)
+		frime2 = mom2(n_comps+4) / max(n2*m2,qsmall2)		
 		frime1=min(max(frime1,0._wp),1._wp)
 		frime2=min(max(frime2,0._wp),1._wp)
-		if (mom1(parcel1%n_comps+2) > qsmall2) then
-			phi1 = mom1(parcel1%n_comps+1) / mom1(parcel1%n_comps+2)
+		if (mom1(n_comps+2) > qsmall2) then
+			phi1 = mom1(n_comps+1) / mom1(n_comps+2)
 		else
 			phi1 = 1._wp
 		endif
-		if (mom2(parcel1%n_comps+2) > qsmall2) then
-			phi2 = mom2(parcel1%n_comps+1) / mom2(parcel1%n_comps+2)
+		if (mom2(n_comps+2) > qsmall2) then
+			phi2 = mom2(n_comps+1) / mom2(n_comps+2)
 		else
 			phi2 = 1._wp
 		endif
 		phi1=max(phi1,1.e-6_wp)
 		phi2=max(phi2,1.e-6_wp)
-		if (mom1(parcel1%n_comps+3) > qsmall2) then
-			rhoi1 = max(m1*n1-mom1(parcel1%n_comps+4),0._wp) / mom1(parcel1%n_comps+3)
+		if (mom1(n_comps+3) > qsmall2) then
+			rhoi1 = max(m1*n1-mom1(n_comps+4),0._wp) / mom1(n_comps+3)
 		else
 			rhoi1=rhoice
 		endif
-		if (mom2(parcel1%n_comps+3) > qsmall2) then
-			rhoi2 = max(m2*n2-mom2(parcel1%n_comps+4),0._wp) / mom2(parcel1%n_comps+3)
+		if (mom2(n_comps+3) > qsmall2) then
+			rhoi2 = max(m2*n2-mom2(n_comps+4),0._wp) / mom2(n_comps+3)
 		else
 			rhoi2=rhoice
 		endif
@@ -2215,12 +2215,12 @@
     !>performs the diagonal (i=i) part of the stochastic collection equation.
     !>The collision-event rate is 0.5*Kii*Ni**2; each event removes two
     !>particles from bin i and creates one particle of mass 2*xn(i).
-    subroutine sce_self_collection(i,n_binst,n_bin_mode,n_moments,npart,moments, &
-                                   momtype,ecoll,indexc,xn,rhoa,dt)
+    subroutine sce_self_collection(i,n_binst,n_bin_mode,n_bin_modew, &
+    			n_moments,npart,moments, momtype,ecoll,indexc,xn,rhoa,dt)
     use numerics_type
     implicit none
 
-    integer(i4b), intent(in) :: i,n_binst,n_bin_mode,n_moments
+    integer(i4b), intent(in) :: i,n_binst,n_bin_mode,n_bin_modew,n_moments
     real(wp), dimension(n_bin_mode,n_bin_mode), intent(in) :: ecoll
     integer(i4b), dimension(n_bin_mode,n_bin_mode), intent(in) :: indexc
     real(wp), dimension(n_bin_mode), intent(inout) :: npart,xn
@@ -2248,10 +2248,10 @@
 
     ! Self collection remains in the same phase.  indexc determines
     ! which mass mode receives the product.
-    phase=(i-1)/parcel1%n_bin_modew
+    phase=(i-1)/n_bin_modew
     modeinto=indexc(i,i)
-    jl=(modeinto-1)*n_binst+1+phase*parcel1%n_bin_modew
-    jh=modeinto*n_binst+phase*parcel1%n_bin_modew
+    jl=(modeinto-1)*n_binst+1+phase*n_bin_modew
+    jh=modeinto*n_binst+phase*n_bin_modew
 
     do k=jl,jh
         if (xn(k).gt.massn) exit
@@ -2366,12 +2366,13 @@
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
 	!>calculates one time-step of sce-microphysics
-    subroutine sce_microphysics(n_binst,n_bin_mode,n_moments,npart,moments,momtype, &
-                                ecoll,indexc,xn,dt,t,rhoa)
+    subroutine sce_microphysics(n_binst,n_bin_mode,n_bin_modew,n_moments,&
+    	npart,moments,momtype, ecoll,indexc,xn,dt,t,rhoa)
+    	
     use numerics_type
     use numerics, only : zeroin, dvode
     implicit none
-    integer(i4b), intent(in) :: n_binst,n_bin_mode, n_moments
+    integer(i4b), intent(in) :: n_binst,n_bin_mode,n_bin_modew, n_moments
     real(wp), dimension(n_bin_mode,n_bin_mode), intent(in) :: ecoll
     integer(i4b), dimension(n_bin_mode,n_bin_mode), intent(in) :: indexc
     real(wp), dimension(n_bin_mode), intent(inout) :: npart,xn
@@ -2410,14 +2411,14 @@
 
         ! Diagonal (i=i) self collection is handled separately because each
         ! collision event removes two particles from the same source bin.
-        call sce_self_collection(i,n_binst,n_bin_mode,n_moments,npart,moments, &
-                                 momtype,ecoll,indexc,xn,rhoa,dt)
+        call sce_self_collection(i,n_binst,n_bin_mode,n_bin_modew,n_moments,&
+        	npart,moments, momtype,ecoll,indexc,xn,rhoa,dt)
         if (npart(i).lt.qsmall2) cycle
 
         do j=i+1,ih
         	if (npart(j).lt.qsmall2) cycle
-            phase1=(i-1)/parcel1%n_bin_modew
-            phase2=(j-1)/parcel1%n_bin_modew
+            phase1=(i-1)/n_bin_modew
+            phase2=(j-1)/n_bin_modew
 
             ! numbers removed from each bin:
             remove2=min(rhoa*npart(i)*ecoll(j,i)*npart(j)*dt,npart(j),npart(i))
@@ -2439,10 +2440,10 @@
             !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
             ! now, which bin does the new particle go into?
             !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-            phase=(j-1)/parcel1%n_bin_modew
+            phase=(j-1)/n_bin_modew
             modeinto=indexc(j,i)
-            jl=(modeinto-1)*n_binst+1+  phase*parcel1%n_bin_modew
-            jh=(modeinto)*n_binst+      phase*parcel1%n_bin_modew
+            jl=(modeinto-1)*n_binst+1+  phase*n_bin_modew
+            jh=(modeinto)*n_binst+      phase*n_bin_modew
             do k=jl,jh
                 if (xn(k).gt.massn) exit
             enddo
@@ -2509,15 +2510,15 @@
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
 	!>calculates one time-step of sce-sip_microphysics
-    subroutine sce_sip_microphysics(n_binst,n_bin_mode,n_moments,npart,moments,momtype, &
-                                ecoll,indexc,xn,vel,dt,t, rhoa, totaddto, &
-                                mass_hm_splinter, mass_coll_splinter, &
-                                mass_mode2_frag, hm_flag, break_flag, mode1_flag, &
-                                mode2_flag)
+    subroutine sce_sip_microphysics(n_binst,n_bin_mode,n_bin_modew,&
+    						n_moments,npart,moments,momtype, &
+                            ecoll,indexc,xn,vel,dt,t, rhoa, totaddto, &
+                            mass_hm_splinter, mass_coll_splinter, &
+                            mass_mode2_frag, hm_flag, break_flag, mode1_flag, mode2_flag)
     use numerics_type
     use numerics, only : zeroin, dvode
     implicit none
-    integer(i4b), intent(in) :: n_binst,n_bin_mode, n_moments
+    integer(i4b), intent(in) :: n_binst,n_bin_mode,n_bin_modew, n_moments
     real(wp), dimension(n_bin_mode,n_bin_mode), intent(in) :: ecoll
     integer(i4b), dimension(n_bin_mode,n_bin_mode), intent(in) :: indexc
     real(wp), dimension(n_bin_mode), intent(inout) :: npart,xn,vel
@@ -2563,8 +2564,8 @@
 
         ! Diagonal (i=i) self collection is handled separately because each
         ! collision event removes two particles from the same source bin.
-        call sce_self_collection(i,n_binst,n_bin_mode,n_moments,npart,moments, &
-                                 momtype,ecoll,indexc,xn,rhoa,dt)
+        call sce_self_collection(i,n_binst,n_bin_mode,n_bin_modew,n_moments,&
+        		npart,moments, momtype,ecoll,indexc,xn,rhoa,dt)
         if (npart(i).lt.qsmall2) cycle
 
         do j=i+1,ih
@@ -2596,8 +2597,8 @@
             ! phi, nmon, vol, rime are redefined as new ice particles
             !-----------------------------------------------------------------------------
  
-            phase1=(i-1)/parcel1%n_bin_modew
-            phase2=(j-1)/parcel1%n_bin_modew
+            phase1=(i-1)/n_bin_modew
+            phase2=(j-1)/n_bin_modew
             if((phase1==0).and.(phase2==1)) then
                 totaddto = totaddto+xn(i)*remove1   
             endif
@@ -2621,7 +2622,7 @@
                 if(break_flag==1) nfrag=vardiman_br(xn(i),xn(j),vel(i),vel(j))                        
                         
                 if(break_flag==2) nfrag=phillips_br(t,xn(i),xn(j),vel(i),vel(j), &
-                                                n_moments,npart(i),npart(j), &
+                                                n_comps,n_moments,npart(i),npart(j), &
                                                     moments(i,:),moments(j,:))
                 !nfrag=0._wp
                 !-------------------------------------------------------------------------
@@ -2630,8 +2631,8 @@
                 modeinto=indexc(j,i)
                 
                 ! 1. find the bin that the fragments will go into
-                jl=(modeinto-1)*n_binst+1+  parcel1%n_bin_modew
-                jh=(modeinto)*n_binst+      parcel1%n_bin_modew
+                jl=(modeinto-1)*n_binst+1+  n_bin_modew
+                jh=(modeinto)*n_binst+      n_bin_modew
                 
                 ! 2. reduce massn and massaddto (limit)
                 ! this would be the number of new categories if no fragmentation 
@@ -2664,8 +2665,8 @@
                 ! this is the mode that new ice fragments enter
                 modeinto=indexc(j,i)
                 ! 1. find the bin that the fragments will go into
-                jl=(modeinto-1)*n_binst+1+  parcel1%n_bin_modew
-                jh=(modeinto)*n_binst+      parcel1%n_bin_modew
+                jl=(modeinto-1)*n_binst+1+  n_bin_modew
+                jh=(modeinto)*n_binst+      n_bin_modew
                 ! drops
                 jld=(modeinto-1)*n_binst+1
                 jhd=(modeinto)*n_binst
@@ -2780,10 +2781,10 @@
             !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
             ! now, which bin does the new particle go into?
             !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-            phase=(j-1)/parcel1%n_bin_modew
+            phase=(j-1)/n_bin_modew
             modeinto=indexc(j,i)
-            jl=(modeinto-1)*n_binst+1+  phase*parcel1%n_bin_modew
-            jh=(modeinto)*n_binst+      phase*parcel1%n_bin_modew
+            jl=(modeinto-1)*n_binst+1+  phase*n_bin_modew
+            jh=(modeinto)*n_binst+      phase*n_bin_modew
             do k=jl,jh
                 if (xn(k).gt.massn) exit
             enddo
@@ -2811,11 +2812,11 @@
             oldprop=moments(j,:)/(npart(j)+1.e-60_wp)
             momtemp=moments(i,:)*frac1+moments(j,:)*frac2  ! total moment coming out
             if((phase1==0).and.(phase2==1)) then
-                momtemp(parcel1%n_comps+1)=moments(j,parcel1%n_comps+1)*frac2
-                momtemp(parcel1%n_comps+2)=moments(j,parcel1%n_comps+2)*frac2                
+                momtemp(n_comps+1)=moments(j,n_comps+1)*frac2
+                momtemp(n_comps+2)=moments(j,n_comps+2)*frac2                
             elseif((phase1==0).and.(phase2==0)) then
-                momtemp(parcel1%n_comps+1)=0._wp
-                momtemp(parcel1%n_comps+2)=0._wp          
+                momtemp(n_comps+1)=0._wp
+                momtemp(n_comps+2)=0._wp          
             endif
             ! remove the moments from the colliding bins
             moments(i,:)=moments(i,:)*(1._wp-frac1)
@@ -2845,8 +2846,8 @@
             if((phase1.eq.1).and.(phase2.eq.1).and.(t.lt.ttr).and.(mass_stot>qsmall2)) then
                 ! redefine moments
                 call set_ice_moments(momtemp,n_moments,&
-                    parcel1%n_comps+1,parcel1%n_comps+2,parcel1%n_comps+3, &
-                    parcel1%n_comps+4,parcel1%n_comps+5,masstot,mass_coll_splinter)
+                    n_comps+1,n_comps+2,n_comps+3, &
+                    n_comps+4,n_comps+5,masstot,mass_coll_splinter)
             
                 ! gain integral bit+++++++++++++++++++++++++++++++++++++++++++++++++++++++
                 call add_moments_to_new_bin(lf1,n_moments, n_bin_mode, &
@@ -2863,8 +2864,8 @@
                 .and. (xn(i)>7.2382e-12_wp)) then
                 ! redefine moments
                 call set_ice_moments(momtemp,n_moments,&
-                    parcel1%n_comps+1,parcel1%n_comps+2,parcel1%n_comps+3, &
-                    parcel1%n_comps+4,parcel1%n_comps+5,masstot,mass_hm_splinter)
+                    n_comps+1,n_comps+2,n_comps+3, &
+                    n_comps+4,n_comps+5,masstot,mass_hm_splinter)
                 
                 ! gain integral bit+++++++++++++++++++++++++++++++++++++++++++++++++++++++
                 call add_moments_to_new_bin(lf1,n_moments, n_bin_mode, &
@@ -2880,8 +2881,8 @@
                     ! ice - mode 2
                     ! redefine moments
                     call set_ice_moments(momtemp,n_moments,&
-                        parcel1%n_comps+1,parcel1%n_comps+2,parcel1%n_comps+3, &
-                        parcel1%n_comps+4,parcel1%n_comps+5,masstot,mass_m1t)
+                        n_comps+1,n_comps+2,n_comps+3, &
+                        n_comps+4,n_comps+5,masstot,mass_m1t)
                 
                     ! gain integral bit+++++++++++++++++++++++++++++++++++++++++++++++++++
                     call add_moments_to_new_bin(lf4,n_moments, n_bin_mode, &
@@ -2895,8 +2896,8 @@
                     ! ice - mode 2
                     ! redefine moments
                     call set_ice_moments(momtemp,n_moments,&
-                        parcel1%n_comps+1,parcel1%n_comps+2,parcel1%n_comps+3, &
-                        parcel1%n_comps+4,parcel1%n_comps+5,masstot,mass_m1b)
+                        n_comps+1,n_comps+2,n_comps+3, &
+                        n_comps+4,n_comps+5,masstot,mass_m1b)
                 
                     ! gain integral bit+++++++++++++++++++++++++++++++++++++++++++++++++++
                     call add_moments_to_new_bin(lf5,n_moments, n_bin_mode, &
@@ -2914,7 +2915,7 @@
             if((phase1.eq.0).and.(phase2.eq.1).and.(t.lt.ttr).and.(mass_mtot>qsmall2) &
                 .and. (xn(i)>7.2382e-12_wp)) then
                 ! drops - mode 2
-                momtemp(parcel1%n_comps+1:parcel1%n_comps+5)=0._wp
+                momtemp(n_comps+1:n_comps+5)=0._wp
                 ! gain integral bit+++++++++++++++++++++++++++++++++++++++++++++++++++++++
                 call add_moments_to_new_bin(lf2,n_moments, n_bin_mode, &
 	                    mass_mtot, mass_mode2_frag, masstot, remove1, remove2, momtype, xn, &
@@ -2926,8 +2927,8 @@
                 ! ice - mode 2
                 ! redefine moments
                 call set_ice_moments(momtemp,n_moments,&
-                    parcel1%n_comps+1,parcel1%n_comps+2,parcel1%n_comps+3, &
-                    parcel1%n_comps+4,parcel1%n_comps+5,masstot,mass_mode2_frag)
+                    n_comps+1,n_comps+2,n_comps+3, &
+                    n_comps+4,n_comps+5,masstot,mass_mode2_frag)
                 
                 ! gain integral bit+++++++++++++++++++++++++++++++++++++++++++++++++++++++
                 call add_moments_to_new_bin(lf3,n_moments, n_bin_mode, &
@@ -3149,11 +3150,11 @@
         
         
         ! one time-step of model
-        call sce_microphysics(parcel1%n_binst,parcel1%n_bin_mode,parcel1%n_comps+&
-                            parcel1%imoms,&
-                            parcel1%npart,parcel1%moments,parcel1%momenttype, &
-                            parcel1%ecoll,parcel1%indexc, &
-                            parcel1%mbin(:,n_comps+1),parcel1%dt,parcel1%t,rhoa)
+        call sce_microphysics(parcel1%n_binst,parcel1%n_bin_mode, parcel1%n_bin_modew, &
+        			parcel1%n_comps+parcel1%imoms,&
+                    parcel1%npart,parcel1%moments,parcel1%momenttype, &
+                    parcel1%ecoll,parcel1%indexc, &
+                    parcel1%mbin(:,parcel1%n_comps+1),parcel1%dt,parcel1%t,rhoa)
         
         
         ! redefine the mass of each component of aerosol
