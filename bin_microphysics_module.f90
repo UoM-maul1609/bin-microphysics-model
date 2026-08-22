@@ -63,9 +63,9 @@
             real(wp), dimension(1) :: rpar
             real(wp), dimension(1) :: rtol
             
-            ! ice water
+            ! ice water - dwice (Dmax); areaice (projected area normal to fall)
             real(wp), dimension(:), allocatable :: dice, maerice, npartice, rho_coreice, &
-                            rh_eqice, rhoatice, dwice, da_dtice, nice, &
+                            rh_eqice, rhoatice, dwice, areaice, da_dtice, nice, &
                             phi, rhoi, nump, rime
             real(wp), dimension(:,:), allocatable :: mbinice, rhobinice, &
                                         nubinice,molwbinice,kappabinice ! all bins x all comps  
@@ -1031,6 +1031,9 @@
         if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
         allocate( parcel1%dwice(1:parcel1%n_bin_modew), STAT = AllocateStatus)
         if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+		allocate( parcel1%areaice(1:parcel1%n_bin_modew), STAT = AllocateStatus)
+		if (AllocateStatus /= 0) STOP "*** Not enough memory ***"
+
         allocate( parcel1%da_dtice(1:parcel1%n_bin_modew), STAT = AllocateStatus)
         if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
         allocate( parcel1%nice(1:parcel1%n_bin_modew), STAT = AllocateStatus)
@@ -1049,6 +1052,8 @@
         parcel1%rhoi=rhoice
         parcel1%nump=1._wp
         parcel1%rime=0._wp
+		parcel1%dwice=0._wp
+		parcel1%areaice=0._wp        
         
                 
         parcel1%rho_coreice(:) = parcel1%rho_core(:)
@@ -2277,6 +2282,164 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! Maximum dimension of an ice crystal / aggregate                              !
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	subroutine maxdimension01(mice,rhoi,phi,nump,rime,dmax,drime,sz)
+		implicit none
+		integer(i4b), intent(in) :: sz
+		real(wp), dimension(:), intent(in) :: &
+			mice,rhoi,phi,nump,rime
+		real(wp), dimension(sz), intent(out) :: &
+			dmax,drime
+		integer(i4b) :: i
+		real(wp) :: nmon
+		real(wp) :: phi1,rho1
+		real(wp) :: vmon
+		real(wp) :: a,c,dmon,dagg
+		real(wp), parameter :: small=1.e-60_wp
+
+		dmax=0._wp
+		drime=0._wp
+		
+		do i=1,sz
+			! -------------------------------------------------------------
+			! Equivalent solid-rime diameter.
+			!
+			! This is only used as a provisional rime-envelope treatment.
+			! -------------------------------------------------------------
+			if (rime(i) > small) then
+				drime(i)= &
+					(6._wp*rime(i)/(pi*rhoice))**onethird
+			endif
+			! -------------------------------------------------------------
+			! Unrimed ice aggregate
+			! -------------------------------------------------------------
+			if (mice(i) > small) then
+				nmon=max(nump(i),1._wp)
+				phi1=max(phi(i),1.e-6_wp)
+				rho1=max(rhoi(i),1._wp)
+				! Do not allow mean deposited-ice density above solid ice
+				rho1=min(rho1,rhoice)
+				! Mean material volume of one monomer
+				vmon=mice(i)/(rho1*nmon)
+				! Chen-Lamb spheroidal monomer:
+				!
+				! phi = c/a
+				!
+				! V = 4/3*pi*a^2*c
+				!   = 4/3*pi*a^3*phi
+				!
+				a=(3._wp*vmon/(4._wp*pi*phi1))**onethird
+				c=a*phi1
+				! Maximum dimension of one monomer
+				dmon=2._wp*max(a,c)
+				! Connolly et al. aggregate scaling:
+				! fractal mass dimension ~= 2
+				dagg=dmon*sqrt(nmon)
+			else
+				dagg=0._wp
+			endif
+			! -------------------------------------------------------------
+			! PROVISIONAL RIME TREATMENT
+			!
+			! The Connolly et al. (2012) experiments effectively had
+			! riming switched off, so their aggregate scaling does not
+			! prescribe partially-rimed geometry.
+			!
+			! For now do not allow the particle to be smaller than the
+			! equivalent sphere containing the rime itself.
+			! -------------------------------------------------------------
+			dmax(i)=max(dagg,drime(i))
+		enddo
+	end subroutine maxdimension01
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! Projected area of ice crystals and aggregates                                !
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	subroutine areaaggregates01( &
+		area,mice,rhoi,phi,nump,dmax,drime,sz)
+		implicit none
+		integer(i4b), intent(in) :: sz
+		real(wp), dimension(:), intent(in) :: &
+			mice,rhoi,phi,nump,dmax,drime
+		real(wp), dimension(sz), intent(out) :: area
+		integer(i4b) :: i
+		real(wp), parameter :: dfract=1.33_wp
+		real(wp), parameter :: small=1.e-60_wp
+		real(wp) :: nmon
+		real(wp) :: phi1,rho1
+		real(wp) :: vmon
+		real(wp) :: a,c,dmon,dagg
+		real(wp) :: amon
+		real(wp) :: aagg
+		real(wp) :: arime
+		real(wp) :: acirc
+	
+	
+		area=0._wp
+		do i=1,sz
+			if (mice(i) > small) then
+				nmon=max(nump(i),1._wp)
+				phi1=max(phi(i),1.e-6_wp)
+				rho1=min(max(rhoi(i),1._wp),rhoice)
+				! Mean monomer material volume
+				vmon=mice(i)/(rho1*nmon)
+
+				! Monomer spheroid
+				a=(3._wp*vmon/(4._wp*pi*phi1))**onethird	
+				c=a*phi1
+				dmon=2._wp*max(a,c)
+	
+				! Unrimed aggregate maximum dimension
+				dagg=dmon*sqrt(nmon)
+				! ---------------------------------------------------------
+				! Projected monomer area normal to fall
+				! ---------------------------------------------------------
+				if (phi1 <= 1._wp) then
+					! Oblate / plate
+					amon=pi*a**2
+				else
+					! Prolate / column
+					amon=pi*a*c
+				endif
+				! ---------------------------------------------------------
+				! Aggregate projected area:
+				!
+				! A = c Dmax^1.33
+				!
+				! Set prefactor from monomer area.
+				! ---------------------------------------------------------
+				if (dmon > small) then
+					aagg=amon*(dagg/dmon)**dfract
+				else
+					aagg=0._wp
+				endif
+			else
+				aagg=0._wp
+			endif
+			! -------------------------------------------------------------
+			! PROVISIONAL RIME ENVELOPE
+			!
+			! Do not let projected area be smaller than the area of the
+			! equivalent solid-rime sphere.
+			! -------------------------------------------------------------
+			arime=pi/4._wp*drime(i)**2
+			area(i)=max(aagg,arime)
+			! -------------------------------------------------------------
+			! Physical constraint:
+			!
+			! projected area cannot exceed a circle with diameter Dmax
+			! -------------------------------------------------------------
+			acirc=pi/4._wp*dmax(i)**2
+			area(i)=min(area(i),acirc)
+			area(i)=max(area(i),0._wp)
+		enddo
+	
+	end subroutine areaaggregates01
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! calculate the terminal velocity of ice particles                             !
     ! see heymsfield and westbrook (2010, jas)                                     !
@@ -2291,7 +2454,8 @@
 	!>@param[inout] vel, nre: terminal velocity and reynolds number
 	!>@param[in] mwat, t, p, phi, rhoi, nump, rime
 	!>@param[in] sz: size of the array to calculate terminal velocities
-    subroutine terminal02(vel,mwat, t,p,phi,rhoi,nump,rime,nre,sz,dmax_out)
+	subroutine terminal02( &
+		vel,mwat,t,p,phi,rhoi,nump,rime,nre,sz,dmax_out,area_out)
       use numerics_type
       implicit none
       real(wp), intent(in) :: t, p
@@ -2299,6 +2463,7 @@
       integer(i4b), intent(in) :: sz
       real(wp), dimension(sz), intent(inout) :: nre,vel 
       real(wp), dimension(:), intent(out), optional :: dmax_out
+	  real(wp), dimension(:), intent(out), optional :: area_out
       real(wp) :: eta, rhoa
       real(wp), dimension(sz) :: dmax,drime,area,ar, x
       integer(i4b) :: i	
@@ -2307,33 +2472,64 @@
       rhoa = p/ra/t
     
       ! calculate the maximum dimension of the particle
-!       call maxdimension01(mwat-rime,rhoi,phi,nump,rime,dmax,drime,sz)
-!   
-!       ! calculate the area of the particle
-!       call areaaggregates01(area,mwat-rime,rhoi,phi,nump,dmax,drime,sz)
-!       ! area ratio
-!       ar=area/(pi/4._wp* (dmax**2._wp))
-!       ar=min(max(ar,0.1_wp),1._wp)
-      dmax=(mwat/rhoice*6._wp/pi)**onethird
-      ar=1._wp
+	  ! ----------------------------------------------------------------------
+   	  ! Ice particle geometry
+	  ! ----------------------------------------------------------------------	
+	  call maxdimension01( &
+			max(mwat-rime,0._wp), &
+			rhoi,phi,nump,rime, &
+			dmax,drime,sz)
+	  call areaaggregates01( &
+			area, &
+			max(mwat-rime,0._wp), &
+			rhoi,phi,nump, &
+			dmax,drime,sz)
+	  ! ----------------------------------------------------------------------
+	  ! Area ratio
+	  !
+	  ! Ar = projected area /
+	  !      area of circumscribed circle based on Dmax
+	  ! ----------------------------------------------------------------------
+	  ar=1._wp
+	  where (dmax > tiny(1._wp))
+	  	ar=area/(pi/4._wp*dmax**2)
+	  end where
+	  ! The Heymsfield-Westbrook formulation is specifically designed to
+	  ! retain the effects of low area ratio ice particles. Only impose a
+	  ! very small numerical floor.
+	  ar=min(max(ar,1.e-6_wp),1._wp)
+	  ! Optional diagnostic outputs
 	  if (present(dmax_out)) then
-	     dmax_out(1:sz)=dmax
-	  endif      
+	  	dmax_out(1:sz)=dmax
+	  endif
+	  if (present(area_out)) then
+		area_out(1:sz)=area
+	  endif
   
       ! heymsfield and westbrook
-      x=rhoa*8._wp*mwat*grav/( (eta**2._wp)*pi*(ar**0.5_wp))
-      nre=(8.0_wp**2._wp)/4._wp* &
-          ( (sqrt(1._wp+(4._wp*sqrt(x))/( (8._wp**2._wp)*sqrt(0.35_wp)))-1._wp)**2._wp)
-      vel=eta*(nre)/(rhoa*dmax)
-    
-      ! viscous regime
-      where(nre.lt.1._wp) 
-        vel = grav*mwat / (6._wp*pi*eta*0.465_wp*dmax*(ar**0.5_wp))
-      end where
-
-      where(isnan(vel)) 
-            vel=0._wp
-      end where
+	  x=0._wp
+	  nre=0._wp
+	  vel=0._wp
+	  where ((mwat > tiny(1._wp)).and. (dmax > tiny(1._wp)))	
+		! Modified Best number
+		x=rhoa*8._wp*mwat*grav / &
+			((eta**2)*pi*sqrt(ar))
+		! Heymsfield-Westbrook Re-X relation
+		nre=(8._wp**2)/4._wp * &
+				( sqrt(1._wp + 4._wp*sqrt(x) / &
+				((8._wp**2)*sqrt(0.35_wp))) - 1._wp )**2
+		vel=eta*nre/(rhoa*dmax)	
+	  end where
+	  ! Viscous/Stokes-like correction
+	  where ((mwat > tiny(1._wp)).and. (dmax > tiny(1._wp)).and. (nre < 1._wp))
+	    vel = grav*mwat / (6._wp*pi*eta*0.465_wp*dmax*sqrt(ar))	
+	  end where
+	  where (isnan(vel))
+			vel=0._wp
+	  end where	
+	  where (isnan(nre))
+			nre=0._wp
+	  end where
     end subroutine terminal02
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
@@ -4803,7 +4999,7 @@
 				parcel1%rhoi, &
 				parcel1%nump, &
 				parcel1%rime, &
-				parcel1%nre(n+1:2*n), n, parcel1%dwice)
+				parcel1%nre(n+1:2*n), n, parcel1%dwice,parcel1%areaice)
 		endif
 	end subroutine update_terminal_velocities
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -5362,6 +5558,7 @@
 		real(wp) :: eff,kernel
 		real(wp) :: va,prefac,lambda_air
 		real(wp), dimension(parcel1%n_bin_mode) :: dcoll
+		real(wp), dimension(parcel1%n_bin_mode) :: acoll
 		real(wp), dimension(parcel1%n_bin_mode) :: mtot
 	
 		n=parcel1%n_bin_modew
@@ -5372,13 +5569,12 @@
 		! ----------------------------------------------------------------------
 		! Liquid: current wet volume-equivalent diameter
 		dcoll(1:n)=parcel1%dw
+		acoll(1:n)=pi/4._wp*parcel1%dw**2
 		if (parcel1%ice_flag.eq.1) then
-			! Ice: current maximum/collision dimension.
-			!
-			! At present terminal02 still supplies the solid-ice equivalent
-			! spherical diameter here. Once maxdimension01 is activated,
-			! parcel1%dwice will automatically become the proper Dmax.
-			dcoll(n+1:nall)=parcel1%dwice
+			! Ice physical characteristic size
+			dcoll(n+1:nall)=parcel1%dwice		
+			! Ice projected area
+			acoll(n+1:nall)=parcel1%areaice
 		endif
 		! ----------------------------------------------------------------------
 		! Total particle mass
@@ -5439,6 +5635,8 @@
 					parcel1%y(parcel1%ite), &
 					dcoll(i), &
 					dcoll(j), &
+					acoll(i), &
+					acoll(j), &
 					mtot(i), &
 					mtot(j), &
 					parcel1%vel(i), &
