@@ -1,6 +1,11 @@
 OSNF_DIR = osnf
 SCE_DIR = sce
 SCE_OSNF_DIR = sce/osnf
+OPTICS_DIR = opt
+
+OPTICS_LIB = $(OPTICS_DIR)/optics.a
+OPTICS_OBJS = $(OPTICS_DIR)/refractive_indices_mod.$(OBJ) \
+              $(OPTICS_DIR)/adt_scattering_mod.$(OBJ)
 
 .PHONY: osnf_code sce_code cleanall
 CLEANDIRS = $(OSNF_DIR) $(SCE_DIR)  $(SCE_OSNF_DIR) ./
@@ -35,16 +40,32 @@ VAR_TYPE = 1 # 0 single, 1 double
 
 
 main.exe	:  b_micro_lib.a  sce_code \
-        osnf_code main.$(OBJ) bin_microphysics_module.$(OBJ) 
+        osnf_code $(OPTICS_LIB) main.$(OBJ) bin_microphysics_module.$(OBJ) 
 	$(FOR2) $(FFLAGS2)main.exe main.$(OBJ) bin_microphysics_module.$(OBJ) \
-	        -lm b_micro_lib.a $(OSNF_DIR)/osnf_lib.a $(SCE_DIR)/sce_micro_lib.a \
+	        -lm b_micro_lib.a $(OPTICS_LIB) \
+	        $(OSNF_DIR)/osnf_lib.a $(SCE_DIR)/sce_micro_lib.a \
 	        $(SCE_DIR)/sce_module.$(OBJ) \
 		${NETCDFLIB} -I ${NETCDFMOD} ${NETCDF_LIB} $(DEBUG)
 b_micro_lib.a	:  osnf_code 
 	cp $(OSNF_DIR)/osnf_lib.a b_micro_lib.a 
 bin_microphysics_module.$(OBJ)	: bin_microphysics_module.f90
 	$(FOR) bin_microphysics_module.f90 -I ${NETCDFMOD} -I${OSNF_DIR} -I${SCE_DIR}\
-	     $(FFLAGS)bin_microphysics_module.$(OBJ)
+	     -I${OPTICS_DIR} $(FFLAGS)bin_microphysics_module.$(OBJ)
+$(OPTICS_DIR)/refractive_indices_mod.$(OBJ): \
+        $(OPTICS_DIR)/refractive_indices_mod.f90 | osnf_code
+	$(FOR) $< -I$(OSNF_DIR) -J$(OPTICS_DIR) \
+	        $(FFLAGS)$@
+
+$(OPTICS_DIR)/adt_scattering_mod.$(OBJ): \
+        $(OPTICS_DIR)/adt_scattering_mod.f90 \
+        $(OPTICS_DIR)/refractive_indices_mod.$(OBJ) | osnf_code
+	$(FOR) $< -I$(OSNF_DIR) -I$(OPTICS_DIR) -J$(OPTICS_DIR) \
+	        $(FFLAGS)$@
+
+$(OPTICS_LIB): $(OPTICS_OBJS)
+	$(AR) rcs $@ $^
+	$(RANLIB) $@
+	
 main.$(OBJ)   : main.f90 bin_microphysics_module.$(OBJ) $(SCE_DIR)/sce_module.$(OBJ) 
 	$(FOR)  main.f90 -I ${NETCDFMOD}  -I${OSNF_DIR} -I${SCE_DIR} $(FFLAGS)main.$(OBJ) 
 	
@@ -52,9 +73,10 @@ osnf_code:
 	$(MAKE) -C $(OSNF_DIR)
 sce_code:
 	$(MAKE) -C $(SCE_DIR)
-clean :
-	rm *.exe *.o *.mod *~ \
-	*.a;rm -R *.dSYM
+clean:
+	rm -f *.exe *.o *.mod *~ *.a
+	rm -f $(OPTICS_DIR)/*.o $(OPTICS_DIR)/*.mod $(OPTICS_LIB)
+	rm -rf *.dSYM
 
 cleanall:
 	for i in $(CLEANDIRS); do \

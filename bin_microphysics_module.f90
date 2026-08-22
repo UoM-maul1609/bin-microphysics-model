@@ -143,6 +143,8 @@
         logical :: micro_init=.true., adiabatic_prof=.false., vert_ent=.false.
         real(wp) :: ent_rate, dmina,dmaxa
 		logical :: fallout_flag=.false.
+		logical  :: use_adt_optics=.false.
+		real(wp) :: optics_wavelength=0.55e-6_wp		
 		real(wp) :: residence_depth=100._wp        
         real(wp) :: zinit,tpert,winit,winit2, amplitude2, tau2, &
                     tinit,pinit,rhinit,radinit,z_ctop, alpha_therm, alpha_cond, &
@@ -337,7 +339,8 @@
                     tinit,pinit,rhinit, radinit, bubble_flag, &
                     microphysics_flag, ice_flag, bin_scheme_flag, sce_flag, &
                     ice_nucleation_flag, &
-                    hm_flag, break_flag, mode1_flag, mode2_flag, chamber_override, &
+                    hm_flag, break_flag, mode1_flag, mode2_flag, &
+                    use_adt_optics, optics_wavelength, chamber_override, &
                     chamber_inhom, vent_flag, &
                     kappa_flag, updraft_type,t_thresh, adiabatic_prof, &
                     entrain_period, thresh_to_start_hom_mix, release_aerosol, &
@@ -5139,12 +5142,13 @@
 
     use numerics_type
     use netcdf
-
+	use adt_scattering_mod, only : beta_ext_adt_bin
+	
     implicit none
     logical, intent(inout) :: new_file
     character (len=*),intent(in) :: outputfile
     real(wp) :: phi, sd2, sd3, deff, precip
-    real(wp) :: svp1,qv,rm,rhod,beta_ext
+    real(wp) :: svp1,qv,rm,rhod,beta_ext, beta_abs,beta_ext_ice, beta_abs_ice
 	real(wp) :: phi_mean,nmon_mean,rhoi_mean
 	real(wp) :: denom
 	real(wp) :: fallrate_liq,fallrate_ice
@@ -5515,8 +5519,16 @@
 	! Dry-air density, consistent with number/mass mixing ratios
 	rhod=parcel1%y(parcel1%ipr) / &
 		(rm*parcel1%y(parcel1%ite))
-	beta_ext = 2._wp*pi*rhod*sum(onequarter*parcel1%dw**2 * parcel1%npart)
-
+		
+	if (use_adt_optics) then
+		call beta_ext_adt_bin(parcel1%dw, parcel1%npart, rhod, &
+							  optics_wavelength, .false., beta_ext, beta_abs)
+	else
+		! Original geometric-optics approximation: Qext = 2
+		beta_ext = 2._wp*pi*rhod*sum(onequarter*parcel1%dw**2 * parcel1%npart)	
+		beta_abs = 0._wp
+	endif
+	
 	if(fallout_flag) then
 		fallrate_liq=0._wp
 		fallrate_ice=0._wp	
@@ -5628,7 +5640,20 @@
 	endif    
 
     if(ice_flag .eq. 1) then
-    	beta_ext = beta_ext + 2._wp*rhod*sum(parcel1%areaice*parcel1%npartice)
+    	if (use_adt_optics) then
+			! Ice: use BMM's calculated projected area
+			call beta_ext_adt_bin(parcel1%dwice, parcel1%npartice, rhod, &
+								  optics_wavelength, .true., &
+								  beta_ext_ice, beta_abs_ice, &
+								  parcel1%areaice)
+    		beta_ext = beta_ext+beta_ext_ice
+    		beta_abs = beta_abs+beta_abs_ice
+    	else
+    		! Original geometric-optics approximation: Qext = 2
+			beta_ext = beta_ext + 2._wp*rhod*sum(parcel1%areaice*parcel1%npartice)
+			beta_abs = 0._wp
+    	endif
+    	
 		! write variable: beta_ext
 		call check( nf90_inq_varid(io1%ncid, "beta_ext", io1%varid ) )
 		call check( nf90_put_var(io1%ncid, io1%varid, beta_ext, &

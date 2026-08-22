@@ -45,7 +45,10 @@
  	hm_flag=.false.,
  	break_flag=0,       ! 0=off, 1=vardiman et al, 2=phillips 2017 scheme
  	mode1_flag=.false., ! collisional and via nucleation
- 	mode2_flag=.false./
+ 	mode2_flag=.false., ! mode2 breakup
+	use_adt_optics=.true., 	! use the ADT for extinction
+	optics_wavelength=0.55e-6	! if using ATD use this wavelength
+	/
 &aerosol_setup
     n_mode            = 1,
     n_intern          = 3,
