@@ -837,6 +837,8 @@
 				call collision_kernel_pair( &
 					t, &
 					dw(i),dw(j), &
+					pi/4._wp*dw(i)**2, &
+					pi/4._wp*dw(j)**2, &
 					mw(i),mw(j), &
 					vel(i),vel(j), &
 					nre(i),nre(j), &
@@ -899,12 +901,13 @@
 	! Complete collision kernel for one particle pair                              !
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 	subroutine collision_kernel_pair( &
-		t,dia1,dia2,mass1,mass2,vel1,vel2,reyn1,reyn2,effgrav, &
+		t,dia1,dia2,area1,area2,mass1,mass2,vel1,vel2,reyn1,reyn2,effgrav, &
 		va,prefac,lambda_air,kernel)
 	
 		implicit none
 		real(wp), intent(in) :: t
 		real(wp), intent(in) :: dia1,dia2
+		real(wp), intent(in) :: area1,area2
 		real(wp), intent(in) :: mass1,mass2
 		real(wp), intent(in) :: vel1,vel2
 		real(wp), intent(in) :: reyn1,reyn2
@@ -929,11 +932,10 @@
 		! ----------------------------------------------------------------------
 		! Gravitational settling
 		! ----------------------------------------------------------------------
-		kgrav = pi/4._wp * &
-				(dia1+dia2)**2 * &
-				max(effgrav,0._wp) * &
-				abs(vel2-vel1)
-	
+		kgrav = (sqrt(max(area1,0._wp)) + &
+			 sqrt(max(area2,0._wp)))**2 * &
+			max(effgrav,0._wp) * abs(vel2-vel1)
+    	
 		! ----------------------------------------------------------------------
 		! Turbulent inertial motion
 		! Jacobson Eq. 15.40
