@@ -105,8 +105,8 @@
             call write_sce_to_bmm(parcel1%n_bin_mode,parcel1%n_bin_modew,parcel1%n_binst,&
                     parcel1%n_modes, parcel1%n_comps, parcel1%n_comps+parcel1%imoms, &
                     parcel1%ice_flag, &
-                    parcel1%npart, parcel1%moments, parcel1%mbin, parcel1%vel, &
-                    parcel1%indexc, parcel1%ecoll, &
+                    parcel1%npart, parcel1%moments, parcel1%mbin,  &
+                    parcel1%indexc, &
                     parcel1%mbinedges,adiabatic_prof)
         endif        
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!

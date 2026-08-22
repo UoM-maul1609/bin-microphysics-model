@@ -543,6 +543,13 @@
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
+	! Initialise BMM's diagnostic arrays
+	parcel1%ecoll=0._wp
+	parcel1%vel=0._wp
+	parcel1%nre=0._wp
+	parcel1%cd=0._wp
+
+
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! calculate the density of aerosol particles within a mode                     !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -1182,17 +1189,16 @@
 	!>maps the sce variables onto BMM
     subroutine write_sce_to_bmm(n_bin_mode,n_bin_modew,n_binst,n_mode, n_comps, n_moments, &
                     ice_flag, &
-                    npart, moments, mbin, vel, indexc,ecoll,mbinedges, &
+                    npart, moments, mbin, indexc,mbinedges, &
                     adiabatic_prof)
     implicit none
     integer(i4b), intent(in) :: n_bin_mode, n_bin_modew, &
         n_binst, n_mode, n_comps, n_moments, ice_flag
-    real(wp), dimension(n_bin_mode), intent(in) :: npart,vel
+    real(wp), dimension(n_bin_mode), intent(in) :: npart
     real(wp), dimension(n_bin_mode,n_moments), intent(in) :: moments
     real(wp), dimension(n_bin_mode,n_comps+1), intent(in) :: mbin
     real(wp), dimension(n_binst+1,n_mode), intent(in) :: mbinedges
     integer(i4b), dimension(n_bin_mode,n_bin_mode), intent(in) :: indexc
-    real(wp), dimension(n_bin_mode,n_bin_mode), intent(in) :: ecoll
     logical, intent(in) :: adiabatic_prof
     integer(i4b) :: i,j
 
@@ -1238,8 +1244,6 @@
     
     
     parcel1%indexc=indexc
-    parcel1%ecoll=ecoll
-    parcel1%vel=vel
 
     if(ice_flag.eq.1) then
         parcel1%npartice=npart(n_bin_modew+1:2*n_bin_modew)
@@ -1713,25 +1717,28 @@
 	!>@param[in] mbin: mass of aerosol components in each bin
 	!>@param[in] rhobin: density of each component
 	!>@param[in] sz: length of array
-	!>@param[inout] dw: wet diameter
-    subroutine wetdiam(mwat,mbin,rhobin,sz,dw) 
-      use numerics_type
-      implicit none
-      real(wp), dimension(:), intent(in) :: mwat
-      real(wp), dimension(:,:), intent(in) :: mbin,rhobin
-      integer(i4b), intent(in) :: sz
-      real(wp), dimension(:),intent(inout) :: dw
-      
-      real(wp), dimension(sz) :: rhoat
+	!>@param[out] dw: wet diameter
+	!>@param[out] rhoat: mean particle density
+ 	subroutine wetdiam(mwat,mbin,rhobin,sz,dw,rhoat)
+		implicit none
+		real(wp), dimension(:), intent(in) :: mwat
+		real(wp), dimension(:,:), intent(in) :: mbin,rhobin
+		integer(i4b), intent(in) :: sz
+		real(wp), dimension(:), intent(out) :: dw
+		real(wp), dimension(:), intent(out), optional :: rhoat	
+		real(wp), dimension(sz) :: rhoat1
 
-      ! calculate the diameter and radius
-      rhoat(:)=mwat(:)/rhow+sum(mbin(:,1:n_comps)/rhobin(:,:),2)
-      rhoat(:)=(mwat(:)+sum(mbin(:,1:n_comps),2))/rhoat(:);
-  
-      ! wet diameter:
-      dw(:)=((mwat(:)+sum(mbin(:,1:n_comps),2))*6._wp/(pi*rhoat(:)))**(onethird)
-      
-    end subroutine wetdiam
+        ! calculate the diameter and radius
+		rhoat1(:)=mwat(:)/rhow + &
+			sum(mbin(:,1:n_comps)/rhobin(:,:),2)
+		rhoat1(:)=(mwat(:)+sum(mbin(:,1:n_comps),2))/rhoat1(:)
+		dw(:)=((mwat(:)+sum(mbin(:,1:n_comps),2))*6._wp / &
+			(pi*rhoat1(:)))**onethird
+	
+        ! wet diameter:
+		if (present(rhoat)) rhoat(:)=rhoat1(:)
+		
+	end subroutine wetdiam
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
         
@@ -1763,13 +1770,9 @@
       real(wp), intent(in) :: t
       real(wp) :: sigma
 
-      ! calculate the diameter and radius
       nw(:)=mwat(:)/molw_water
-      rhoat(:)=mwat(:)/rhow+sum(mbin(:,1:n_comps)/rhobin(:,:),2)
-      rhoat(:)=(mwat(:)+sum(mbin(:,1:n_comps),2))/rhoat(:);
-  
-      ! wet diameter:
-      dw(:)=((mwat(:)+sum(mbin(:,1:n_comps),2))*6._wp/(pi*rhoat(:)))**(onethird)
+      ! calculate the diameter and density
+	  call wetdiam(mwat, mbin, rhobin, sz, dw, rhoat)
   
       ! calculate surface tension
       sigma=surface_tension(t)
@@ -1814,13 +1817,10 @@
       real(wp), dimension(:),intent(inout) :: rh_eq,rhoat, dw
       real(wp), intent(in) :: t
       real(wp) :: sigma
-      ! calculate the diameter and radius
+
       nw(:)=mwat(:)/molw_water
-      rhoat(:)=mwat(:)/rhow+sum(mbin(:,1:n_comps)/rhobin(:,:),2)
-      rhoat(:)=(mwat(:)+sum(mbin(:,1:n_comps),2))/rhoat(:);
-  
-      ! wet diameter:
-      dw(:)=((mwat(:)+sum(mbin(:,1:n_comps),2))* 6._wp/(pi*rhoat(:)))**(onethird)
+      ! calculate the diameter and density
+	  call wetdiam(mwat, mbin, rhobin, sz, dw, rhoat)
   
       dd(:)=((sum(mbin(:,1:n_comps)/rhobin(:,:),2))*6._wp/(pi))**(onethird) ! dry diameter
                                   ! needed for eqn 6, petters and kreidenweis (2007)
@@ -2291,13 +2291,14 @@
 	!>@param[inout] vel, nre: terminal velocity and reynolds number
 	!>@param[in] mwat, t, p, phi, rhoi, nump, rime
 	!>@param[in] sz: size of the array to calculate terminal velocities
-    subroutine terminal02(vel,mwat, t,p,phi,rhoi,nump,rime,nre,sz)
+    subroutine terminal02(vel,mwat, t,p,phi,rhoi,nump,rime,nre,sz,dmax_out)
       use numerics_type
       implicit none
       real(wp), intent(in) :: t, p
       real(wp), dimension(:), intent(in) :: mwat, phi, rhoi, nump, rime
       integer(i4b), intent(in) :: sz
       real(wp), dimension(sz), intent(inout) :: nre,vel 
+      real(wp), dimension(:), intent(out), optional :: dmax_out
       real(wp) :: eta, rhoa
       real(wp), dimension(sz) :: dmax,drime,area,ar, x
       integer(i4b) :: i	
@@ -2315,6 +2316,9 @@
 !       ar=min(max(ar,0.1_wp),1._wp)
       dmax=(mwat/rhoice*6._wp/pi)**onethird
       ar=1._wp
+	  if (present(dmax_out)) then
+	     dmax_out(1:sz)=dmax
+	  endif      
   
       ! heymsfield and westbrook
       x=rhoa*8._wp*mwat*grav/( (eta**2._wp)*pi*(ar**0.5_wp))
@@ -3736,6 +3740,86 @@
     end subroutine adjust_relative_humidity
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! Recover mean ice-particle properties from conserved moments                  !
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	subroutine ice_particle_properties_from_moments( &
+		yice,npartice,moments,n_bin_modew,n_comps, &
+		phi,nump,rhoi,rime)
+		implicit none
+		integer(i4b), intent(in) :: n_bin_modew,n_comps
+		real(wp), dimension(:), intent(in) :: yice,npartice
+		real(wp), dimension(:,:), intent(in) :: moments
+		real(wp), dimension(n_bin_modew), intent(out) :: &
+			phi,nump,rhoi,rime
+			
+		integer(i4b) :: i,ii
+		real(wp), parameter :: small=1.e-60_wp
+		real(wp) :: monomer_moment
+		real(wp) :: volume_moment
+		real(wp) :: rime_moment
+		real(wp) :: unrimed_mass_moment
+	
+		do i=1,n_bin_modew
+			ii=n_bin_modew+i
+	
+			if (npartice(i) > small) then
+	
+				! -------------------------------------------------------------
+				! Aspect ratio
+				!
+				! n_comps+1 = phi-weighted monomer moment
+				! n_comps+2 = monomer-number moment
+				! -------------------------------------------------------------
+				monomer_moment=moments(ii,n_comps+2)
+				if (monomer_moment > small) then
+					phi(i)=moments(ii,n_comps+1) / monomer_moment
+					nump(i)=monomer_moment / npartice(i)
+				else
+					phi(i)=1._wp
+					nump(i)=1._wp
+				endif
+				phi(i)=max(phi(i),1.e-6_wp)
+				! Mean monomer count cannot physically be less than one
+				nump(i)=max(nump(i),1._wp)
+				! -------------------------------------------------------------
+				! Rime mass
+				!
+				! n_comps+4 is the total rime-mass moment.
+				! Convert to rime mass per representative particle.
+				! -------------------------------------------------------------
+				rime_moment=max(moments(ii,n_comps+4),0._wp)
+				rime(i)=rime_moment/npartice(i)
+				! Numerical protection
+				rime(i)=min(rime(i),max(yice(i),0._wp))
+				! -------------------------------------------------------------
+				! Depositional-ice density
+				!
+				! n_comps+3 is the total deposited-ice volume moment.
+				! rhoi = unrimed deposited mass / deposited volume
+				! -------------------------------------------------------------
+				volume_moment=moments(ii,n_comps+3)
+				unrimed_mass_moment = &
+					npartice(i)*yice(i)-rime_moment
+	
+				if ((volume_moment > small).and. &
+					(unrimed_mass_moment > small)) then
+					rhoi(i)=unrimed_mass_moment/volume_moment
+				else
+					rhoi(i)=rhoice
+				endif
+				if (isnan(rhoi(i)).or.(rhoi(i) <= 0._wp)) then
+					rhoi(i)=rhoice
+				endif
+			else
+				phi(i)=1._wp
+				nump(i)=1._wp
+				rhoi(i)=rhoice
+				rime(i)=0._wp
+			endif
+		enddo
+	end subroutine ice_particle_properties_from_moments
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -3746,7 +3830,7 @@
 	!>@brief
 	!>using moments, calculate the ice growth properties
     subroutine ice_vapour_growth_properties(rhoa,qvsat,qv,&
-        neqice,yice,n_bin_modew,npartice,phi,nump,rhoi, &
+        neqice,yice,n_bin_modew,npartice,phi,nump,rhoi, rime, &
         n_bin_mode,n_moms,n_comps,moments, &
         gamma_t,dep_density,t,p,rhi)
     
@@ -3755,7 +3839,7 @@
         real(wp), intent(inout) :: rhoa, qvsat,qv,gamma_t,dep_density
         integer(i4b), intent(in) :: neqice,n_bin_modew,n_bin_mode,n_moms,n_comps
         real(wp), dimension(neqice), intent(in) :: yice
-        real(wp), dimension(n_bin_modew), intent(inout) :: npartice, phi, nump, rhoi
+        real(wp), dimension(n_bin_modew), intent(inout) :: npartice, phi, nump, rhoi, rime
         real(wp), dimension(n_bin_mode,n_moms), intent(in) :: moments
         
         
@@ -3766,16 +3850,10 @@
         call chen_and_lamb_anc(t, &
                 qv,qvsat,rhoa,gamma_t, dep_density) ! set the deposition density
         
-        phi=moments(n_bin_modew+1:n_bin_mode,n_comps+1) &
-            / moments(n_bin_modew+1:n_bin_mode,n_comps+2)
-        
-        nump=moments(n_bin_modew+1:n_bin_mode,n_comps+2) &
-            / npartice
-
-        rhoi=(npartice*yice(1:n_bin_modew)-&
-            moments(n_bin_modew+1:n_bin_mode,n_comps+4)) &
-            / moments(n_bin_modew+1:n_bin_mode,n_comps+3)
-
+		call ice_particle_properties_from_moments( &
+			yice(1:n_bin_modew), npartice, moments, n_bin_modew, n_comps, &
+			phi,nump,rhoi,rime)
+    
     end subroutine ice_vapour_growth_properties         
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
        
@@ -4209,7 +4287,7 @@
         
         call ice_vapour_growth_properties(rhoa,qvsat,qv,&
             parcel1%neqice,parcel1%yice,parcel1%n_bin_modew,parcel1%npartice,&
-            parcel1%phi,parcel1%nump,parcel1%rhoi, &
+            parcel1%phi,parcel1%nump,parcel1%rhoi, parcel1%rime, &
             parcel1%n_bin_mode,parcel1%n_comps+parcel1%imoms,&
             parcel1%n_comps,parcel1%moments, &
             gamma_t,dep_density,parcel1%y(parcel1%ite),parcel1%yice(parcel1%ipri),&
@@ -4693,6 +4771,12 @@
 		integer(i4b) :: n
 	
 		n=parcel1%n_bin_modew
+		! Current wet diameter and particle density
+		call wetdiam( &
+			parcel1%y(1:n), &
+			parcel1%mbin(:,1:parcel1%n_comps), &
+			parcel1%rhobin(:,1:parcel1%n_comps), &
+			n, parcel1%dw, parcel1%rhoat)
 		! liquid
 		call terminal01( &
 			parcel1%vel(1:n), &
@@ -4704,6 +4788,12 @@
 			parcel1%cd(1:n), n)
 		! ice
 		if (parcel1%ice_flag.eq.1) then
+
+			call ice_particle_properties_from_moments( &
+				parcel1%yice(1:n), parcel1%npartice, parcel1%moments, &
+				n, parcel1%n_comps, &
+				parcel1%phi, parcel1%nump, parcel1%rhoi, parcel1%rime)		
+		
 			call terminal02( &
 				parcel1%vel(n+1:2*n), &
 				parcel1%yice(1:n), &
@@ -4713,7 +4803,7 @@
 				parcel1%rhoi, &
 				parcel1%nump, &
 				parcel1%rime, &
-				parcel1%nre(n+1:2*n), n)
+				parcel1%nre(n+1:2*n), n, parcel1%dwice)
 		endif
 	end subroutine update_terminal_velocities
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -5204,10 +5294,12 @@
 
             
 		! ice precipitation
-		precip = precip + sum(parcel1%vel(1:parcel1%n_bin_modew)* &
-			parcel1%yice(1:parcel1%n_bin_modew)* &
-			parcel1%npartice(1:parcel1%n_bin_modew)/rhow*1000._wp*3600._wp)
-	
+		precip = precip + sum( &
+			parcel1%vel(parcel1%n_bin_modew+1:parcel1%n_bin_mode) * &
+			parcel1%yice(1:parcel1%n_bin_modew) * &
+			parcel1%npartice(1:parcel1%n_bin_modew) / &
+			rhow*1000._wp*3600._wp)
+    	
 		! write variable: precip
 		call check( nf90_inq_varid(io1%ncid, "precip", io1%varid ) )
 		call check( nf90_put_var(io1%ncid, io1%varid, precip, &
@@ -5255,6 +5347,116 @@
 	
     end subroutine map_to_sce
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! Update collision kernel from current BMM particle properties                 !
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	subroutine update_collision_kernel()	
+		use sce, only : collision_air_properties, &
+						collision_kernel_pair, &
+						long_collection_efficiency_pair
+
+		implicit none
+		integer(i4b) :: i,j
+		integer(i4b) :: n,nall
+		real(wp) :: eff,kernel
+		real(wp) :: va,prefac,lambda_air
+		real(wp), dimension(parcel1%n_bin_mode) :: dcoll
+		real(wp), dimension(parcel1%n_bin_mode) :: mtot
+	
+		n=parcel1%n_bin_modew
+		nall=parcel1%n_bin_mode
+	
+		! ----------------------------------------------------------------------
+		! Current collision dimensions
+		! ----------------------------------------------------------------------
+		! Liquid: current wet volume-equivalent diameter
+		dcoll(1:n)=parcel1%dw
+		if (parcel1%ice_flag.eq.1) then
+			! Ice: current maximum/collision dimension.
+			!
+			! At present terminal02 still supplies the solid-ice equivalent
+			! spherical diameter here. Once maxdimension01 is activated,
+			! parcel1%dwice will automatically become the proper Dmax.
+			dcoll(n+1:nall)=parcel1%dwice
+		endif
+		! ----------------------------------------------------------------------
+		! Total particle mass
+		!
+		! mbinall columns:
+		!   1:n_comps      aerosol components
+		!   n_comps+1      water or ice mass
+		! ----------------------------------------------------------------------
+		mtot=sum(parcel1%mbinall(:,1:parcel1%n_comps+1),dim=2)
+		! ----------------------------------------------------------------------
+		! Air properties are identical for every collision pair.
+		! Calculate them only ONCE.
+		! ----------------------------------------------------------------------
+		call collision_air_properties( &
+			parcel1%y(parcel1%ite), &
+			parcel1%y(parcel1%ipr), &
+			va,prefac,lambda_air)
+	
+		! ----------------------------------------------------------------------
+		! Collision kernel.
+		!
+		! Only calculate one triangle because K(i,j) = K(j,i).
+		! ----------------------------------------------------------------------
+		do j=1,nall
+			do i=1,j
+	
+				! -------------------------------------------------------------
+				! Gravitational collection efficiency
+				!
+				! FOR NOW:
+				! retain the old Long treatment for every pair while checking
+				! that the code refactor itself works.
+				!
+				! The phase-specific LL / LI / II efficiencies should be
+				! introduced here afterwards.
+				! -------------------------------------------------------------
+				if ((i <= n).and.(j <= n)) then
+					! Liquid-liquid
+					eff=long_collection_efficiency_pair( &
+						dcoll(i),dcoll(j))
+				else
+					! TEMPORARY mixed/ice behaviour during refactor validation.
+					!
+					! Do not regard this as the final ice collection efficiency.
+					eff=long_collection_efficiency_pair( &
+						dcoll(i),dcoll(j))
+				endif
+				! -------------------------------------------------------------
+				! Complete pair kernel:
+				!
+				! gravitational
+				! turbulent inertial
+				! turbulent shear
+				! Brownian
+				! Brownian enhancement
+				! -------------------------------------------------------------
+				call collision_kernel_pair( &
+					parcel1%y(parcel1%ite), &
+					dcoll(i), &
+					dcoll(j), &
+					mtot(i), &
+					mtot(j), &
+					parcel1%vel(i), &
+					parcel1%vel(j), &
+					parcel1%nre(i), &
+					parcel1%nre(j), &
+					eff, &
+					va,prefac,lambda_air, &
+					kernel)
+	
+				parcel1%ecoll(i,j)=kernel
+				! Kernel is symmetric
+				parcel1%ecoll(j,i)=kernel
+	
+			enddo
+		enddo
+	end subroutine update_collision_kernel
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! map to bmm                                                                   !
@@ -5360,7 +5562,8 @@
             
             ! Map the BMM variables to the SCE variables
             call map_to_sce(ice_flag)
-              
+			! Build the collision kernel from the CURRENT BMM state
+			call update_collision_kernel()              
               
             ! one time-step of sce model
             if(sce_flag.eq.1) then
