@@ -4683,7 +4683,40 @@
     	if (.not.entrain_aerosol) dilute_send=1._wp
     	if (.not. release_aerosol) ratio_send=1._wp
 	end subroutine entrainment
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 	
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! TERMINAL VELOCITY UPDATE                                             !
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	subroutine update_terminal_velocities()
+		implicit none
+		integer(i4b) :: n
+	
+		n=parcel1%n_bin_modew
+		! liquid
+		call terminal01( &
+			parcel1%vel(1:n), &
+			parcel1%dw, &
+			parcel1%rhoat, &
+			parcel1%y(parcel1%ite), &
+			parcel1%y(parcel1%ipr), &
+			parcel1%nre(1:n), &
+			parcel1%cd(1:n), n)
+		! ice
+		if (parcel1%ice_flag.eq.1) then
+			call terminal02( &
+				parcel1%vel(n+1:2*n), &
+				parcel1%yice(1:n), &
+				parcel1%y(parcel1%ite), &
+				parcel1%y(parcel1%ipr), &
+				parcel1%phi, &
+				parcel1%rhoi, &
+				parcel1%nump, &
+				parcel1%rime, &
+				parcel1%nre(n+1:2*n), n)
+		endif
+	end subroutine update_terminal_velocities
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 	
     
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -5101,13 +5134,7 @@
         (/parcel1%n_bins1,parcel1%n_modes,parcel1%n_comps/)), start = (/1,1,1,io1%icur/)))
 
 
-	! precipitation
-	call terminal01(parcel1%vel(1:parcel1%n_bin_modew), &
-		parcel1%dw,parcel1%rhoat, &
-		parcel1%y(parcel1%ite), parcel1%y(parcel1%ipr), &
-		parcel1%nre(1:parcel1%n_bin_modew),&
-		parcel1%cd(1:parcel1%n_bin_modew),parcel1%n_bin_modew)
-		
+	! liquid precipitation		
 	precip = sum(parcel1%vel(1:parcel1%n_bin_modew)* &
 		parcel1%y(1:parcel1%n_bin_modew)* &
 		parcel1%npart(1:parcel1%n_bin_modew)/rhow*1000._wp*3600._wp)
@@ -5176,14 +5203,7 @@
             (/parcel1%n_bins1,parcel1%n_modes,parcel1%n_comps/)), start = (/1,1,1,io1%icur/)))
 
             
-		! precipitation
-		
-		call terminal02(parcel1%vel(1:parcel1%n_bin_modew), &
-			parcel1%yice(1:parcel1%n_bin_modew), &
-			parcel1%y(parcel1%ite), parcel1%y(parcel1%ipr), &
-			parcel1%phi,parcel1%rhoi,parcel1%nump,parcel1%rime, &
-			parcel1%nre(1:parcel1%n_bin_modew),parcel1%n_bin_modew)
-			
+		! ice precipitation
 		precip = precip + sum(parcel1%vel(1:parcel1%n_bin_modew)* &
 			parcel1%yice(1:parcel1%n_bin_modew)* &
 			parcel1%npartice(1:parcel1%n_bin_modew)/rhow*1000._wp*3600._wp)
@@ -5315,15 +5335,22 @@
     
     nt=ceiling(runtime / real(dt,kind=wp))
     do i=1,nt
-        ! output to file
+        ! Output state left by previous timestep
         call output(io1%new_file,outputfile)
         
-        
         if ((updraft_type==2).and.(parcel1%TT>t_thresh)) parcel1%y(parcel1%iw)=0._wp
-        ! one time-step of model
+
+
+		! Condensation, deposition, nucleation, etc.
+		! These calculate temporary terminal velocities internally
+		! when ventilation is required.
         call bin_microphysics(fparcelwarm, fparcelcold, & 
             icenucleation, noncollisional_iceformation)
         
+		! Particle masses/shapes have now changed:
+		! calculate terminal velocities of the accepted state.
+		call update_terminal_velocities()
+
         if(sce_flag.gt.0) then
         	! calculate the density of air
         	rhoa=parcel1%y(parcel1%ipr)/(parcel1%y(parcel1%ite)*ra)
@@ -5368,10 +5395,13 @@
                 where (parcel1%npartall(:).gt.qsmall)
                     parcel1%mbinall(:,j)=parcel1%moments(:,j)/parcel1%npartall(:)
                 end where
-            enddo                             
-                            
+            enddo                                                         
             ! map SCE to BMM
             call map_to_bmm(ice_flag)
+
+			! SCE has changed masses/numbers/composition, so update
+			! velocities again for the new accepted state.
+			call update_terminal_velocities()
             
         endif    
              
