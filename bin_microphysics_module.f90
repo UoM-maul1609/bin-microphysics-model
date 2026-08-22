@@ -25,6 +25,7 @@
         						mass_fragment3=mass_fragment1, &
         						gam_fac_ent=1._wp/(1._wp+0.5_wp), & ! P+K, 12-25
         						gam_fac_ent2=1._wp+0.5_wp, &
+        						onequarter=1._wp/4._wp, &
         						onethird=1._wp/3._wp, &
         						twothirds=2._wp/3._wp, fourthirds=4._wp/3._wp
         logical :: l_inhom		
@@ -2425,14 +2426,14 @@
 			! Do not let projected area be smaller than the area of the
 			! equivalent solid-rime sphere.
 			! -------------------------------------------------------------
-			arime=pi/4._wp*drime(i)**2
+			arime=pi*onequarter*drime(i)**2
 			area(i)=max(aagg,arime)
 			! -------------------------------------------------------------
 			! Physical constraint:
 			!
 			! projected area cannot exceed a circle with diameter Dmax
 			! -------------------------------------------------------------
-			acirc=pi/4._wp*dmax(i)**2
+			acirc=pi*onequarter*dmax(i)**2
 			area(i)=min(area(i),acirc)
 			area(i)=max(area(i),0._wp)
 		enddo
@@ -2492,7 +2493,7 @@
 	  ! ----------------------------------------------------------------------
 	  ar=1._wp
 	  where (dmax > tiny(1._wp))
-	  	ar=area/(pi/4._wp*dmax**2)
+	  	ar=area/(pi*onequarter*dmax**2)
 	  end where
 	  ! The Heymsfield-Westbrook formulation is specifically designed to
 	  ! retain the effects of low area ratio ice particles. Only impose a
@@ -2515,7 +2516,7 @@
 		x=rhoa*8._wp*mwat*grav / &
 			((eta**2)*pi*sqrt(ar))
 		! Heymsfield-Westbrook Re-X relation
-		nre=(8._wp**2)/4._wp * &
+		nre=(8._wp**2)*onequarter * &
 				( sqrt(1._wp + 4._wp*sqrt(x) / &
 				((8._wp**2)*sqrt(0.35_wp))) - 1._wp )**2
 		vel=eta*nre/(rhoa*dmax)	
@@ -2581,11 +2582,11 @@
       nre2=min(nre,20._wp)
       where(phi.gt.1.0_wp)  
         x = calc1*sqrt(nre2)	
-        fv = 1.0_wp - 0.000668_wp*x/4._wp + 2.39402_wp*((x/4._wp)**2._wp) + &
-             0.73409_wp*((x/4._wp)**3._wp)-0.73911_wp*((x/4._wp)**4._wp)
+        fv = 1.0_wp - 0.000668_wp*x*onequarter + 2.39402_wp*((x*onequarter)**2._wp) + &
+             0.73409_wp*((x*onequarter)**3._wp)-0.73911_wp*((x*onequarter)**4._wp)
         x = calc2*sqrt(nre2);	
-        fh = 1.0_wp - 0.000668_wp*x/4._wp + 2.39402_wp*((x/4._wp)**2._wp) + &
-             0.73409_wp*((x/4._wp)**3._wp)-0.73911_wp*((x/4._wp)**4._wp)
+        fh = 1.0_wp - 0.000668_wp*x*onequarter + 2.39402_wp*((x*onequarter)**2._wp) + &
+             0.73409_wp*((x*onequarter)**3._wp)-0.73911_wp*((x*onequarter)**4._wp)
       end where
       !--------
   
@@ -5358,7 +5359,7 @@
     call check( nf90_inq_varid(io1%ncid, "beta_ext", io1%varid ) )
     call check( nf90_put_var(io1%ncid, io1%varid, &
         2._wp*sum((parcel1%y(1:parcel1%n_bin_modew)* &
-            6._wp/(rhow*pi))**(2._wp/3._wp)* pi/4._wp* &
+            6._wp/(rhow*pi))**(2._wp/3._wp)* pi*onequarter* &
             parcel1%npart(1:parcel1%n_bin_modew)), &
                 start = (/io1%icur/)))
 
@@ -5559,6 +5560,7 @@
 		real(wp) :: va,prefac,lambda_air
 		real(wp), dimension(parcel1%n_bin_mode) :: dcoll
 		real(wp), dimension(parcel1%n_bin_mode) :: acoll
+		real(wp), dimension(parcel1%n_bin_mode) :: dlong
 		real(wp), dimension(parcel1%n_bin_mode) :: mtot
 	
 		n=parcel1%n_bin_modew
@@ -5569,12 +5571,24 @@
 		! ----------------------------------------------------------------------
 		! Liquid: current wet volume-equivalent diameter
 		dcoll(1:n)=parcel1%dw
-		acoll(1:n)=pi/4._wp*parcel1%dw**2
+		acoll(1:n)=pi*onequarter*parcel1%dw**2
+
+		! For Long efficiency, use actual liquid-drop diameter
+		dlong(1:n)=parcel1%dw
 		if (parcel1%ice_flag.eq.1) then
 			! Ice physical characteristic size
 			dcoll(n+1:nall)=parcel1%dwice		
 			! Ice projected area
 			acoll(n+1:nall)=parcel1%areaice
+			
+			! Melted-equivalent diameter for applying the temporary
+			! liquid-drop Long collection efficiency to ice.
+			!
+			! Use ICE MASS ONLY, not total mass including aerosol.
+			dlong(n+1:nall) = (6._wp*max( &
+					parcel1%mbinall(n+1:nall,parcel1%n_comps+1), &
+					0._wp) / (pi*rhow))**onethird
+			
 		endif
 		! ----------------------------------------------------------------------
 		! Total particle mass
@@ -5614,13 +5628,13 @@
 				if ((i <= n).and.(j <= n)) then
 					! Liquid-liquid
 					eff=long_collection_efficiency_pair( &
-						dcoll(i),dcoll(j))
+						dlong(i),dlong(j))
 				else
 					! TEMPORARY mixed/ice behaviour during refactor validation.
 					!
 					! Do not regard this as the final ice collection efficiency.
 					eff=long_collection_efficiency_pair( &
-						dcoll(i),dcoll(j))
+						dlong(i),dlong(j))
 				endif
 				! -------------------------------------------------------------
 				! Complete pair kernel:
