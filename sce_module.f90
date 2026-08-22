@@ -2367,7 +2367,7 @@
 	!>@brief
 	!>calculates one time-step of sce-microphysics
     subroutine sce_microphysics(n_binst,n_bin_mode,n_bin_modew,n_moments,&
-    	npart,moments,momtype, ecoll,indexc,xn,dt,t,rhoa)
+    	npart,moments,momtype, ecoll,indexc,xn,dt,t,rhoa,totaddto)
     	
     use numerics_type
     use numerics, only : zeroin, dvode
@@ -2381,10 +2381,11 @@
     real(wp), intent(in) :: dt
     real(wp), intent(inout) :: t
     real(wp), intent(in) :: rhoa
+    real(wp), intent(out) :: totaddto
 
     
     real(wp) :: remove1,remove2,massn,massaddto,nnew, &
-                frac1, frac2,totaddto
+                frac1, frac2
     real(wp), dimension(n_moments) :: momtemp, oldprop
     integer(i4b) :: i,j,k,l,il,ih,jl,jh, modeinto, phase, phase1,phase2
     
@@ -2493,7 +2494,6 @@
     enddo    
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
-    t=t+totaddto*lf/cp
 
 
     
@@ -2510,7 +2510,7 @@
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
 	!>calculates one time-step of sce-sip_microphysics
-    subroutine sce_sip_microphysics(n_binst,n_bin_mode,n_bin_modew,&
+    subroutine sce_sip_microphysics(n_binst,n_bin_mode,n_bin_modew,n_comps,&
     						n_moments,npart,moments,momtype, &
                             ecoll,indexc,xn,vel,dt,t, rhoa, totaddto, &
                             mass_hm_splinter, mass_coll_splinter, &
@@ -2518,7 +2518,7 @@
     use numerics_type
     use numerics, only : zeroin, dvode
     implicit none
-    integer(i4b), intent(in) :: n_binst,n_bin_mode,n_bin_modew, n_moments
+    integer(i4b), intent(in) :: n_binst,n_bin_mode,n_bin_modew, n_comps,n_moments
     real(wp), dimension(n_bin_mode,n_bin_mode), intent(in) :: ecoll
     integer(i4b), dimension(n_bin_mode,n_bin_mode), intent(in) :: indexc
     real(wp), dimension(n_bin_mode), intent(inout) :: npart,xn,vel
@@ -2916,6 +2916,7 @@
                 .and. (xn(i)>7.2382e-12_wp)) then
                 ! drops - mode 2
                 momtemp(n_comps+1:n_comps+5)=0._wp
+                oldprop=0._wp
                 ! gain integral bit+++++++++++++++++++++++++++++++++++++++++++++++++++++++
                 call add_moments_to_new_bin(lf2,n_moments, n_bin_mode, &
 	                    mass_mtot, mass_mode2_frag, masstot, remove1, remove2, momtype, xn, &
@@ -2926,10 +2927,10 @@
                 .and. (xn(i)>7.2382e-12_wp)) then
                 ! ice - mode 2
                 ! redefine moments
+                oldprop=1._wp
                 call set_ice_moments(momtemp,n_moments,&
                     n_comps+1,n_comps+2,n_comps+3, &
                     n_comps+4,n_comps+5,masstot,mass_mode2_frag)
-                
                 ! gain integral bit+++++++++++++++++++++++++++++++++++++++++++++++++++++++
                 call add_moments_to_new_bin(lf3,n_moments, n_bin_mode, &
 	                    mass_smtot, mass_mode2_frag, masstot, remove1, remove2, momtype, xn, &
@@ -2990,16 +2991,21 @@
     ! surface energy sum, equation 6
     de=k0/(surface_tension(t)*pi*diamd*diamd)
     
-    ! fraction frozen at the end of stage 1 freezing
-    f = -cpw*(t-ttr)/lf
-    
-    ! number of drops
-    nfrag_drops = 3._wp*max(de-de_crit,0._wp)
-    ! number of ice
-    nfrag_ice = nfrag_drops * (1._wp-f) * phi_mode2
-     
-    frac_i=max(nfrag_ice / nfrag_drops,0._wp)
-    !print *,nfrag_ice
+	! Fraction frozen at the end of stage-1 freezing
+	f = -cpw*(t-ttr)/lf
+	f = min(max(f,0._wp),1._wp)
+	
+	! Number of splash drops
+	nfrag_drops = 3._wp*max(de-de_crit,0._wp)
+	if (nfrag_drops > qsmall2) then
+		frac_i = (1._wp-f)*phi_mode2
+		frac_i = min(max(frac_i,0._wp),1._wp)
+		nfrag_ice = nfrag_drops*frac_i
+	else
+		nfrag_drops=0._wp
+		nfrag_ice=0._wp
+		frac_i=0._wp	
+	endif
                                     
     end subroutine mode2_interaction
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -3137,7 +3143,7 @@
     implicit none
     integer(i4b) :: i, nt,j
     real(wp), dimension(parcel1%n_bin_mode) :: tmp
-    real(wp) :: rhoa
+    real(wp) :: rhoa, totaddto
     
     
     nt=ceiling(runtime / real(dt,kind=wp))
@@ -3154,7 +3160,7 @@
         			parcel1%n_comps+parcel1%imoms,&
                     parcel1%npart,parcel1%moments,parcel1%momenttype, &
                     parcel1%ecoll,parcel1%indexc, &
-                    parcel1%mbin(:,parcel1%n_comps+1),parcel1%dt,parcel1%t,rhoa)
+                    parcel1%mbin(:,parcel1%n_comps+1),parcel1%dt,parcel1%t,rhoa,totaddto)
         
         
         ! redefine the mass of each component of aerosol
