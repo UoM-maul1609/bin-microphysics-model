@@ -5784,12 +5784,10 @@
                                 parcel1%npartall,parcel1%moments,parcel1%momenttype, &
                                 parcel1%ecoll,parcel1%indexc, &
                                 parcel1%mbinall(:,parcel1%n_comps+1),parcel1%dt, &
-                                parcel1%y(parcel1%ite),rhoa)
-                ! just set the ice solver temperature to the liquid temperature
-                if(ice_flag.eq.1) parcel1%yice(parcel1%itei)=parcel1%y(parcel1%ite)
+                                parcel1%y(parcel1%ite),rhoa,parcel1%totaddto)
             elseif(sce_flag.eq.2) then
                 call sce_sip_microphysics(parcel1%n_bins1,parcel1%n_bin_mode,&
-                            parcel1%n_bin_modew,parcel1%n_comps+&
+                            parcel1%n_bin_modew,parcel1%n_comps, parcel1%n_comps+&
                             parcel1%imoms,&
                             parcel1%npartall,parcel1%moments,parcel1%momenttype, &
                             parcel1%ecoll,parcel1%indexc, &
@@ -5797,16 +5795,17 @@
                             parcel1%y(parcel1%ite),rhoa, parcel1%totaddto, &
                             mass_fragment1, mass_fragment2, mass_fragment3, &
                             hm_flag,break_flag,mode1_flag, mode2_flag )
-                ! latent heat of fusion
-                if(ice_flag.eq.1) then
-                	if(.not.chamber_override) then
-	                    call adjust_t_rh(parcel1%totaddto,parcel1%y(parcel1%ite), &
-                                parcel1%y(parcel1%irh), parcel1%y(parcel1%ipr))
-                    endif
-                    parcel1%yice(parcel1%irhi)=parcel1%y(parcel1%irh)
-                    parcel1%yice(parcel1%itei)=parcel1%y(parcel1%ite)
-                endif
             endif
+
+			! latent heat of fusion
+			if(ice_flag.eq.1) then
+				if(.not.chamber_override) then
+					call adjust_t_rh(parcel1%totaddto,parcel1%y(parcel1%ite), &
+							parcel1%y(parcel1%irh), parcel1%y(parcel1%ipr))
+				endif
+				parcel1%yice(parcel1%irhi)=parcel1%y(parcel1%irh)
+				parcel1%yice(parcel1%itei)=parcel1%y(parcel1%ite)
+			endif
                                         
             ! redefine the mass of each component of aerosol
             do j=1,parcel1%n_comps
