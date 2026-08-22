@@ -53,7 +53,7 @@
             ! ice water
             real(wp), dimension(:), allocatable :: dice, maerice, npartice, rho_coreice, &
                             rh_eqice, rhoatice, dwice, da_dtice, nice, &
-                            phi, rhoi, nump, rime, vel
+                            phi, rhoi, nump, rime, vel, nre, cd
             real(wp), dimension(:,:), allocatable :: mbinice, rhobinice, &
                                         nubinice,molwbinice,kappabinice ! all bins x all comps                                
 
@@ -431,6 +431,10 @@
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
     allocate( parcel1%vel(1:parcel1%n_bin_mode), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+    allocate( parcel1%nre(1:parcel1%n_bin_mode), STAT = AllocateStatus)
+    if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+    allocate( parcel1%cd(1:parcel1%n_bin_mode), STAT = AllocateStatus)
+    if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
     allocate( parcel1%indexc(1:parcel1%n_bin_mode,1:parcel1%n_bin_mode), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -748,12 +752,21 @@
     call wetdiam(parcel1%mbin(:,n_comps+1),parcel1%mbin,&
         parcel1%rhobin,parcel1%n_bin_mode,parcel1%dw) 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! terminal fall-speeds                                                         !
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    parcel1%rhoat=sum(parcel1%mbin,2) / (pi/6._wp*parcel1%dw**3)
+    call terminal01(parcel1%vel,parcel1%dw,parcel1%rhoat, parcel1%t,parcel1%p,&
+    	parcel1%nre,parcel1%cd, parcel1%n_bin_mode)
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! collision efficiency - gravitational settling                                !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     call ecollision(parcel1%t,parcel1%p, &
-        parcel1%dw,sum(parcel1%mbin,2),parcel1%n_bin_mode,parcel1%ecoll,parcel1%vel) 
+        parcel1%dw,sum(parcel1%mbin,2),parcel1%n_bin_mode, &
+        parcel1%ecoll,parcel1%vel,parcel1%nre) 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -802,134 +815,214 @@
 	!>@param[in] dw, mw - diameters and masses of droplets
 	!>@param[in] sz - size of array
 	!>@param[inout] ecoll: collision efficiency, vel: terminal fall-speed
-    subroutine ecollision(t, p,dw,mw,sz,ecoll,vel) 
-    real(wp), intent(in) :: t, p
-    integer(i4b), intent(in) :: sz
-    real(wp), intent(in), dimension(sz) :: dw, mw
-    real(wp), intent(inout), dimension(sz) :: vel
-    real(wp), intent(inout), dimension(sz,sz) :: ecoll
-    
-    integer(i4b) :: i,j
-    real(wp) :: x1,x2,as,al,r,u,v, &
-                visc_air, rhoa, va, nu_air1, nu_air2, &
-                lambda1, lambda2, knud1,knud2, prefac, g1,g2, d1, d2, &
-                delta1sq, delta2sq, kbrown, kde, kti, kts, sc1, re1, re2
-    real(wp), dimension(sz) :: rhoat, nre, cd
-    
-    ! for brownian kernel
-    visc_air=viscosity_air(t)
-    rhoa=p/(ra*t)
-    va=visc_air/rhoa
-    prefac=2._wp*kboltz*t/(6._wp*pi*visc_air)
-    !--------------------
-    
-    rhoat=mw / (pi/6._wp*dw**3)
-    call terminal01(vel,dw,rhoat, t,p,nre,cd,sz)
-    
-    do j=1,sz
-        do i=1,sz ! left-most should vary quickest
-        
-            ! Long kernel for gravitational settling+++++++++
-            ! AB Long, 1974
-            ! Solutions to the Droplet Collection Equation for Polynomial Kernels
-            ! https://doi.org/10.1175/1520-0469(1974)031<1040:STTDCE>2.0.CO;2
-            x1=min(dw(i),dw(j))
-            x2=max(dw(i),dw(j))
-            as=x1/2._wp
-            al=x2/2._wp
-            
-            r = max(x2*0.5e6_wp,x1*0.5e6_wp) ! microns
-            u = 4._wp/3._wp*pi*al**3*1.e6_wp    ! cm^3
-            v = 4._wp/3._wp*pi*as**3*1.e6_wp    ! cm^3
-            if(r<=50._wp) then
-!                 ecoll(i,j) = 9.44e9_wp*(u**2+v**2)/1.e6_wp
-                ecoll(i,j) = 4.5e-4_wp*r*r*(1._wp-3._wp/r)
-            else
-!                 ecoll(i,j) = 5.78e3_wp*(u+v)/1.e6_wp
-                ecoll(i,j) = 1._wp
-            endif
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! Liquid collision kernel                                                      !
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	subroutine ecollision(t,p,dw,mw,sz,ecoll,vel,nre)
+		implicit none
+		real(wp), intent(in) :: t,p
+		integer(i4b), intent(in) :: sz
+		real(wp), dimension(sz), intent(in) :: dw,mw,vel,nre
+		real(wp), dimension(sz,sz), intent(out) :: ecoll
+		integer(i4b) :: i,j
+		real(wp) :: eff
+		real(wp) :: va,prefac,lambda_air
+	
+		call collision_air_properties( &
+			t,p,va,prefac,lambda_air)
+		do j=1,sz
+			do i=1,j
+				eff=long_collection_efficiency_pair(dw(i),dw(j))
+	
+				call collision_kernel_pair( &
+					t, &
+					dw(i),dw(j), &
+					mw(i),mw(j), &
+					vel(i),vel(j), &
+					nre(i),nre(j), &
+					eff, &
+					va,prefac,lambda_air, &
+					ecoll(i,j))
+					
+				! Collision kernel is symmetric
+				ecoll(j,i)=ecoll(i,j)
+			enddo
+		enddo	
+	end subroutine ecollision
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-            
-            ecoll(i,j)=pi*(x1+x2)*(x1+x2)*ecoll(i,j)*abs(vel(j)-vel(i))*0.25_wp
-            !------------------------------------------------
-            
-            
-            ! turbulent inertial motion +++++++++++++++++++++
-            ! Equation 15.40, Jacobson, page 511 
-            kti = ecoll(i,j) * epsilond**0.75_wp / (grav * va**0.25_wp)
-            !------------------------------------------------
-            
-            ! turbulent shear +++++++++++++++++++++++++++++++
-            ! Equation 15.41, Jacobson, page 511 
-            kts = (pi*epsilond/(120._wp*va))**0.5_wp*(dw(i)+dw(j))**3
-            !------------------------------------------------
-            
-            
-            ! Brownian kernel +++++++++++++++++++++++++++++++
-            ! Equation 15.33, Jacobson, page 509 - the transition regime
-            ! and 519 - all effects
-            nu_air1=sqrt(8._wp*kboltz*t/(pi*molw_a/n_avo))
-            lambda1=2._wp*visc_air/rhoa/nu_air1
-            nu_air2=sqrt(8._wp*kboltz*t/(pi*molw_a/n_avo))
-            lambda2=2._wp*visc_air/rhoa/nu_air2
-            knud1=2._wp*lambda1/dw(i)
-            knud2=2._wp*lambda2/dw(j)
-            g1=1._wp+knud1*(1.249_wp+0.42_wp*exp(-0.87/knud1))
-            g2=1._wp+knud2*(1.249_wp+0.42_wp*exp(-0.87/knud2))
-            d1=prefac*g1/dw(i)
-            d2=prefac*g2/dw(j)
-
-            nu_air1=sqrt(8._wp*kboltz*t/(pi*mw(i)))
-            lambda1=8._wp*d1/(pi*nu_air1)
-            nu_air2=sqrt(8._wp*kboltz*t/(pi*mw(j)))
-            lambda2=8._wp*d2/(pi*nu_air2)
-            
-            delta1sq=((dw(i)+lambda1)**3-(dw(i)**2+lambda1**2)**(1.5_wp)) / &
-                (3._wp*dw(i)*lambda1)-dw(i)
-            delta1sq=delta1sq**2
-            
-            delta2sq=((dw(j)+lambda2)**3-(dw(j)**2+lambda2**2)**(1.5_wp)) / &
-                (3._wp*dw(j)*lambda2)-dw(j)
-            delta2sq=delta2sq**2
-            
-            
-            kbrown=2._wp*pi*(dw(i)+dw(j)) * (d1 + d2) / &
-                ((dw(i)+dw(j)) / (dw(i)+dw(j)+2._wp*sqrt(delta1sq+delta2sq)) + &
-                8._wp*(d1+d2)/(sqrt(nu_air1**2+nu_air2**2)*(dw(i)+dw(j))) ) 
-            !------------------------------------------------
-            
-            ! Brownian Diffusion Enhancement kernel +++++++++
-            ! Equation 15.35, Jacobson, page 510 
-			! Brownian diffusion enhancement kernel
-			! Use Reynolds number of large particle,
-			! Schmidt number of small particle.
-			if (dw(j) >= dw(i)) then
-				! i = small particle, j = large particle
-				sc1 = va/d1
-				re1 = nre(j)
-			else
-				! j = small particle, i = large particle
-				sc1 = va/d2
-				re1 = nre(i)
-			endif
-			
-			if (re1 <= 1._wp) then
-				kde = kbrown * 0.45_wp * re1**oneoverthree * &
-					  sc1**(1._wp/3._wp)
-			else
-				kde = kbrown * 0.45_wp * sqrt(re1) * &
-					  sc1**oneoverthree
-			endif
-            !------------------------------------------------
-            
-            ecoll(i,j)=ecoll(i,j) +kbrown+kde+kti+kts
-        enddo
-    enddo
-    
-    end subroutine ecollision
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! Long liquid-drop collection efficiency for one pair                          !
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	real(wp) function long_collection_efficiency_pair(d1,d2)
+		implicit none
+		real(wp), intent(in) :: d1,d2
+		real(wp) :: r
+	
+		! Radius of larger particle in microns
+		r=0.5e6_wp*max(d1,d2)	
+		if (r <= 3._wp) then	
+			! The polynomial below becomes negative below 3 micron radius.
+			long_collection_efficiency_pair=0._wp	
+		elseif (r <= 50._wp) then	
+			long_collection_efficiency_pair = &
+				4.5e-4_wp*r*r*(1._wp-3._wp/r)
+		else
+			long_collection_efficiency_pair=1._wp
+		endif
+	end function long_collection_efficiency_pair
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
-    
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! Air properties used by the collision kernel                                  !
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	subroutine collision_air_properties(t,p,va,prefac,lambda_air)
+		implicit none
+		real(wp), intent(in) :: t,p
+		real(wp), intent(out) :: va,prefac,lambda_air
+		real(wp) :: visc_air,rhoa,vtherm_air
+	
+		visc_air=viscosity_air(t)
+		rhoa=p/(ra*t)
+		! Kinematic viscosity
+		va=visc_air/rhoa
+		! Used by the Brownian diffusion coefficient
+		prefac=2._wp*kboltz*t/(6._wp*pi*visc_air)
+		! Molecular thermal speed of air
+		vtherm_air=sqrt(8._wp*kboltz*t/(pi*molw_a/n_avo))
+		! Mean free path of air
+		lambda_air=2._wp*visc_air/(rhoa*vtherm_air)
+	end subroutine collision_air_properties
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! Complete collision kernel for one particle pair                              !
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	subroutine collision_kernel_pair( &
+		t,dia1,dia2,mass1,mass2,vel1,vel2,reyn1,reyn2,effgrav, &
+		va,prefac,lambda_air,kernel)
+	
+		implicit none
+		real(wp), intent(in) :: t
+		real(wp), intent(in) :: dia1,dia2
+		real(wp), intent(in) :: mass1,mass2
+		real(wp), intent(in) :: vel1,vel2
+		real(wp), intent(in) :: reyn1,reyn2
+		real(wp), intent(in) :: effgrav
+		real(wp), intent(in) :: va,prefac,lambda_air
+		real(wp), intent(out) :: kernel
+	
+		real(wp) :: knud1,knud2
+		real(wp) :: slip1,slip2
+		real(wp) :: diff1,diff2
+		real(wp) :: vtherm1,vtherm2
+		real(wp) :: jump1,jump2
+		real(wp) :: delta1sq,delta2sq
+		real(wp) :: kbrown,kde,kti,kts,kgrav
+		real(wp) :: scsmall,relarge
+	
+		if ((dia1 <= 0._wp).or.(dia2 <= 0._wp).or. &
+			(mass1 <= 0._wp).or.(mass2 <= 0._wp)) then
+			kernel=0._wp
+			return
+		endif
+		! ----------------------------------------------------------------------
+		! Gravitational settling
+		! ----------------------------------------------------------------------
+		kgrav = pi/4._wp * &
+				(dia1+dia2)**2 * &
+				max(effgrav,0._wp) * &
+				abs(vel2-vel1)
+	
+		! ----------------------------------------------------------------------
+		! Turbulent inertial motion
+		! Jacobson Eq. 15.40
+		! ----------------------------------------------------------------------	
+		kti = kgrav * epsilond**0.75_wp / &
+			  (grav*va**0.25_wp)
+
+		! ----------------------------------------------------------------------
+		! Turbulent shear
+		! Jacobson Eq. 15.41
+		! ----------------------------------------------------------------------
+		kts = (pi*epsilond/(120._wp*va))**0.5_wp * &
+			  (dia1+dia2)**3
+		! ----------------------------------------------------------------------
+		! Brownian kernel
+		! ----------------------------------------------------------------------
+		knud1=2._wp*lambda_air/dia1
+		knud2=2._wp*lambda_air/dia2
+	
+		slip1=1._wp+knud1* &
+			(1.249_wp+0.42_wp*exp(-0.87_wp/knud1))
+		slip2=1._wp+knud2* &
+			(1.249_wp+0.42_wp*exp(-0.87_wp/knud2))
+	
+		diff1=prefac*slip1/dia1
+		diff2=prefac*slip2/dia2
+	
+		! Particle thermal speeds
+		vtherm1=sqrt(8._wp*kboltz*t/(pi*mass1))
+		vtherm2=sqrt(8._wp*kboltz*t/(pi*mass2))
+	
+		jump1=8._wp*diff1/(pi*vtherm1)
+		jump2=8._wp*diff2/(pi*vtherm2)
+	
+		delta1sq = &
+			((dia1+jump1)**3 - &
+			 (dia1**2+jump1**2)**1.5_wp) / &
+			 (3._wp*dia1*jump1) - dia1
+		delta1sq=delta1sq**2
+		delta2sq = &
+			((dia2+jump2)**3 - &
+			 (dia2**2+jump2**2)**1.5_wp) / &
+			 (3._wp*dia2*jump2) - dia2
+		delta2sq=delta2sq**2
+		kbrown = &
+			2._wp*pi*(dia1+dia2)*(diff1+diff2) / &
+			( &
+			(dia1+dia2) / &
+			(dia1+dia2+2._wp*sqrt(delta1sq+delta2sq)) + &
+			8._wp*(diff1+diff2) / &
+			(sqrt(vtherm1**2+vtherm2**2)*(dia1+dia2)) &
+			)
+		! ----------------------------------------------------------------------
+		! Brownian diffusion enhancement
+		!
+		! Reynolds number of larger particle;
+		! Schmidt number of smaller particle.
+		! ----------------------------------------------------------------------
+		if (dia2 > dia1) then
+			! particle 2 is larger
+			scsmall=va/diff1
+			relarge=reyn2
+		elseif (dia1 > dia2) then
+			! particle 1 is larger
+			scsmall=va/diff2
+			relarge=reyn1
+		else
+			! Equal diameter: diffusion coefficients should be identical.
+			! Use the larger Reynolds number explicitly to retain symmetry.
+			scsmall=va/diff1
+			relarge=max(reyn1,reyn2)
+		endif
+	
+		if (relarge <= 1._wp) then
+			kde=kbrown*0.45_wp* &
+				relarge**oneoverthree * &
+				scsmall**oneoverthree
+		else
+			kde=kbrown*0.45_wp* &
+				sqrt(relarge) * &
+				scsmall**oneoverthree
+		endif
+		! ----------------------------------------------------------------------
+		! Total collision kernel [m3 s-1]
+		! ----------------------------------------------------------------------
+		kernel=kgrav+kti+kts+kbrown+kde	
+	end subroutine collision_kernel_pair
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
 
 
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
