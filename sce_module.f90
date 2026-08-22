@@ -2733,6 +2733,11 @@
                     mass_mtot = mass_dm*nnew ! drop mass lost to mode 2
                     mass_smtot = mass_sm*nnew ! ice mass lost to mode 2
 
+					! Liquid Mode-2 splash fragments remain unfrozen,
+					! so remove their mass from the freezing mass used
+					! for the latent-heat calculation.
+					totaddto = totaddto - mass_mtot
+					
                     ! drop mode
                     do k=jld,jhd
                         if (xn(k).gt.mass_mode2_frag) exit
@@ -3003,7 +3008,7 @@
 	f = min(max(f,0._wp),1._wp)
 	
 	! Number of splash drops
-	nfrag_drops = 3._wp*max(de-de_crit,0._wp)
+	nfrag_drops = 3._wp*(1._wp-f)*max(de-de_crit,0._wp)
 	if (nfrag_drops > qsmall2) then
 		frac_i = (1._wp-f)*phi_mode2
 		frac_i = min(max(frac_i,0._wp),1._wp)
