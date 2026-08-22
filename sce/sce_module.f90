@@ -2301,17 +2301,18 @@
             return
         endif
     
-        d = (6._wp*min1/rhow)**(1._wp/3._wp)
+        d = (6._wp*min1/(pi*rhow))**oneoverthree
         tc=t-ttr
         dthresh = min(d,1.6e-3)
         x = log10(dthresh*1000._wp)
         
         ! table 3, phillips et al.
-        if(d < 0.4_wp) then
-	        beta1 = 0.
-    	else
-    		beta1 = -0.1839_wp*x*x-0.2017_wp*x-0.0512_wp
-    	endif
+		if(d < 0.4e-3_wp) then
+			beta1 = 0._wp
+		else
+			beta1 = -0.1839_wp*x*x - &
+					0.2017_wp*x - 0.0512_wp
+		endif
     	
     	    
         dthresh = max(min(d,1.6e-3),0.06e-3)
@@ -2329,7 +2330,7 @@
         omega = min(max((-3._wp-tc)/3._wp,0._wp),1._wp)
         
         n = sigma*omega*(10._wp**log10zeta *(10**log10nabla)**2 / &
-            ((tc-t0)**2+(10._wp*log10nabla)**2)+beta1*tc )
+            ((tc-t0)**2+(10._wp**log10nabla)**2)+beta1*tc )
 
         
         ! total number of fragments
@@ -2349,10 +2350,16 @@
         ! mass of small fragments
         mt=oneoversix*rhoice*pi*dtt**3
         
-        fac1=min((mt*nt+mb*nb)/min1,1._wp)
-        nt = nt *fac1
-        nb = nb *fac1
-        n=nt+nb
+		fac1 = mt*nt + mb*nb		
+		if(fac1 > qsmall2) then
+			fac1 = min(min1/fac1,1._wp)
+		else
+			fac1 = 1._wp
+		endif
+		
+		nt = nt*fac1
+		nb = nb*fac1
+		n  = nt+nb
         
     end subroutine calculate_mode1
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -2697,12 +2704,12 @@
                     
                     ! ice mode tiny
                     do k=jl,jh
-                        if (xn(k).gt.mass_m1t) exit
+                        if (xn(k).gt.mtinym1) exit
                     enddo
                     lf4=k-1
                     ! ice mode big
                     do k=jl,jh
-                        if (xn(k).gt.mass_m1b) exit
+                        if (xn(k).gt.mbigm1) exit
                     enddo
                     lf5=k-1
                 endif
@@ -2882,11 +2889,11 @@
                     ! redefine moments
                     call set_ice_moments(momtemp,n_moments,&
                         n_comps+1,n_comps+2,n_comps+3, &
-                        n_comps+4,n_comps+5,masstot,mass_m1t)
+                        n_comps+4,n_comps+5,masstot,mtinym1)
                 
                     ! gain integral bit+++++++++++++++++++++++++++++++++++++++++++++++++++
                     call add_moments_to_new_bin(lf4,n_moments, n_bin_mode, &
-                        mass_m1ttot, mass_m1t, masstot, remove1, remove2, momtype, xn, &
+                        mass_m1ttot, mtinym1, masstot, remove1, remove2, momtype, xn, &
                             momtemp, oldprop, npart, moments, phase1,phase2)
                     !---------------------------------------------------------------------
                 endif            
@@ -2897,11 +2904,11 @@
                     ! redefine moments
                     call set_ice_moments(momtemp,n_moments,&
                         n_comps+1,n_comps+2,n_comps+3, &
-                        n_comps+4,n_comps+5,masstot,mass_m1b)
+                        n_comps+4,n_comps+5,masstot,mbigm1)
                 
                     ! gain integral bit+++++++++++++++++++++++++++++++++++++++++++++++++++
                     call add_moments_to_new_bin(lf5,n_moments, n_bin_mode, &
-                        mass_m1btot, mass_m1b, masstot, remove1, remove2, momtype, xn, &
+                        mass_m1btot, mbigm1, masstot, remove1, remove2, momtype, xn, &
                             momtemp, oldprop, npart, moments, phase1,phase2)
                     !---------------------------------------------------------------------
                 endif            
