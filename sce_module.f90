@@ -25,6 +25,7 @@
         						de_crit=0.2_wp, phi_mode2=0.35_wp, &
         						oneoversix=1._wp/6._wp, dtt=10.e-6_wp, &
         						oneoverthree=1._wp/3._wp, oneovernine=1._wp/9._wp, &
+        						onequarter=1._wp/4._wp, &
         						oneoverpi=1._wp/pi, phi_phillips=3.5e-3_wp
         						
         						
@@ -837,8 +838,8 @@
 				call collision_kernel_pair( &
 					t, &
 					dw(i),dw(j), &
-					pi/4._wp*dw(i)**2, &
-					pi/4._wp*dw(j)**2, &
+					pi*onequarter*dw(i)**2, &
+					pi*onequarter*dw(j)**2, &
 					mw(i),mw(j), &
 					vel(i),vel(j), &
 					nre(i),nre(j), &
@@ -1741,7 +1742,7 @@
   
       ! heymsfield and westbrook
       x=rhoa*8._wp*mwat*grav/( (eta**2._wp)*pi*(ar**0.5_wp))
-      nre=(8.0_wp**2._wp)/4._wp* &
+      nre=(8.0_wp**2._wp)*onequarter* &
           ( (sqrt(1._wp+(4._wp*sqrt(x))/( (8._wp**2._wp)*sqrt(0.35_wp)))-1._wp)**2._wp)
       vel=eta*(nre)/(rhoa*dmax)
     
@@ -1804,11 +1805,11 @@
       nre2=min(nre,20._wp)
       where(phi.gt.1.0_wp)  
         x = calc1*sqrt(nre2)	
-        fv = 1.0_wp - 0.000668_wp*x/4._wp + 2.39402_wp*((x/4._wp)**2._wp) + &
-             0.73409_wp*((x/4._wp)**3._wp)-0.73911_wp*((x/4._wp)**4._wp)
+        fv = 1.0_wp - 0.000668_wp*x*onequarter + 2.39402_wp*((x*onequarter)**2._wp) + &
+             0.73409_wp*((x*onequarter)**3._wp)-0.73911_wp*((x*onequarter)**4._wp)
         x = calc2*sqrt(nre2);	
-        fh = 1.0_wp - 0.000668_wp*x/4._wp + 2.39402_wp*((x/4._wp)**2._wp) + &
-             0.73409_wp*((x/4._wp)**3._wp)-0.73911_wp*((x/4._wp)**4._wp)
+        fh = 1.0_wp - 0.000668_wp*x*onequarter + 2.39402_wp*((x*onequarter)**2._wp) + &
+             0.73409_wp*((x*onequarter)**3._wp)-0.73911_wp*((x*onequarter)**4._wp)
       end where
       !--------
   
