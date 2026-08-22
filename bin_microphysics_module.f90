@@ -5333,6 +5333,9 @@
     integer(i4b) :: i, j, nt
     real(wp) :: rhoa
     
+	! calculate terminal velocities (needed because of the output call on 1st time-step)
+	call update_terminal_velocities()
+
     nt=ceiling(runtime / real(dt,kind=wp))
     do i=1,nt
         ! Output state left by previous timestep
