@@ -2046,6 +2046,10 @@
         delm = 0.25_wp*pi*m1*m2/(m1+m2)*(1._wp+0.5_wp)* &
             abs(v1-v2)*1.e5_wp 
         !delm=max(min(delm,2.e-1_wp), 1.e-5_wp)
+		if (delm <= tiny(1._wp)) then
+			vardiman_br=0._wp
+			return
+		endif        
         vardiman_br = max(vard05(1)*(log(delm)**2)+vard05(2)*log(delm)+vard05(3),0._wp)
         vardiman_br = min(vardiman_br,40._wp)
 
