@@ -3304,7 +3304,7 @@
     integer(i4b) :: i,j,k, inew, it, ib
     real(wp) :: fracinliq, fracinice, naer05, nprimary
     real(wp) :: n, nt, nb, mt, mb, mnew, nleft, mttot, mbtot, mleft, mall,  &
-            mtot_orig, mtot_mt, mtot_mb, ns_nuc
+            mtot_orig, mtot_mt, mtot_mb, ns_nuc, dprimary
 
     ! (1) calculate the homogeneous nucleation of ice in SC water
     ! (2) calculate the primary nucleation
@@ -3375,8 +3375,9 @@
 			if (nprimary.le.0._wp) exit
 			if ((dd(i).gt.0.5e-6_wp).and.(rh.ge.1._wp)) then
 				! it can nucleate: reduce number of primary ice
-				dn01(i)=dn01(i)+min(nprimary,npart(i)-dn01(i))
-				nprimary=nprimary-min(npart(i)-dn01(i),nprimary)
+				dprimary=min( nprimary, max(npart(i)-dn01(i),0._wp))
+				dn01(i)=dn01(i)+dprimary
+				nprimary=nprimary-dprimary
 			endif
 		enddo    
 		! limit to number of drops / unfrozen aerosol
@@ -3593,7 +3594,7 @@
       real(wp), intent(inout), dimension(sz2) :: yice
       
       integer(i4b) :: i
-      real(wp) :: fracinliq, fracinice, naer05, nprimary
+      real(wp) :: fracinliq, fracinice, naer05, nprimary, dprimary
       
       
       ! todo: 
@@ -3661,8 +3662,10 @@
         if ((dd(i).gt.0.5e-6_wp).and.(rh.ge.1._wp)) then
             ! it can nucleate
             ! reduce number of primary ice
-            dn01(i)=dn01(i)+min(nprimary,npart(i)-dn01(i))
-            nprimary=nprimary-min(npart(i)-dn01(i),nprimary)
+			! it can nucleate: reduce number of primary ice
+			dprimary=min( nprimary, max(npart(i)-dn01(i),0._wp))
+			dn01(i)=dn01(i)+dprimary
+			nprimary=nprimary-dprimary
         endif
       enddo
       
