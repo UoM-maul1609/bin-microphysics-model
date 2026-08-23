@@ -40,14 +40,15 @@
                         alpha_dep, n_intern, n_mode, n_sv, sv_flag, n_bins, n_comps, &
                         n_aer1,d_aer1,sig_aer1,dmina,dmaxa,mass_frac_aer1,molw_core1, &
                         density_core1, nu_core1, kappa_core1, org_content1, molw_org1, &
-                        kappa_org1, density_org1, delta_h_vap1,nu_org1, log_c_star1
+                        kappa_org1, density_org1, delta_h_vap1,nu_org1, log_c_star1, &
+                        BIN_MOVING_CENTRE, BIN_CHEN_LAMB
                         
         use sce, only : read_in_sce_namelist, initialise_sce_arrays, &
                         n_binsc, n_binst, &
                         kfac, dminc, dmaxc, lwc, dbar, iwc, dbari, parcel1
 
         implicit none
-
+		logical :: fixed_grid_required
         character (len=200) :: nmlfile = ' '
 
 
@@ -58,13 +59,17 @@
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         call getarg(1,nmlfile)
         call read_in_bmm_namelist(nmlfile)
-        if (sce_flag.gt.0) then
+        ! check if fixed_grid required
+		fixed_grid_required = (sce_flag.gt.0) .or. &
+			(bin_scheme_flag.eq.BIN_MOVING_CENTRE) .or. &
+			(bin_scheme_flag.eq.BIN_CHEN_LAMB)
+        if (fixed_grid_required) then
             call read_in_sce_namelist(scefile,nmlfile)
         endif
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
-
+    
 
 
 
@@ -72,8 +77,10 @@
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         ! allocate and initialise the grid                                     !
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        if (sce_flag.gt.0) then
+        if (fixed_grid_required) then
             ! note, this initialises parcel1 arrays in sce module
+			! For bin schemes 1 and 2 this may be used only to construct
+			! the common fixed mass grid; it does not imply SCE is run.
             call initialise_sce_arrays(n_bins, n_binsc,n_mode, n_comps, n_intern, &
                     ice_flag, &
                     pinit,tinit,rhinit,dt,dmina,dmaxa,dminc,dmaxc,&
@@ -98,7 +105,7 @@
                     kappa_org1, density_org1, delta_h_vap1,nu_org1, log_c_star1,sce_flag)
         
         ! This code writes the SCE variables to the BMM            
-        if(sce_flag.gt.0) then
+        if(fixed_grid_required) then
             ! send the SCE arrays, and use the local BMM arrays to map
             ! parcel1 here are the sce module vars. They are written to the bmm version of
             ! parcel1
