@@ -6022,15 +6022,18 @@
     use numerics_type
     use netcdf
 	use adt_scattering_mod, only : beta_ext_adt_bin
+	use numerics, only : fmin
 	
     implicit none
     logical, intent(inout) :: new_file
     character (len=*),intent(in) :: outputfile
     real(wp) :: phi, sd2, sd3, deff, precip
     real(wp) :: svp1,qv,rm,rhod,beta_ext, beta_abs,beta_ext_ice, beta_abs_ice
-	real(wp) :: phi_mean,nmon_mean,rhoi_mean
+	real(wp) :: phi_mean,nmon_mean,rhoi_mean, nact, test, &
+		mcrit
 	real(wp) :: denom
 	real(wp) :: fallrate_liq,fallrate_ice
+	integer(i4b) :: i
     
     ! output to netcdf file
     if(new_file) then
@@ -6434,15 +6437,38 @@
 					start = (/io1%icur/)))
 	endif
 	
-    ! write variable: number > 1.24 microns (1.e-15 kg)
-    parcel1%ndrop=0._wp
-    where (parcel1%y(1:parcel1%n_bin_modew) > 1.e-15_wp)
-        parcel1%ndrop=parcel1%npart(:)
-    end where
+	! calculate actually activated drops
+	nact=0._wp	
+	do i=1,parcel1%n_bin_modew	
+		if (parcel1%npart(i) <= 0._wp) cycle
+		n_sel=i
+		rh_act=0._wp
+		mult=-1._wp
+		select case(kappa_flag)
+		case(0)
+			test=fmin(1.e-50_wp,1.e1_wp, koehler02,1.e-30_wp)
+		case(1)
+			test=fmin(1.e-50_wp,1.e1_wp, kkoehler02,1.e-30_wp)
+		end select
+		mcrit=test*molw_water
+		if (parcel1%y(i) > mcrit) then
+			nact=nact+parcel1%npart(i)
+		endif
+	enddo
     
     call check( nf90_inq_varid(io1%ncid, "ndrop", io1%varid ) )
     call check( nf90_put_var(io1%ncid, io1%varid, &
-        sum(parcel1%ndrop), start = (/io1%icur/)))
+        nact, start = (/io1%icur/)))
+
+    ! write variable: number > 1.24 microns (1.e-15 kg)
+!     parcel1%ndrop=0._wp
+!     where (parcel1%y(1:parcel1%n_bin_modew) > 1.e-15_wp)
+!         parcel1%ndrop=parcel1%npart(:)
+!     end where
+!     
+!     call check( nf90_inq_varid(io1%ncid, "ndrop", io1%varid ) )
+!     call check( nf90_put_var(io1%ncid, io1%varid, &
+!         sum(parcel1%ndrop), start = (/io1%icur/)))
 
 
 
