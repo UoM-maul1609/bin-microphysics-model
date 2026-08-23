@@ -1218,12 +1218,16 @@
               
         do i=1,parcel1%n_bin_modew
             ! ice moments: phi, nmon, vol, rim, unf
+			parcel1%moments(i,parcel1%n_comps+1)= parcel1%npart(i)
+			parcel1%moments(i,parcel1%n_comps+2)= parcel1%npart(i)
+		
             ! rim: mass
             parcel1%moments(i,parcel1%n_comps+4)=parcel1%npart(i)* &
                 parcel1%mbin(i,parcel1%n_comps+1)
             ! unf: mass
             parcel1%moments(i,parcel1%n_comps+5)=parcel1%npart(i)* &
                 parcel1%mbin(i,parcel1%n_comps+1)
+
         enddo        
         parcel1%momenttype(parcel1%n_comps+1:parcel1%n_comps+parcel1%imoms)=[2,2,1,1,1]
     endif
@@ -1282,6 +1286,8 @@
 				parcel1%moments_ent(i,j)=parcel1%npart_ent(i)*parcel1%mbin_ent(i,j)
 			enddo
 		enddo
+		parcel1%moments_ent(1:parcel1%n_bin_modew,parcel1%n_comps+1)= parcel1%npart_ent
+		parcel1%moments_ent(1:parcel1%n_bin_modew,parcel1%n_comps+2)= parcel1%npart_ent
 		! these are liquid moments
 		if (parcel1%ice_flag.eq.1) then
 			do i=1,parcel1%n_bin_modew
@@ -3452,6 +3458,9 @@
             momtemp(1:ncomps) = (1._wp-fracinliq)*moments(k,1:ncomps)
             ! scale aerosol moments according to this fraction
             moments(k,1:ncomps)=moments(k,1:ncomps)*fracinliq
+            ! reduce ncomps+1 and ncomps+2
+            moments(k,ncomps+1) = moments(k,ncomps+1)*fracinliq
+            moments(k,ncomps+2) = moments(k,ncomps+2)*fracinliq
 			! --------------------------------------------------------------
 			! Keep liquid water-related moments consistent with the
 			! remaining liquid population.
@@ -3676,7 +3685,11 @@
       ! number conc. of ice bins:
       npartice(:)=npartice(:)+dn01(:)
       ! new ice mass in bin:
-      m01=m01/(npartice) 
+	  where (npartice > tiny(1._wp))
+			m01=m01/npartice
+	  elsewhere
+			m01=0._wp
+	  end where
       
       !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
       ! transfer moments to ice                                                !
@@ -3698,7 +3711,9 @@
           else
               moments(i+sz2,sz+3)=0._wp
           endif
-     	  moments(i,sz+4)=npart(i)*mwat(i)
+		  moments(i,sz+1) = moments(i,sz+1)*fracinliq
+		  moments(i,sz+2) = moments(i,sz+2)*fracinliq
+          moments(i,sz+4)=npart(i)*mwat(i)
 		  moments(i,sz+5)=npart(i)*mwat(i)
       enddo
       !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -4434,6 +4449,12 @@
 					! ----------------------------------------------------------
 					if (idbin == last_idbin) then
 						frac=1._wp-frac_sum
+						if (frac < -100._wp*epsilon(1._wp)) then
+							print *,'Chen-Lamb negative closing fraction'
+							print *,'frac,frac_sum = ',frac,frac_sum
+							error stop
+						endif
+						frac=max(frac,0._wp)
 					else
 						frac=dN/Nsrc
 						frac_sum=frac_sum+frac
@@ -4525,26 +4546,16 @@
 			error stop
 		endif
 		do k=1,n_moments
-			! ----------------------------------------------------------------
-			! The raw per-bin Chen-Lamb integration above is only checked,
-			! and accepted, to 1e-6 relative accuracy (relN, relM). Every
-			! auxiliary moment is redistributed using number-fractions
-			! derived from that same raw integration, so it inherits that
-			! 1e-6 error budget - it cannot be exact to 1e-8 downstream
-			! when the upstream integral it is built from is only trusted
-			! to 1e-6. Checking the aggregated moments against a tolerance
-			! *tighter* than the tolerance already accepted for the
-			! quantities they are built from is inconsistent, and is what
-			! was aborting otherwise-healthy runs. Match the two.
+			! --------------------------------------------------------------
+			! Auxiliary-moment conservation.
 			!
-			! (N and M themselves are held to a much tighter 1e-10 bound
-			! elsewhere because they get an explicit exact renormalization,
-			! corrN=Nsrc/Nraw and corrM=Mtarget/Mraw, per source bin - the
-			! generic moments columns do not get an equivalent correction,
-			! so 1e-10 was never achievable for them.)
-			! ----------------------------------------------------------------
+			! Auxiliary moments are partitioned using normalized particle-
+			! number fractions, with the final contributing fraction set as
+			! the complement of all previous fractions.  They should
+			! therefore conserve to normal floating-point accumulation error.
+			! --------------------------------------------------------------
 			tolM=max( &
-				1.e-6_wp*max(abs(moments_before(k)),abs(moments_after(k))), &
+				1.e-10_wp*max(abs(moments_before(k)),abs(moments_after(k))), &
 				tiny(1._wp))
 		
 			if (abs(moments_after(k)-moments_before(k)) > tolM) then
@@ -4930,36 +4941,107 @@
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
 	!>update volume and shape of each crystal
-    subroutine update_volume_and_shape(n_bin_modew,n_bin_mode,n_moments,n_comps, &
-        momtemp,moments,neqice,yice,yoldice,gamma_t,dep_density,npartice)
-    
-        implicit none
-        integer(i4b), intent(in) :: n_bin_modew,n_bin_mode,n_moments,n_comps, neqice
-        real(wp), intent(in) :: gamma_t, dep_density
-        real(wp), dimension(neqice), intent(in) :: yice, yoldice
-        real(wp), dimension(n_bin_mode,n_moments), intent(inout) :: moments
-        real(wp), dimension(n_bin_mode), intent(inout) :: momtemp
-        real(wp), dimension(n_bin_modew), intent(in) :: npartice
-        
-        integer(i4b) :: i
-                
-        do i=1,n_bin_modew
-            ! new total volume
-            momtemp(i)= &
-                moments(n_bin_modew+i,n_comps+3)+ &
-                    (yice(i)-yoldice(i))/dep_density*npartice(i)
-            ! new phi
-            if (momtemp(i)> 0._wp) then
-                moments(n_bin_modew+i,n_comps+1)= moments(n_bin_modew+i,n_comps+1)*&
-                    exp((gamma_t-1._wp)/(gamma_t+2._wp)*&
-                        log(momtemp(i) / moments(n_bin_modew+i,n_comps+3)))
-            else
-                moments(n_bin_modew+i,n_comps+1)= npartice(i)
-            endif
-        enddo
-        ! save new volume
-        moments(n_bin_modew+1:n_bin_mode,n_comps+3)= momtemp(1:n_bin_modew)                
-    end subroutine update_volume_and_shape         
+	subroutine update_volume_and_shape( n_bin_modew,n_bin_mode,n_moments,n_comps, &
+		momtemp,moments,neqice,yice,yoldice, gamma_t,dep_density,npartice)
+		implicit none
+		integer(i4b), intent(in) :: &
+			n_bin_modew,n_bin_mode,n_moments,n_comps,neqice
+		real(wp), intent(in) :: gamma_t,dep_density
+		real(wp), dimension(neqice), intent(in) :: yice,yoldice
+		real(wp), dimension(n_bin_mode,n_moments), intent(inout) :: moments
+		real(wp), dimension(n_bin_mode), intent(inout) :: momtemp
+		real(wp), dimension(n_bin_modew), intent(in) :: npartice
+	
+		integer(i4b) :: i,ii
+		real(wp) :: vold,vnew,vtrial,dv,phi_exponent,monomer_moment,tolV
+		real(wp), parameter :: small=1.e-60_wp
+	
+		! ----------------------------------------------------------
+		! Chen-Lamb aspect-ratio exponent
+		!
+		! phi_new/phi_old =
+		!     (V_new/V_old)^((gamma-1)/(gamma+2))
+		! ----------------------------------------------------------
+		if (abs(gamma_t+2._wp) <= small) then
+			error stop 'update_volume_and_shape: gamma_t + 2 = 0'
+		endif
+		if (dep_density <= 0._wp) then
+			error stop 'update_volume_and_shape: dep_density <= 0'
+		endif
+		phi_exponent = (gamma_t-1._wp)/(gamma_t+2._wp)
+		do i=1,n_bin_modew
+			ii=n_bin_modew+i
+			! ------------------------------------------------------
+			! Empty ice category.
+			!
+			! No extensive volume or phi-weighted moment should
+			! remain attached to a category containing no particles.
+			! ------------------------------------------------------
+			if (npartice(i) <= small) then
+				momtemp(i)=0._wp
+				moments(ii,n_comps+1)=0._wp
+				moments(ii,n_comps+3)=0._wp
+				cycle
+			endif
+			! ------------------------------------------------------
+			! Existing deposited-ice volume moment.
+			! ------------------------------------------------------
+			vold=max(moments(ii,n_comps+3),0._wp)
+			! ------------------------------------------------------
+			! Change in deposited volume caused by vapour
+			! deposition/sublimation during this timestep.
+			!
+			! yice and yoldice are mass per representative particle;
+			! multiplying by npartice gives the mass mixing-ratio
+			! increment for this category.
+			! ------------------------------------------------------
+			dv = (yice(i)-yoldice(i))* npartice(i)/dep_density
+			vtrial=vold+dv
+			! ------------------------------------------------------
+			! A substantially negative volume indicates an
+			! inconsistency rather than roundoff.
+			! ------------------------------------------------------
+			tolV=1000._wp*epsilon(1._wp)* max(abs(vold),abs(dv),1.e-300_wp)
+			if (vtrial < -tolV) then
+				print *,'Negative ice volume in update_volume_and_shape'
+				print *,'bin = ',i
+				print *,'npartice = ',npartice(i)
+				print *,'yold,ynew = ',yoldice(i),yice(i)
+				print *,'vold,dv,vnew = ',vold,dv,vtrial
+				error stop
+			endif
+			! Tiny negative excursion is only floating-point noise.
+			vnew=max(vtrial,0._wp)
+			momtemp(i)=vnew
+			! ------------------------------------------------------
+			! Update the phi-weighted monomer moment.
+			!
+			! Only use the Chen-Lamb volume-ratio expression when
+			! both old and new deposited volumes are well defined.
+			! ------------------------------------------------------
+			if ((vold > small).and.(vnew > small)) then
+				moments(ii,n_comps+1) = moments(ii,n_comps+1) * &
+					exp(phi_exponent*log(vnew/vold))
+			else
+				! --------------------------------------------------
+				! No meaningful old/new volume ratio exists.
+				!
+				! Set phi=1.  Since
+				!
+				! phi = M_phi / M_nmon
+				!
+				! this requires M_phi=M_nmon, NOT M_phi=npartice.
+				! --------------------------------------------------
+				monomer_moment=max(moments(ii,n_comps+2), npartice(i))
+				moments(ii,n_comps+1)=monomer_moment
+			endif
+			! ------------------------------------------------------
+			! Save non-negative deposited-volume moment.
+			! ------------------------------------------------------
+			moments(ii,n_comps+3)=vnew
+		enddo
+	
+	end subroutine update_volume_and_shape
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -4975,8 +5057,12 @@
         real(wp), intent(in), dimension(ipart) :: massold, massnew
         real(wp), intent(inout), dimension(ipart) :: rimemass
         
-        rimemass = rimemass * min(massnew, massold)/massold            
-            
+		where (massold > tiny(1._wp))		
+			rimemass = max(rimemass,0._wp) * &
+				max(min(massnew,massold),0._wp) / massold
+		elsewhere
+			rimemass = 0._wp
+		end where
     end subroutine reduce_rime
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
                   
@@ -5216,7 +5302,8 @@
                 parcel1%nubin(:,1:n_comps), &
                 parcel1%kappabin(:,1:n_comps), &
                 parcel1%molwbin(:,1:n_comps), &
-                parcel1%moments(1:2*parcel1%n_bin_modew,1:parcel1%imoms), &
+                parcel1%moments(1:2*parcel1%n_bin_modew, &
+                	1:parcel1%n_comps+parcel1%imoms), &
                 parcel1%mbinedges(:,:), &
                 parcel1%y(parcel1%ite), &
                 parcel1%y(parcel1%ipr),&
@@ -5644,7 +5731,21 @@
 				stop
 		end select
 		!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-		
+
+		! --------------------------------------------------------------
+		! The equilibrium water mass of the entraining liquid population
+		! has changed.  Update the associated extensive water moments.
+		! --------------------------------------------------------------
+		if (ice_flag.eq.1) then
+			parcel1%moments_ent(1:parcel1%n_bin_modew,n_comps+1)= parcel1%npart_ent
+			parcel1%moments_ent(1:parcel1%n_bin_modew,n_comps+2)= parcel1%npart_ent
+			parcel1%moments_ent(1:parcel1%n_bin_modew,n_comps+4)= &
+				parcel1%npart_ent * parcel1%mbin_ent(:,n_comps+1)
+			parcel1%moments_ent(1:parcel1%n_bin_modew,n_comps+5)= &
+				parcel1%npart_ent * parcel1%mbin_ent(:,n_comps+1)
+		endif
+
+
 		if ((sce_flag.gt.0).or. &
 			(parcel1%bin_scheme_flag.ne.BIN_FULL_MOVING)) then
 			!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -5701,6 +5802,23 @@
 			end select
 			!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 			
+			! --------------------------------------------------------------
+			! The equilibrium water mass of the temporary liquid population
+			! has changed.  Update the associated extensive water moments.
+			! --------------------------------------------------------------
+			if (ice_flag.eq.1) then
+				parcel1%moments_temp( &
+					1:parcel1%n_bin_modew,parcel1%n_comps+4) = &
+					parcel1%npart_temp * &
+					parcel1%mbin_temp( &
+						1:parcel1%n_bin_modew,parcel1%n_comps+1)
+				parcel1%moments_temp( &
+					1:parcel1%n_bin_modew,parcel1%n_comps+5) = &
+					parcel1%npart_temp * &
+					parcel1%mbin_temp( &
+						1:parcel1%n_bin_modew,parcel1%n_comps+1)
+			endif
+
 			if ((sce_flag.gt.0).or. &
 				(parcel1%bin_scheme_flag.ne.BIN_FULL_MOVING)) then
 				!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
