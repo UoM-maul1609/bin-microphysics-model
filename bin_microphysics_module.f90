@@ -1237,6 +1237,41 @@
     end subroutine initialise_bmm_arrays
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
+	subroutine write_sce_grid_to_bmm( &
+		n_bin_mode,n_bin_modew,n_binst,n_modes,n_comps, &
+		indexc,mbinedges)
+		implicit none
+	
+		integer(i4b), intent(in) :: n_bin_mode,n_bin_modew,n_binst,n_modes,n_comps
+		integer(i4b), dimension(:,:), intent(in) :: indexc	
+		real(wp), dimension(:,:), intent(in) :: mbinedges
+
+		! Copy only fixed-grid information
+		parcel1%indexc = indexc
+		parcel1%mbinedges = mbinedges
+		! If these are intended to share the same fixed grid:
+		parcel1%mbinedges_ent = mbinedges	
+	end subroutine write_sce_grid_to_bmm
+
+	subroutine project_initial_bmm_to_fixed_grid()
+		implicit none
+	
+		call moving_centre( &
+			parcel1%n_bin_mode, &
+			parcel1%n_bin_modew, &
+			parcel1%n_bins1, &
+			parcel1%n_modes, &
+			parcel1%n_comps, &
+			parcel1%n_comps+parcel1%imoms, &
+			parcel1%npart, &
+			parcel1%y(1:parcel1%n_bin_modew), &
+			parcel1%moments(1:parcel1%n_bin_modew,:), &
+			parcel1%mbin, &
+			parcel1%mbinedges)
+	
+		! Keep solution vector consistent with remapped wet masses
+		parcel1%y(1:parcel1%n_bin_modew) = parcel1%mbin(:,parcel1%n_comps+1)
+	end subroutine project_initial_bmm_to_fixed_grid
 
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 	! MAP SCE                                                                      !

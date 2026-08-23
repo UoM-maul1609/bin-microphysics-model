@@ -24,7 +24,8 @@
     program main
         use numerics_type
         use bmm, only : read_in_bmm_namelist, initialise_bmm_arrays, bmm_driver, io1, &
-                        write_sce_to_bmm, &
+                        write_sce_to_bmm, write_sce_grid_to_bmm, &
+                        project_initial_bmm_to_fixed_grid, &
                         scefile, sce_flag, hm_flag, break_flag, mode1_flag,mode2_flag, &
                         psurf, tsurf, q_read, theta_read, rh_read, z_read, &
                         time_chamber, press_chamber, temp_chamber, qtot_chamber, &
@@ -109,12 +110,17 @@
             ! send the SCE arrays, and use the local BMM arrays to map
             ! parcel1 here are the sce module vars. They are written to the bmm version of
             ! parcel1
-            call write_sce_to_bmm(parcel1%n_bin_mode,parcel1%n_bin_modew,parcel1%n_binst,&
-                    parcel1%n_modes, parcel1%n_comps, parcel1%n_comps+parcel1%imoms, &
-                    parcel1%ice_flag, &
-                    parcel1%npart, parcel1%moments, parcel1%mbin,  &
-                    parcel1%indexc, &
-                    parcel1%mbinedges,adiabatic_prof)
+			call write_sce_grid_to_bmm( &
+				parcel1%n_bin_mode,parcel1%n_bin_modew,parcel1%n_binst, &
+				parcel1%n_modes,parcel1%n_comps, &
+				parcel1%indexc,parcel1%mbinedges)
+			call project_initial_bmm_to_fixed_grid()
+! 			call write_sce_to_bmm(parcel1%n_bin_mode,parcel1%n_bin_modew,parcel1%n_binst,&
+!                     parcel1%n_modes, parcel1%n_comps, parcel1%n_comps+parcel1%imoms, &
+!                     parcel1%ice_flag, &
+!                     parcel1%npart, parcel1%moments, parcel1%mbin,  &
+!                     parcel1%indexc, &
+!                     parcel1%mbinedges,adiabatic_prof)
         endif        
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
