@@ -1273,6 +1273,35 @@
 		parcel1%y(1:parcel1%n_bin_modew) = parcel1%mbin(:,parcel1%n_comps+1)
 	end subroutine project_initial_bmm_to_fixed_grid
 
+	subroutine prepare_state_for_sce()
+		implicit none
+		integer(i4b) :: n
+		! SCE uses a sectional/fixed-grid Bott gain calculation.
+		! BIN_FULL_MOVING is allowed for diffusional growth, but the
+		! particle population must be conservatively projected onto
+		! the SCE grid before collection.
+		if (parcel1%bin_scheme_flag.ne.BIN_FULL_MOVING) return
+		n=parcel1%n_bin_modew
+		! ------------------------------------------------------------
+		! Liquid
+		! ------------------------------------------------------------
+		call moving_centre( parcel1%n_bin_mode, n, parcel1%n_bins1, &
+			parcel1%n_modes, parcel1%n_comps, parcel1%n_comps+parcel1%imoms, &
+			parcel1%npart, parcel1%y(1:n), parcel1%moments(1:n,:), &
+			parcel1%mbin, parcel1%mbinedges)
+		! ------------------------------------------------------------
+		! Ice
+		! ------------------------------------------------------------
+		if (parcel1%ice_flag.eq.1) then
+			call moving_centre(parcel1%n_bin_mode, n, parcel1%n_bins1, &
+				parcel1%n_modes, parcel1%n_comps, &
+				parcel1%n_comps+parcel1%imoms, parcel1%npartice, &
+				parcel1%yice(1:n), parcel1%moments(n+1:2*n,:), &
+				parcel1%mbinice, parcel1%mbinedges)
+		endif
+	end subroutine prepare_state_for_sce
+
+
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 	! MAP SCE                                                                      !
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -6962,7 +6991,20 @@
 		! when ventilation is required.
         call bin_microphysics(fparcelwarm, fparcelcold, & 
             icenucleation, noncollisional_iceformation)
-        
+		! --------------------------------------------------------------
+		! SCE requires an ordered sectional representation.
+		!
+		! For BIN_FULL_MOVING, condensation/deposition is allowed to
+		! move the representative masses freely.  Before collection,
+		! conservatively project the resulting population onto the
+		! common SCE grid.
+		! --------------------------------------------------------------
+		if ((sce_flag.gt.0).and. &
+			(parcel1%bin_scheme_flag.eq.BIN_FULL_MOVING)) then
+			call prepare_state_for_sce()
+		endif
+		! Must be AFTER the SCE projection because remapping changes
+		! particle masses, composition and ice properties.        
 		! Particle masses/shapes have now changed:
 		! calculate terminal velocities of the accepted state.
 		call update_terminal_velocities()
