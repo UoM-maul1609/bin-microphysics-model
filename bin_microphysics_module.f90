@@ -3911,16 +3911,26 @@
 		implicit none
 		real(wp), intent(in) :: nref,xref,slope,a,b
 		real(wp) :: val
-		real(wp) :: ua,ub
+		real(wp) :: width, na
 	
 		if (b <= a) then
 			val=0._wp
 			return
 		endif
-		ua=a-xref
-		ub=b-xref
-		!  integrate Eq 7 (num) analytically using u=x-xref
-		val = nref*(ub-ua) + 0.5_wp*slope*(ub**2-ua**2)
+		! ----------------------------------------------------------
+		! Write the linear distribution relative to the LEFT
+		! integration boundary:
+		!
+		!   n(x) = na + slope*(x-a)
+		!
+		! This avoids subtracting nearly equal powers of a-xref
+		! and b-xref for very narrow overlaps.
+		! ----------------------------------------------------------
+		width=b-a
+		na=nref+slope*(a-xref)
+		! Integral_a^b n(x) dx
+		val=width*(na + 0.5_wp*slope*width)
+	
 	end function chen_lamb_int_number
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
@@ -3933,22 +3943,38 @@
 		implicit none
 		real(wp), intent(in) :: nref,xref,slope,a,b
 		real(wp) :: val
-		real(wp) :: ua,ub
+		real(wp) :: width,na,dN,dM_about_a
 	
 		if (b <= a) then
 			val=0._wp
 			return
 		endif
-		ua=a-xref
-		ub=b-xref
-		! integral x*n(x) dx with
+		! ----------------------------------------------------------
+		! Local coordinate:
 		!
-		! x = xref + u
-		! n = nref + slope*u
-		! integrate Eq 7 (mass) analytically using u=x-xref
-		val = xref*nref*(ub-ua) + &
-			0.5_wp*(nref+xref*slope)*(ub**2-ua**2) + slope*(ub**3-ua**3)*onethird
-	
+		!   t = x-a
+		!
+		!   n(x) = na + slope*t
+		!
+		! with 0 <= t <= width.
+		!
+		! Then
+		!
+		!   M = integral x*n(x) dx
+		!
+		!     = a*N
+		!       + integral t*n(t) dt
+		!
+		! This form is substantially more stable for tiny overlaps.
+		! ----------------------------------------------------------
+		width=b-a
+		na=nref+slope*(a-xref)
+		! Zeroth moment over this overlap
+		dN=width*(na + 0.5_wp*slope*width)
+		! First moment measured relative to x=a
+		dM_about_a=width**2 * ( 0.5_wp*na + slope*width/3._wp)
+		! Absolute first mass moment
+		val=a*dN+dM_about_a
 	end function chen_lamb_int_mass
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
