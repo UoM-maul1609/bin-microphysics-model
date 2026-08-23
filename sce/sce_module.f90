@@ -26,7 +26,9 @@
         						oneoversix=1._wp/6._wp, dtt=10.e-6_wp, &
         						oneoverthree=1._wp/3._wp, oneovernine=1._wp/9._wp, &
         						onequarter=1._wp/4._wp, &
-        						oneoverpi=1._wp/pi, phi_phillips=3.5e-3_wp
+        						oneoverpi=1._wp/pi, phi_phillips=3.5e-3_wp, &
+                                dh2o=2.75e-10_wp, fhh_theta_min=1.e-12_wp, &
+                                twothirds=2._wp/3._wp
         						
         						
 
@@ -99,10 +101,10 @@
         integer(i4b) :: n_intern, n_mode,n_sv,sv_flag,n_bins,n_binsc,n_binst,n_comps,kfac
         ! aerosol_spec
         real(wp), allocatable, dimension(:,:) :: n_aer1,d_aer1,sig_aer1, mass_frac_aer1
-        real(wp), allocatable, dimension(:) ::  molw_core1,density_core1,nu_core1, &
-                                        kappa_core1, ncloud,  &
-								org_content1, molw_org1,kappa_org1,density_org1, &
-		                    	delta_h_vap1, nu_org1, log_c_star1
+        real(wp), allocatable, dimension(:) :: molw_core1,density_core1,nu_core1, &
+                                        kappa_core1, afhh_core1, bfhh_core1, ncloud, &
+                                        org_content1, molw_org1,kappa_org1,density_org1, &
+                                        delta_h_vap1, nu_org1, log_c_star1
 
         ! cloud spec
         real(wp), allocatable, dimension(:,:) :: lwc, dbar, iwc, dbari
@@ -201,6 +203,12 @@
 		if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
 		allocate( kappa_core1(1:n_comps), STAT = AllocateStatus)
 		if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+		allocate( afhh_core1(1:n_comps), STAT = AllocateStatus)
+		if (AllocateStatus /= 0) STOP "*** Not enough memory ***"
+		allocate( bfhh_core1(1:n_comps), STAT = AllocateStatus)
+		if (AllocateStatus /= 0) STOP "*** Not enough memory ***"
+		afhh_core1=0._wp
+		bfhh_core1=0._wp
 
 		allocate( lwc(1:n_intern,1:n_mode), STAT = AllocateStatus)
 		if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
@@ -249,6 +257,7 @@
 		implicit none
         character (len=200), intent(in) :: nmlfile
         character (len=200), optional, intent(in) :: nmlfile_b
+        integer(i4b) :: k
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         ! namelists                                                            !
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -261,8 +270,9 @@
         namelist /aerosol_spec/ n_aer1,d_aer1,sig_aer1, dmina,dmaxa, &
                                 mass_frac_aer1, molw_core1, &
                                 density_core1,nu_core1,kappa_core1, &
-								org_content1, molw_org1,kappa_org1,density_org1, &
-		                    	delta_h_vap1, nu_org1, log_c_star1
+                                afhh_core1,bfhh_core1, &
+                                org_content1, molw_org1,kappa_org1,density_org1, &
+                                delta_h_vap1, nu_org1, log_c_star1
         namelist /cloud_setup/ n_binsc,kfac,dminc,dmaxc
         namelist /cloud_spec/ lwc,dbar,iwc,dbari
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -307,6 +317,20 @@
 			
 			read(8,nml=aerosol_spec)
 		endif
+
+        ! A_FHH=0 means that a component has no adsorption contribution.
+        ! If A_FHH>0, B_FHH must also be positive.
+        do k=1,n_comps
+            if (afhh_core1(k).lt.0._wp .or. bfhh_core1(k).lt.0._wp) error stop &
+                'A_FHH and B_FHH must be non-negative'
+            if (afhh_core1(k).gt.0._wp .and. bfhh_core1(k).le.0._wp) error stop &
+                'A component with A_FHH > 0 requires B_FHH > 0'
+            if (density_core1(k).le.0._wp) error stop &
+                'Aerosol component requires positive density'
+            if (molw_core1(k).le.0._wp) error stop &
+                'Aerosol component requires positive molecular weight'
+        enddo
+
 		read(8,nml=cloud_spec)
 		close(8)
         n_binst=n_bins+n_binsc
@@ -1253,6 +1277,83 @@
       
     end subroutine wetdiam
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! FHH adsorption correction                                                       !
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    function fhh_adsorption_factor(mwat,dw,mbin1,rhobin1) result(fads)
+        implicit none
+        real(wp), intent(in) :: mwat,dw
+        real(wp), dimension(:), intent(in) :: mbin1,rhobin1
+        integer(i4b) :: j
+        real(wp) :: fads,vads,vj,voutside,dcore,delta_d,theta,expo,denom
+        real(wp) :: area_j,area_tot,afhh_eff,bfhh_eff
+
+        fads=1._wp
+        vads=0._wp
+        area_tot=0._wp
+
+        ! A_FHH=0 means that this component is non-adsorbing.
+        ! For each adsorbing component, use the surface area of its
+        ! volume-equivalent sphere as the weighting proxy: S_j ~ V_j^(2/3).
+        do j=1,min(size(mbin1),n_comps)
+            if (afhh_core1(j).le.0._wp) cycle
+            if (mbin1(j).le.tiny(1._wp)) cycle
+            if (rhobin1(j).le.0._wp) cycle
+
+            vj=mbin1(j)/rhobin1(j)
+            if (vj.le.tiny(1._wp)) cycle
+
+            vads=vads+vj
+            area_j=vj**twothirds
+            area_tot=area_tot+area_j
+        enddo
+
+        ! No adsorbing material -> exactly the existing Koehler/K-kohler result.
+        if (vads.le.tiny(1._wp) .or. area_tot.le.tiny(1._wp)) return
+
+        ! Surface-area-weighted effective adsorption coefficients.
+        afhh_eff=0._wp
+        bfhh_eff=0._wp
+        do j=1,min(size(mbin1),n_comps)
+            if (afhh_core1(j).le.0._wp) cycle
+            if (mbin1(j).le.tiny(1._wp)) cycle
+            if (rhobin1(j).le.0._wp) cycle
+
+            vj=mbin1(j)/rhobin1(j)
+            if (vj.le.tiny(1._wp)) cycle
+
+            area_j=vj**twothirds
+            afhh_eff=afhh_eff+(area_j/area_tot)*afhh_core1(j)
+            bfhh_eff=bfhh_eff+(area_j/area_tot)*bfhh_core1(j)
+        enddo
+
+        ! One equivalent adsorbing core containing all material with A_FHH>0.
+        dcore=(6._wp*vads/pi)**(1._wp/3._wp)
+
+        ! Volume outside that core = non-adsorbing dry material + water.
+        voutside=max(max(mwat,0._wp)/rhow + sum(mbin1/rhobin1) - vads,0._wp)
+
+        ! Evaluate Dw-Dcore without subtracting two nearly equal diameters.
+        denom=dw*dw+dw*dcore+dcore*dcore
+        if (denom.gt.tiny(1._wp)) then
+            delta_d=(6._wp*voutside/pi)/denom
+        else
+            delta_d=0._wp
+        endif
+
+        theta=max(delta_d/(2._wp*dh2o),fhh_theta_min)
+        expo=-afhh_eff*theta**(-bfhh_eff)
+
+        ! Avoid signalling underflow for an essentially dry adsorbing surface.
+        if (expo.le.log(tiny(1._wp))) then
+            fads=0._wp
+        else
+            fads=exp(expo)
+        endif
+    end function fhh_adsorption_factor
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
         
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -1278,26 +1379,30 @@
       real(wp), dimension(:), intent(in) :: mwat
       real(wp), dimension(:,:), intent(in) :: mbin,rhobin,nubin,molwbin
       integer(i4b), intent(in) :: sz
-      real(wp), dimension(sz) :: nw
-      real(wp), dimension(:),intent(inout) :: rh_eq,rhoat, dw
+      real(wp), dimension(sz) :: nw,nsolute,aw,fads
+      real(wp), dimension(:),intent(inout) :: rh_eq,rhoat,dw
       real(wp), intent(in) :: t
       real(wp) :: sigma
+      integer(i4b) :: i
 
-      ! calculate the diameter and radius
       nw(:)=mwat(:)/molw_water
       rhoat(:)=mwat(:)/rhow+sum(mbin(:,1:parcel1%n_comps)/rhobin(:,:),2)
-      rhoat(:)=(mwat(:)+sum(mbin(:,1:parcel1%n_comps),2))/rhoat(:);
-  
-      ! wet diameter:
+      rhoat(:)=(mwat(:)+sum(mbin(:,1:parcel1%n_comps),2))/rhoat(:)
       dw(:)=((mwat(:)+sum(mbin(:,1:parcel1%n_comps),2))*6._wp/(pi*rhoat(:)))**(1._wp/3._wp)
-  
-      ! calculate surface tension
+
+      nsolute(:)=sum(mbin(:,1:parcel1%n_comps)/molwbin(:,:)*nubin(:,:),2)
+      do i=1,sz
+          if (nsolute(i).le.tiny(1._wp)) then
+              aw(i)=1._wp
+          else
+              aw(i)=nw(i)/(nw(i)+nsolute(i))
+          endif
+          fads(i)=fhh_adsorption_factor(mwat(i),dw(i), &
+              mbin(i,1:parcel1%n_comps),rhobin(i,1:parcel1%n_comps))
+      enddo
+
       sigma=surface_tension(t)
-
-      ! equilibrium rh over particle - nb rh_act set to zero if not root-finding
-      rh_eq(:)=exp(4._wp*molw_water*sigma/r_gas/t/rhoat(:)/dw(:))* &
-           (nw(:))/(nw(:)+sum(mbin(:,1:parcel1%n_comps)/molwbin(:,:)*nubin(:,:),2) ) 
-
+      rh_eq(:)=exp(4._wp*molw_water*sigma/r_gas/t/rhoat(:)/dw(:))*aw(:)*fads(:)
     end subroutine koehler01
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
@@ -1330,32 +1435,36 @@
       real(wp), dimension(:), intent(in) :: mwat
       real(wp), dimension(:,:), intent(in) :: mbin,rhobin,kappabin,molwbin
       integer(i4b), intent(in) :: sz
-      real(wp), dimension(sz) :: nw,dd,kappa
-      real(wp), dimension(:),intent(inout) :: rh_eq,rhoat, dw
+      real(wp), dimension(sz) :: vdry,vwat,kappa,aw,fads
+      real(wp), dimension(:),intent(inout) :: rh_eq,rhoat,dw
       real(wp), intent(in) :: t
       real(wp) :: sigma
-      ! calculate the diameter and radius
-      nw(:)=mwat(:)/molw_water
+      integer(i4b) :: i
+
       rhoat(:)=mwat(:)/rhow+sum(mbin(:,1:parcel1%n_comps)/rhobin(:,:),2)
-      rhoat(:)=(mwat(:)+sum(mbin(:,1:parcel1%n_comps),2))/rhoat(:);
-  
-      ! wet diameter:
-      dw(:)=((mwat(:)+sum(mbin(:,1:n_comps),2))* 6._wp/(pi*rhoat(:)))**(1._wp/3._wp)
-  
-      dd(:)=((sum(mbin(:,1:parcel1%n_comps)/rhobin(:,:),2))*6._wp/(pi))**(1._wp/3._wp) ! dry diameter
-                                  ! needed for eqn 6, petters and kreidenweis (2007)
-  
-      kappa(:)=sum(mbin(:,1:parcel1%n_comps)/rhobin(:,:)*kappabin(:,:),2) &
-               / sum(mbin(:,1:parcel1%n_comps)/rhobin(:,:),2)
-               ! equation 7, petters and kreidenweis (2007)
+      rhoat(:)=(mwat(:)+sum(mbin(:,1:parcel1%n_comps),2))/rhoat(:)
+      dw(:)=((mwat(:)+sum(mbin(:,1:parcel1%n_comps),2))*6._wp/(pi*rhoat(:)))**(1._wp/3._wp)
 
-      ! calculate surface tension
+      do i=1,sz
+          vdry(i)=sum(mbin(i,1:parcel1%n_comps)/rhobin(i,1:parcel1%n_comps))
+          vwat(i)=max(mwat(i),0._wp)/rhow
+          if (vdry(i).gt.tiny(1._wp)) then
+              kappa(i)=sum(mbin(i,1:parcel1%n_comps)/rhobin(i,1:parcel1%n_comps)* &
+                  kappabin(i,1:parcel1%n_comps))/vdry(i)
+          else
+              kappa(i)=0._wp
+          endif
+          if (kappa(i).le.tiny(1._wp)) then
+              aw(i)=1._wp
+          else
+              aw(i)=vwat(i)/(vwat(i)+kappa(i)*vdry(i))
+          endif
+          fads(i)=fhh_adsorption_factor(mwat(i),dw(i), &
+              mbin(i,1:parcel1%n_comps),rhobin(i,1:parcel1%n_comps))
+      enddo
+
       sigma=surface_tension(t)
-
-      ! equilibrium rh over particle - nb rh_act set to zero if not root-finding
-      rh_eq(:)=exp(4._wp*molw_water*sigma/r_gas/t/rhoat(:)/dw(:))* &
-           (dw(:)**3-dd(:)**3)/(dw(:)**3-dd(:)**3*(1._wp-kappa))
-           ! eq 6 petters and kreidenweis (acp, 2007)
+      rh_eq(:)=exp(4._wp*molw_water*sigma/r_gas/t/rhoat(:)/dw(:))*aw(:)*fads(:)
     end subroutine kkoehler01
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
@@ -1377,27 +1486,30 @@
       implicit none
       real(wp), intent(in) :: nw
       real(wp) :: massw
-      real(wp) :: rhoat, dw,koehler02
-      real(wp) :: sigma
-      
-      
+      real(wp) :: rhoat,dw,koehler02
+      real(wp) :: sigma,nsolute,aw,fads
 
-      ! wet diameter:
       massw=nw*molw_water
-      rhoat=massw/rhow+sum(parcel1%mbin(n_sel,1:parcel1%n_comps) / &
+      rhoat=massw/rhow+sum(parcel1%mbin(n_sel,1:parcel1%n_comps)/ &
             parcel1%rhobin(n_sel,1:parcel1%n_comps))
-      rhoat=(massw+parcel1%maer(n_sel))/rhoat;
-      dw=((massw+parcel1%maer(n_sel))* 6._wp/(pi*rhoat))**(1._wp/3._wp)
-  
-      ! calculate surface tension
-      sigma=surface_tension(parcel1%t)
-  
-      ! equilibrium rh over particle - nb rh_act set to zero if not root-finding
-      koehler02=mult*(exp(4._wp*molw_water*sigma/r_gas/parcel1%t/rhoat/dw)* &
-           (nw)/(nw+sum(parcel1%mbin(n_sel,1:parcel1%n_comps)/ &
-           parcel1%molwbin(n_sel,1:parcel1%n_comps) * &
-           parcel1%nubin(n_sel,1:parcel1%n_comps)) ))-rh_act
+      rhoat=(massw+parcel1%maer(n_sel))/rhoat
+      dw=((massw+parcel1%maer(n_sel))*6._wp/(pi*rhoat))**(1._wp/3._wp)
 
+      sigma=surface_tension(parcel1%t)
+      nsolute=sum(parcel1%mbin(n_sel,1:parcel1%n_comps)/ &
+          parcel1%molwbin(n_sel,1:parcel1%n_comps)* &
+          parcel1%nubin(n_sel,1:parcel1%n_comps))
+      if (nsolute.le.tiny(1._wp)) then
+          aw=1._wp
+      else
+          aw=nw/(nw+nsolute)
+      endif
+      fads=fhh_adsorption_factor(massw,dw, &
+          parcel1%mbin(n_sel,1:parcel1%n_comps), &
+          parcel1%rhobin(n_sel,1:parcel1%n_comps))
+
+      koehler02=mult*(exp(4._wp*molw_water*sigma/r_gas/parcel1%t/rhoat/dw)* &
+           aw*fads)-rh_act
     end function koehler02
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
@@ -1421,34 +1533,37 @@
       implicit none
       real(wp), intent(in) :: nw
       real(wp) :: massw
-      real(wp) :: rhoat, dw,dd,kappa,kkoehler02
-      real(wp) :: sigma
+      real(wp) :: rhoat,dw,kappa,kkoehler02
+      real(wp) :: sigma,vdry,vwat,aw,fads
 
-      ! wet diameter:
       massw=nw*molw_water
-      rhoat=massw/rhow+sum(parcel1%mbin(n_sel,1:parcel1%n_comps) / &
+      rhoat=massw/rhow+sum(parcel1%mbin(n_sel,1:parcel1%n_comps)/ &
             parcel1%rhobin(n_sel,1:parcel1%n_comps))
-      rhoat=(massw+parcel1%maer(n_sel))/rhoat;
-      dw=((massw+parcel1%maer(n_sel))* 6._wp/(pi*rhoat))**(1._wp/3._wp)
-  
-      ! calculate surface tension
-      sigma=surface_tension(parcel1%t)
-  
-      dd=(sum(parcel1%mbin(n_sel,1:parcel1%n_comps) / parcel1%rhobin(n_sel,:))* &
-          6._wp/(pi))**(1._wp/3._wp) ! dry diameter
-                                  ! needed for eqn 6, petters and kreidenweis (2007)
-  
-      kappa=sum(parcel1%mbin(n_sel,1:parcel1%n_comps) / &
-         parcel1%rhobin(n_sel,1:parcel1%n_comps)* &
-               parcel1%kappabin(n_sel,:)) &
-               / sum(parcel1%mbin(n_sel,1:parcel1%n_comps) / &
-               parcel1%rhobin(n_sel,1:parcel1%n_comps))
-               ! equation 7, petters and kreidenweis (2007)
+      rhoat=(massw+parcel1%maer(n_sel))/rhoat
+      dw=((massw+parcel1%maer(n_sel))*6._wp/(pi*rhoat))**(1._wp/3._wp)
 
-      ! equilibrium rh over particle - nb rh_act set to zero if not root-finding
+      sigma=surface_tension(parcel1%t)
+      vdry=sum(parcel1%mbin(n_sel,1:parcel1%n_comps)/ &
+          parcel1%rhobin(n_sel,1:parcel1%n_comps))
+      vwat=max(massw,0._wp)/rhow
+      if (vdry.gt.tiny(1._wp)) then
+          kappa=sum(parcel1%mbin(n_sel,1:parcel1%n_comps)/ &
+              parcel1%rhobin(n_sel,1:parcel1%n_comps)* &
+              parcel1%kappabin(n_sel,1:parcel1%n_comps))/vdry
+      else
+          kappa=0._wp
+      endif
+      if (kappa.le.tiny(1._wp)) then
+          aw=1._wp
+      else
+          aw=vwat/(vwat+kappa*vdry)
+      endif
+      fads=fhh_adsorption_factor(massw,dw, &
+          parcel1%mbin(n_sel,1:parcel1%n_comps), &
+          parcel1%rhobin(n_sel,1:parcel1%n_comps))
+
       kkoehler02=mult*(exp(4._wp*molw_water*sigma/r_gas/parcel1%t/rhoat/dw)* &
-           (dw**3-dd**3)/(dw**3-dd**3*(1._wp-kappa)))-rh_act
-           ! eq 6 petters and kreidenweis (acp, 2007)
+           aw*fads)-rh_act
     end function kkoehler02
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
@@ -1471,29 +1586,31 @@
     function koehler03(mbin) ! only pass one variable so can use root-finders
       use numerics_type
       implicit none
-      real(wp), intent(in) :: mbin ! mass of aerosol particle
-      real(wp) :: massw
-      real(wp) :: rhoat, dw,nw,koehler03
-      real(wp) :: sigma
-      
-      ! calculate the diameter and radius
-      nw=d_dummy/molw_water ! moles of water
-      rhoat=d_dummy/rhow+mbin* sum(mass_frac_aer1(n_sel,1:parcel1%n_comps)/ &
+      real(wp), intent(in) :: mbin
+      real(wp) :: rhoat,dw,nw,koehler03
+      real(wp) :: sigma,nsolute,aw,fads
+      real(wp), dimension(n_comps) :: mbin_comp
+
+      nw=d_dummy/molw_water
+      rhoat=d_dummy/rhow+mbin*sum(mass_frac_aer1(n_sel,1:parcel1%n_comps)/ &
                            density_core1(1:parcel1%n_comps))
-      rhoat=(d_dummy+mbin)/rhoat;
-      dw=((d_dummy+mbin)* 6._wp/(pi*rhoat))**(1._wp/3._wp)
-  
-      ! calculate surface tension
+      rhoat=(d_dummy+mbin)/rhoat
+      dw=((d_dummy+mbin)*6._wp/(pi*rhoat))**(1._wp/3._wp)
+
       sigma=surface_tension(parcel1%t)
-  
-      ! equilibrium rh over particle - nb rh_act set to zero if not root-finding
+      mbin_comp=mbin*mass_frac_aer1(n_sel,1:parcel1%n_comps)
+      nsolute=mbin*sum(mass_frac_aer1(n_sel,1:parcel1%n_comps)/ &
+          molw_core1(1:parcel1%n_comps)*nu_core1(1:parcel1%n_comps))
+      if (nsolute.le.tiny(1._wp)) then
+          aw=1._wp
+      else
+          aw=nw/(nw+nsolute)
+      endif
+      fads=fhh_adsorption_factor(d_dummy,dw,mbin_comp, &
+          density_core1(1:parcel1%n_comps))
+
       koehler03=mult*(exp(4._wp*molw_water*sigma/r_gas/parcel1%t/rhoat/dw)* &
-           (nw)/(nw+mbin* &
-           sum(mass_frac_aer1(n_sel,1:parcel1%n_comps)/ &
-           molw_core1(1:parcel1%n_comps)* &
-           nu_core1(1:parcel1%n_comps)) ))-rh_act
-
-
+           aw*fads)-rh_act
     end function koehler03
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
@@ -1514,36 +1631,38 @@
     function kkoehler03(mbin) ! only pass one variable so can use root-finders
       use numerics_type
       implicit none
-      real(wp), intent(in) :: mbin ! mass of aerosol particle
-      real(wp) :: massw
-      real(wp) :: rhoat, dw,nw,dd,kappa, kkoehler03
-      real(wp) :: sigma
-      ! calculate the diameter and radius
-      nw=d_dummy/molw_water ! moles of water
-      rhoat=d_dummy/rhow+mbin* sum(mass_frac_aer1(n_sel,1:parcel1%n_comps)/ &
+      real(wp), intent(in) :: mbin
+      real(wp) :: rhoat,dw,kappa,kkoehler03
+      real(wp) :: sigma,vdry,vwat,aw,fads
+      real(wp), dimension(n_comps) :: mbin_comp
+
+      rhoat=d_dummy/rhow+mbin*sum(mass_frac_aer1(n_sel,1:parcel1%n_comps)/ &
                            density_core1(1:parcel1%n_comps))
-      rhoat=(d_dummy+mbin)/rhoat;
-      dw=((d_dummy+mbin)* 6._wp/(pi*rhoat))**(1._wp/3._wp)
-  
-      dd=((sum(mbin*mass_frac_aer1(n_sel,1:parcel1%n_comps)/ &
-        density_core1(1:parcel1%n_comps),1))* &
-          6._wp/(pi))**(1._wp/3._wp) ! dry diameter
-                                  ! needed for eqn 6, petters and kreidenweis (2007)
-  
-      kappa=sum(mbin*mass_frac_aer1(n_sel,1:parcel1%n_comps) &
-               / density_core1(1:parcel1%n_comps)* &
-               kappa_core1(1:parcel1%n_comps),1) &
-               / sum(mbin*mass_frac_aer1(n_sel,1:parcel1%n_comps) &
-               /density_core1(1:parcel1%n_comps),1)
-               ! equation 7, petters and kreidenweis (2007)
-           
-      ! calculate surface tension
+      rhoat=(d_dummy+mbin)/rhoat
+      dw=((d_dummy+mbin)*6._wp/(pi*rhoat))**(1._wp/3._wp)
+
+      vdry=mbin*sum(mass_frac_aer1(n_sel,1:parcel1%n_comps)/ &
+          density_core1(1:parcel1%n_comps))
+      vwat=max(d_dummy,0._wp)/rhow
+      if (vdry.gt.tiny(1._wp)) then
+          kappa=sum(mbin*mass_frac_aer1(n_sel,1:parcel1%n_comps)/ &
+              density_core1(1:parcel1%n_comps)*kappa_core1(1:parcel1%n_comps))/vdry
+      else
+          kappa=0._wp
+      endif
+      if (kappa.le.tiny(1._wp)) then
+          aw=1._wp
+      else
+          aw=vwat/(vwat+kappa*vdry)
+      endif
+
       sigma=surface_tension(parcel1%t)
-  
-      ! equilibrium rh over particle - nb rh_act set to zero if not root-finding
+      mbin_comp=mbin*mass_frac_aer1(n_sel,1:parcel1%n_comps)
+      fads=fhh_adsorption_factor(d_dummy,dw,mbin_comp, &
+          density_core1(1:parcel1%n_comps))
+
       kkoehler03=mult*(exp(4._wp*molw_water*sigma/r_gas/parcel1%t/rhoat/dw)* &
-           (dw**3-dd**3)/(dw**3-dd**3*(1._wp-kappa)))-rh_act
-           ! eq 6 petters and kreidenweis (acp, 2007)
+           aw*fads)-rh_act
     end function kkoehler03
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
