@@ -4331,7 +4331,7 @@
 		! in Nbefore/Mbefore.
 		! --------------------------------------------------------------
 		do isrc=1,n_bin_modew
-			if (npart(isrc) < qsmall2) then
+			if (npart(isrc) <= qsmall2) then
 				npart(isrc)=0._wp
 				moments(isrc,:)=0._wp
 			endif	
@@ -4413,6 +4413,39 @@
 				! --------------------------------------------------------------
 				x1_new=max(x1_new,0._wp)
 				x2_new=max(x2_new,0._wp)
+				! --------------------------------------------------------------
+				! Closed upper boundary for the finite Chen-Lamb mass grid.
+				!
+				! If an occupied final source category undergoes positive growth,
+				! the Chen-Lamb upper sub-bin edge will necessarily move beyond
+				! the finite grid even when the accepted mean mass remains well
+				! inside the final category.
+				!
+				! In that case constrain only the unresolved upper support edge
+				! to the grid maximum.  The postgrowth distribution is subsequently
+				! reconstructed from Nsrc and Mtarget, so zeroth- and first-moment
+				! conservation are retained.
+				!
+				! If the accepted mean itself lies beyond the grid, however, the
+				! grid is genuinely too small and execution must stop.
+				! --------------------------------------------------------------
+				tolM=1000._wp*epsilon(1._wp)* &
+					max(abs(x1_new),abs(x2_new),abs(xmean_new), &
+						abs(mbinedges(n_binst+1,imode)),tiny(1._wp))
+				if (x2_new > mbinedges(n_binst+1,imode)) then
+					if (isbin == n_binst .and. &
+						xmean_new <= mbinedges(n_binst+1,imode)+tolM) then
+						x2_new=mbinedges(n_binst+1,imode)
+					else
+						print *,'Chen-Lamb genuine upper-grid overflow'
+						print *,'mode/source bin = ',imode,isbin
+						print *,'Nsrc = ',Nsrc
+						print *,'old/new mean = ',xmean_old,xmean_new
+						print *,'new limits before boundary = ',x1+dx1,x2+dx2
+						print *,'grid maximum = ',mbinedges(n_binst+1,imode)
+						error stop
+					endif
+				endif
 				! --------------------------------------------------------------
 				! The postgrowth interval must remain ordered.
 				! --------------------------------------------------------------
@@ -4502,9 +4535,28 @@
 				if (xhi_new > mbinedges(n_binst+1,imode)+tolM) then
 					print *,'Chen-Lamb upper-grid overflow'
 					print *,'mode/source bin = ',imode,isbin
-					print *,'support = ',xlo_new,xhi_new
-					print *,'grid = ', mbinedges(1,imode), &
+					print *,'Nsrc = ',Nsrc
+					print *,'mode N = ', &
+						sum(npart((imode-1)*n_binst+1:imode*n_binst))
+					print *,'Nsrc/modeN = ', &
+						Nsrc/max(sum(npart((imode-1)*n_binst+1:imode*n_binst)), &
+								 tiny(1._wp))
+					print *,'old limits = ',x1,x2
+					print *,'old/new mean = ',xmean_old,xmean_new
+					print *,'dxmean = ',dxmean
+					print *,'dx1,dx2 = ',dx1,dx2
+					print *,'new limits = ',x1_new,x2_new
+					print *,'positive support = ',xlo_new,xhi_new
+					print *,'grid = ', &
+						mbinedges(1,imode), &
 						mbinedges(n_binst+1,imode)
+					print *,'overflow amount = ', &
+						xhi_new-mbinedges(n_binst+1,imode)
+					print *,'component masses = ', &
+						mbin(isrc,1:n_comps)
+					print *,'current water/ice mass = ', &
+						mbin(isrc,n_comps+1)
+					print *,'moments = ',moments(isrc,:)
 					error stop
 				endif
 				! Tiny floating-point excursions only
