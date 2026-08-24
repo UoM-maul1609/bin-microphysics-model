@@ -32,13 +32,17 @@
         						
         						
 
+        integer(i4b), parameter :: MOMENT_EXTENSIVE = 1_i4b
+        integer(i4b), parameter :: MOMENT_NUMBER    = 2_i4b
+        integer(i4b), parameter :: MOMENT_INHERIT   = 3_i4b
+
         type parcel
             ! variables for bin model
             integer(i4b) :: n_bins1,n_bins2,n_binst, &
                             n_modes,n_comps, &
                             n_bin_modew, n_bin_mode, n_bin_mode1, n_bin_mode2, &
                             n_bin_modea, n_bin_modea1, &
-                            ice_flag, imoms
+                            ice_flag, imoms, n_inp_classes, iinp_start
             real(wp) :: dt
             real(wp) :: z,p,t,w,rh
                            
@@ -92,13 +96,15 @@
         real(wp) :: mult, rh_act
 
         ! aerosol setup
-        integer(i4b) :: n_intern, n_mode,n_sv,sv_flag,n_bins,n_binsc,n_binst,n_comps,kfac
+        integer(i4b) :: n_intern, n_mode,n_sv,sv_flag,n_bins,n_binsc,n_binst,n_comps,kfac, &
+                        n_inp_classes=5_i4b
         ! aerosol_spec
         real(wp), allocatable, dimension(:,:) :: n_aer1,d_aer1,sig_aer1, mass_frac_aer1
         real(wp), allocatable, dimension(:) :: molw_core1,density_core1,nu_core1, &
-                                        kappa_core1, afhh_core1, bfhh_core1, ncloud, &
+                                        kappa_core1, afhh_core1, bfhh_core1, inp_temp, ncloud, &
                                         org_content1, molw_org1,kappa_org1,density_org1, &
                                         delta_h_vap1, nu_org1, log_c_star1
+        character(len=32), allocatable, dimension(:) :: inp_category
 
         ! cloud spec
         real(wp), allocatable, dimension(:,:) :: lwc, dbar, iwc, dbari
@@ -199,8 +205,14 @@
 		if (AllocateStatus /= 0) STOP "*** Not enough memory ***"
 		allocate( bfhh_core1(1:n_comps), STAT = AllocateStatus)
 		if (AllocateStatus /= 0) STOP "*** Not enough memory ***"
+        allocate( inp_temp(1:n_inp_classes), STAT = AllocateStatus)
+        if (AllocateStatus /= 0) STOP "*** Not enough memory ***"
+        allocate( inp_category(1:n_comps), STAT = AllocateStatus)
+        if (AllocateStatus /= 0) STOP "*** Not enough memory ***"
 		afhh_core1=0._wp
 		bfhh_core1=0._wp
+        inp_temp=0._wp
+        inp_category='none'
 
 		allocate( lwc(1:n_intern,1:n_mode), STAT = AllocateStatus)
 		if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
@@ -262,11 +274,11 @@
                     tinit,pinit,rhinit, &
                     microphysics_flag, ice_flag, bin_scheme_flag, &
                     kappa_flag
-        namelist /aerosol_setup/ n_intern,n_mode,n_sv,sv_flag, n_bins,n_comps
+        namelist /aerosol_setup/ n_intern,n_mode,n_sv,sv_flag, n_bins,n_comps,n_inp_classes
         namelist /aerosol_spec/ n_aer1,d_aer1,sig_aer1, dmina,dmaxa, &
                                 mass_frac_aer1, molw_core1, &
                                 density_core1,nu_core1,kappa_core1, &
-                                afhh_core1,bfhh_core1, &
+                                afhh_core1,bfhh_core1, inp_temp,inp_category, &
                                 org_content1, molw_org1,kappa_org1,density_org1, &
                                 delta_h_vap1, nu_org1, log_c_star1
         namelist /cloud_setup/ n_binsc,kfac,dminc,dmaxc
@@ -387,6 +399,8 @@
     parcel1%n_binst=n_bins+n_binsc  ! total
     parcel1%n_modes=n_mode          ! number of modes
     parcel1%n_comps=n_comps         ! number of compositions
+    parcel1%n_inp_classes=n_inp_classes
+    parcel1%iinp_start=n_comps+6
     
     parcel1%n_bin_modea=parcel1%n_bins1*n_mode      ! for all the aerosol
     parcel1%n_bin_modea1=(parcel1%n_bins1+1)*n_mode ! extra due to bin edges
@@ -402,7 +416,7 @@
         (parcel1%n_binst+1)*n_mode*(1+parcel1%ice_flag) ! extra due bin edges
     parcel1%n_bin_mode2=&
         (parcel1%n_binst+2)*n_mode*(1+parcel1%ice_flag) ! extra due bin edges
-    parcel1%imoms=ice_flag*5                            ! phi, nmon, vol, rim, unf
+    parcel1%imoms=ice_flag*(5+n_inp_classes)            ! phi, nmon, vol, rim, unf, cumulative Nin
     !--
 
     parcel1%p=pinit
@@ -739,7 +753,7 @@
             parcel1%moments(i,j)=parcel1%npart(i)*parcel1%mbin(i,j)
         enddo
     enddo
-    parcel1%momenttype(1:parcel1%n_comps)=1 ! 1 is mass, 2 is number
+    parcel1%momenttype(1:parcel1%n_comps)=MOMENT_EXTENSIVE
 
     ! ** ice **
     ! same for the ice
@@ -764,7 +778,15 @@
             parcel1%moments(i,parcel1%n_comps+5)=parcel1%npart(i)* &
                 parcel1%mbin(i,parcel1%n_comps+1)
         enddo        
-        parcel1%momenttype(parcel1%n_comps+1:parcel1%n_comps+parcel1%imoms)=[2,2,1,1,1]
+        parcel1%momenttype(parcel1%n_comps+1:parcel1%n_comps+5)= &
+            [MOMENT_NUMBER,MOMENT_NUMBER,MOMENT_EXTENSIVE, &
+             MOMENT_EXTENSIVE,MOMENT_EXTENSIVE]
+        if (n_inp_classes.gt.0) then
+            ! Standalone SCE does not initialise INAS physics itself; these
+            ! moments are populated by BMM when the coupled model is used.
+            parcel1%momenttype(parcel1%iinp_start: &
+                parcel1%iinp_start+n_inp_classes-1)=MOMENT_INHERIT
+        endif
     endif
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
@@ -3147,7 +3169,7 @@
             
             ! Now for "splinter" category for H-M collisions           
             ! if one liquid and two ice
-            oldprop=1._wp
+            oldprop(n_comps+1:n_comps+2)=1._wp
             if((phase1.eq.0).and.(phase2.eq.1).and.(t.lt.ttr).and.(mass_stot>qsmall2) &
                 .and. (xn(i)>7.2382e-12_wp)) then
                 ! redefine moments
@@ -3202,7 +3224,7 @@
                 .and. (xn(i)>7.2382e-12_wp)) then
                 ! drops - mode 2
                 momtemp(n_comps+1:n_comps+5)=0._wp
-                oldprop=0._wp
+                oldprop(n_comps+1:n_comps+2)=0._wp
                 ! gain integral bit+++++++++++++++++++++++++++++++++++++++++++++++++++++++
                 call add_moments_to_new_bin(lf2,n_moments, n_bin_mode, &
 	                    mass_mtot, mass_mode2_frag, masstot, remove1, remove2, momtype, xn, &
@@ -3213,7 +3235,7 @@
                 .and. (xn(i)>7.2382e-12_wp)) then
                 ! ice - mode 2
                 ! redefine moments
-                oldprop=1._wp
+                oldprop(n_comps+1:n_comps+2)=1._wp
                 call set_ice_moments(momtemp,n_moments,&
                     n_comps+1,n_comps+2,n_comps+3, &
                     n_comps+4,n_comps+5,masstot,mass_mode2_frag)
@@ -3329,23 +3351,24 @@
 	!>@param[inout] npart: particle number concentration
 	!>@param[inout] moments: conserved extensive moments
 	!>@param[in] phase1,phase2: phase indices of the two source categories
-	subroutine add_moments_to_new_bin(lf1,n_moments, n_bin_mode, &
-	    mass_stot, mass_s, masstot, remove1, remove2, momtype, xn, &
-	    momtemp, oldprop, npart, moments, phase1,phase2)
-	use numerics_type
-	implicit none
-	integer(i4b), intent(in) :: lf1, n_moments, n_bin_mode, phase1,phase2
-	real(wp), intent(in) :: mass_stot, mass_s, remove1,remove2, masstot
-	integer(i4b), intent(in), dimension(n_moments) :: momtype
-	real(wp), intent(in), dimension(n_bin_mode) :: xn
-	real(wp), intent(inout), dimension(n_moments) :: momtemp
-	real(wp), intent(in), dimension(n_moments) :: oldprop
-	real(wp), intent(inout), dimension(n_bin_mode) :: npart
-	real(wp), intent(inout), dimension(n_bin_mode,n_moments) :: moments
-	
-	integer(i4b) :: k
-	real(wp) :: gk,beta1,cw,fk05,fracadj1,fracadj2,totloss,fracl,fraclp, temp
-	
+    subroutine add_moments_to_new_bin(lf1,n_moments, n_bin_mode, &
+        mass_stot, mass_s, masstot, remove1, remove2, momtype, xn, &
+        momtemp, oldprop, npart, moments, phase1,phase2)
+    use numerics_type
+    implicit none
+    integer(i4b), intent(in) :: lf1, n_moments, n_bin_mode, phase1,phase2
+    real(wp), intent(in) :: mass_stot, mass_s, remove1,remove2, masstot
+    integer(i4b), intent(in), dimension(n_moments) :: momtype
+    real(wp), intent(in), dimension(n_bin_mode) :: xn
+    real(wp), intent(inout), dimension(n_moments) :: momtemp
+    real(wp), intent(in), dimension(n_moments) :: oldprop
+    real(wp), intent(inout), dimension(n_bin_mode) :: npart
+    real(wp), intent(inout), dimension(n_bin_mode,n_moments) :: moments
+
+    integer(i4b) :: k
+    real(wp) :: gk,beta1,cw,fk05,fracadj1,fracadj2,fracl,fraclp,temp, &
+                f1,f2,fnew,ncoll,category_frac,cin_total,nadd1,nadd2,naddtot
+
     ! Defining courant number, etc++++++++++++++++++++++++++++++++++++++++++++
     ! add the mass into the new bin:
     gk=npart(lf1)*xn(lf1)+mass_stot
@@ -3355,50 +3378,75 @@
     ! courant number - equation 8 of Bott 2000
     cw=(log(mass_s)-log(xn(lf1))) / (log(xn(lf1+1))-log(xn(lf1)))
     ! exponential flux - equation 7 of Bott 2000, but wrong in paper!
-	if (abs(beta1) < 1.e-12_wp) then
-		fk05 = mass_stot*cw
-	else
-		fk05 = mass_stot/beta1 * &
-			   (exp(beta1*0.5_wp) - &
-				exp(beta1*(0.5_wp-cw)))
-	endif	
-	fk05 = max(0._wp,min(fk05,mass_stot))
+    if (abs(beta1) < 1.e-12_wp) then
+        fk05 = mass_stot*cw
+    else
+        fk05 = mass_stot/beta1 * &
+               (exp(beta1*0.5_wp) - &
+                exp(beta1*(0.5_wp-cw)))
+    endif    
+    fk05 = max(0._wp,min(fk05,mass_stot))
     !-------------------------------------------------------------------------
 
-    ! this puts the correct number in new "small" category - same+++++++++++++
-    ! now apply the flux:
-    fracadj1=(mass_stot-fk05)/xn(lf1)     ! number in bin k
-    fracadj2=(fk05)/xn(lf1+1)             ! number in bin k+1
-!     npart(lf1)=npart(lf1)+fracadj1
-!     npart(lf1+1)=npart(lf1+1)+fracadj2
-    !-------------------------------------------------------------------------
+    ! Partition the product mass between receiving bins l and l+1.
+    fracadj1=(mass_stot-fk05)/masstot
+    fracadj2=fk05/masstot
+    fracl=fracadj1/xn(lf1)
+    fraclp=fracadj2/xn(lf1+1)
 
-    ! for the "small" category++++++++++++++++++++++++++++++++++++++++++++++++
-    ! the partitioning between bin l and l+1 is by mass fraction
-    ! for mass variables. Fraction of total going into l:
-    fracadj1=(mass_stot-fk05)/(masstot)         ! number going into new bin k
-    fracadj2=fk05/masstot        ! number going into new bin k+1
-    fracl=fracadj1/xn(lf1)   ! fraction into k
-    fraclp=fracadj2/xn(lf1+1)   ! fraction into k+1
+    nadd1=masstot*fracl
+    nadd2=masstot*fraclp
+    naddtot=nadd1+nadd2
 
     ! add the 'loss' moments to the new bin
     do k=1,n_moments
         temp=momtemp(k)
-        if ((momtype(k).eq.2).and. &
-            ((phase1==0).and.(phase2==1))) then       ! number based  
-            temp=momtemp(k)
+
+        if (momtype(k).eq.MOMENT_INHERIT) then
+            ! Cumulative IN activity is inherited: a collision product has an
+            ! active site by this threshold if either parent has one.
+            if(remove2.gt.qsmall2) then
+                f2=max(0._wp,min(oldprop(k),1._wp))
+                f1=(momtemp(k)-remove2*f2)/max(remove1,qsmall2)
+                f1=max(0._wp,min(f1,1._wp))
+                ncoll=min(remove1,remove2)
+            else
+                ! Self collection removes two particles per collision event.
+                f1=momtemp(k)/max(remove1,qsmall2)
+                f1=max(0._wp,min(f1,1._wp))
+                f2=f1
+                ncoll=0.5_wp*remove1
+            endif
+
+            fnew=1._wp-(1._wp-f1)*(1._wp-f2)
+
+            ! For secondary-fragment calls, distribute the one inherited
+            ! aerosol/IN identity over product categories rather than cloning
+            ! it into every fragment.  Across all product categories the mass
+            ! fractions sum to unity.
+            category_frac=max(0._wp,min(mass_stot/max(masstot,qsmall2),1._wp))
+            cin_total=ncoll*fnew*category_frac
+            cin_total=min(cin_total,naddtot)
+
+            if(naddtot.gt.qsmall2) then
+                moments(lf1,k)=moments(lf1,k)+cin_total*nadd1/naddtot
+                moments(lf1+1,k)=moments(lf1+1,k)+cin_total*nadd2/naddtot
+            endif
+
+        elseif ((momtype(k).eq.MOMENT_NUMBER).and. &
+            ((phase1==0).and.(phase2==1))) then
             moments(lf1,k)=moments(lf1,k)+oldprop(k)*masstot*fracl
             moments(lf1+1,k)=moments(lf1+1,k)+oldprop(k)*masstot*fraclp
-            
-        else 
+
+        else
             moments(lf1,k)=moments(lf1,k)+temp*fracadj1
             moments(lf1+1,k)=moments(lf1+1,k)+temp*fracadj2
         endif
     enddo
-    !*****
-    npart(lf1)=npart(lf1)+masstot*fracl
-    npart(lf1+1)=npart(lf1+1)+masstot*fraclp
-	
+
+    npart(lf1)=npart(lf1)+nadd1
+    npart(lf1+1)=npart(lf1+1)+nadd2
+
     end subroutine add_moments_to_new_bin
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
