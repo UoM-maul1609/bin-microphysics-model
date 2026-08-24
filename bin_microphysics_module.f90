@@ -217,35 +217,32 @@
 	
 		
 		
+	! ============================================================================
+	! allocate_arrays
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>allocate arrays for activation code
-	!>@param[in] n_intern: number of aerosol modes of same kind
-	!>@param[in] n_mode: number of aerosol modes
-	!>@param[in] n_sv: number of organic / volatility modes
-	!>@param[in] n_bins: number of size bins in a mode
-	!>@param[in] n_comps: number of different compositions in a mode
-	!>@param[in] nq: number of q-variables in sounding
-	!>@param[in] n_levels_s: number of levels in sounding
-	!>@param[in] n_levels_c: number of levels in chamber data
-	!>@param[inout] q_read, theta_read, rh_read, z_read: sounding	
-	!>@param[inout] time_chamber, press_chamber, temp_chamber, qtot_chamber: chamber	
-	!>@param[inout] n_aer1: number conc. in modes
-	!>@param[inout] d_aer1: diameter in modes
-	!>@param[inout] sig_aer1: geo std in modes
-	!>@param[inout] mass_frac_aer1:mass_fraction of each component
-	!>@param[inout] molw_core1:molw in core
-	!>@param[inout] density_core1: solute density
-	!>@param[inout] nu_core1: van hoff factor
-	!>@param[inout] kappa_core1: kappa parameter
-	!>@param[inout] org_content1: organic content in vol bins
-	!>@param[inout] molw_org1: molw in volatility bins
-	!>@param[inout] kappa_org1: kappa in volatility bins
-	!>@param[inout] density_org1: density in volatility bins
-	!>@param[inout] delta_h_vap1: enthalpy in volatility bins
-	!>@param[inout] nu_org1: van hoff factor in volatility bins
-	!>@param[inout] log_c_star1: log_c_star in volatility bins
+	!>Allocates the sounding, chamber, aerosol-composition and volatility arrays used by BMM.
+	!>@param[in] n_intern: number of internal lognormal modes in each aerosol mode
+	!>@param[in] n_mode: number of external aerosol modes
+	!>@param[in] n_sv: number of semivolatile/volatility bins
+	!>@param[in] n_bins: number of aerosol size bins per mode
+	!>@param[in] n_comps: number of aerosol composition components
+	!>@param[in] nq: number of sounding water/species variables
+	!>@param[in] n_levels_s: number of sounding levels
+	!>@param[in] n_levels_c: number of chamber-data levels
+	!>@param[inout] q_read,theta_read,rh_read,z_read: allocatable sounding arrays
+	!>@param[inout] time_chamber,press_chamber,temp_chamber,qtot_chamber: allocatable chamber-forcing
+	!>arrays
+	!>@param[inout] n_aer1,d_aer1,sig_aer1: allocatable aerosol lognormal parameters
+	!>@param[inout] mass_frac_aer1: allocatable component mass fractions for each aerosol mode
+	!>@param[inout] molw_core1,density_core1,nu_core1,kappa_core1: allocatable aerosol-component
+	!>thermodynamic properties
+	!>@param[inout] org_content1,molw_org1,kappa_org1,density_org1: allocatable semivolatile-organic
+	!>properties
+	!>@param[inout] delta_h_vap1,nu_org1,log_c_star1: allocatable volatility-bin thermodynamic
+	!>properties
 	subroutine allocate_arrays(n_intern,n_mode,n_sv,n_bins,n_comps,nq,n_levels_s, &
 		                    q_read,theta_read,rh_read,z_read, &
 		                    n_levels_c, time_chamber, press_chamber, temp_chamber, &
@@ -331,14 +328,15 @@
 	
 	
 	
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	! read in the namelist                                                         !
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! read_in_bmm_namelist
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>read in the data from the namelists for the bin microphysics model
-	!>@param[in] nmlfile
+	!>Reads the BMM run, sounding, chamber, aerosol and composition namelists and validates component
+	!>properties, including FHH adsorption coefficients.
+	!>@param[in] nmlfile: path to the BMM namelist file
 	subroutine read_in_bmm_namelist(nmlfile)
 		implicit none
         character (len=200), intent(in) :: nmlfile
@@ -424,18 +422,36 @@
 
 
 
-
-
-
-
-	
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	! initialise arrays                                                            !
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! initialise_bmm_arrays
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>interpolates the sounding to the grid
+	!>Initialises the BMM parcel state, environmental profiles, aerosol size/composition bins,
+	!>equilibrium water contents and conserved moments.
+	!>@param[in] psurf,tsurf: surface pressure and temperature
+	!>@param[in] q_read,theta_read,rh_read,z_read: sounding water, potential-temperature,
+	!>relative-humidity and height profiles
+	!>@param[in] time_chamber,press_chamber,temp_chamber,qtot_chamber: chamber forcing data
+	!>@param[in] runtime,dt: model run time and timestep
+	!>@param[in] zinit,tpert,winit,tinit,pinit,rhinit,radinit: initial parcel height, perturbation,
+	!>vertical velocity, temperature, pressure, relative humidity and radius
+	!>@param[in] use_prof_for_tprh,chamber_override,bubble_flag: switches controlling
+	!>environmental/profile and parcel geometry setup
+	!>@param[in] microphysics_flag,ice_flag,bin_scheme_flag,vent_flag,kappa_flag,updraft_type:
+	!>microphysics configuration flags
+	!>@param[in] adiabatic_prof,vert_ent,z_ctop,ent_rate: entrainment/profile controls
+	!>@param[in] n_levels_s,n_levels_c: number of sounding and chamber levels
+	!>@param[in] alpha_therm,alpha_cond,alpha_therm_ice,alpha_dep: heat/mass accommodation coefficients
+	!>@param[in] n_intern,n_mode,n_sv,sv_flag,n_bins,n_comps: aerosol and bin dimensions/configuration
+	!>@param[in] n_aer1,d_aer1,sig_aer1,dmina,dmaxa: aerosol lognormal parameters and dry-size limits
+	!>@param[in] mass_frac_aer1: component mass fractions for each aerosol mode
+	!>@param[in] molw_core1,density_core1,nu_core1,kappa_core1: aerosol-component molecular weights,
+	!>densities, van't Hoff factors and kappa values
+	!>@param[in] org_content1,molw_org1,kappa_org1,density_org1,delta_h_vap1,nu_org1,log_c_star1:
+	!>semivolatile-organic properties
+	!>@param[in] sce_flag: stochastic-collection-equation switch
     subroutine initialise_bmm_arrays(psurf, tsurf, q_read, theta_read, rh_read, z_read, &
     				time_chamber, press_chamber, temp_chamber, qtot_chamber, &
                     runtime, dt, zinit, tpert, use_prof_for_tprh, chamber_override, &
@@ -1264,6 +1280,20 @@
     end subroutine initialise_bmm_arrays
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
+	! ============================================================================
+	! write_sce_grid_to_bmm
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Copies the fixed SCE mass-bin edges and collision-product mode map into the BMM parcel state.
+	!>@param[in] n_bin_mode: total number of bins represented by the SCE state
+	!>@param[in] n_bin_modew: number of liquid/warm bins
+	!>@param[in] n_binst: number of fixed bins per external mode
+	!>@param[in] n_modes: number of external aerosol modes
+	!>@param[in] n_comps: number of aerosol composition components
+	!>@param[in] indexc: receiving-mode lookup table for collision products
+	!>@param[in] mbinedges: fixed particle-mass bin edges for each mode
 	subroutine write_sce_grid_to_bmm( &
 		n_bin_mode,n_bin_modew,n_binst,n_modes,n_comps, &
 		indexc,mbinedges)
@@ -1279,7 +1309,17 @@
 		! If these are intended to share the same fixed grid:
 		parcel1%mbinedges_ent = mbinedges	
 	end subroutine write_sce_grid_to_bmm
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
+
+	! ============================================================================
+	! project_initial_bmm_to_fixed_grid
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Conservatively remaps the initial BMM liquid population onto the fixed SCE mass grid and
+	!>synchronises the solution-vector water masses.
 	subroutine project_initial_bmm_to_fixed_grid()
 		implicit none
 	
@@ -1299,7 +1339,16 @@
 		! Keep solution vector consistent with remapped wet masses
 		parcel1%y(1:parcel1%n_bin_modew) = parcel1%mbin(:,parcel1%n_comps+1)
 	end subroutine project_initial_bmm_to_fixed_grid
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
+	! ============================================================================
+	! prepare_state_for_sce
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Projects freely moving liquid and ice representative masses onto the fixed SCE grid before
+	!>collection when the full-moving growth scheme is used.
 	subroutine prepare_state_for_sce()
 		implicit none
 		integer(i4b) :: n
@@ -1327,15 +1376,33 @@
 				parcel1%mbinice, parcel1%mbinedges)
 		endif
 	end subroutine prepare_state_for_sce
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	! MAP SCE                                                                      !
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+	! ============================================================================
+	! write_sce_to_bmm
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>maps the sce variables onto BMM
+	!>Copies an SCE particle population, composition and conserved moments into the BMM state and
+	!>initialises associated liquid, ice and entraining populations.
+	!>@param[in] n_bin_mode: total number of liquid and ice SCE bins
+	!>@param[in] n_bin_modew: number of liquid/warm bins
+	!>@param[in] n_binst: number of bins per mode
+	!>@param[in] n_mode: number of external modes
+	!>@param[in] n_comps: number of aerosol composition components
+	!>@param[in] n_moments: number of conserved moments per bin
+	!>@param[in] ice_flag: switch indicating whether ice bins are present
+	!>@param[in] npart: particle number concentrations on the SCE grid
+	!>@param[in] moments: conserved SCE moments
+	!>@param[in] mbin: per-particle component and water/ice masses
+	!>@param[in] indexc: collision-product receiving-mode lookup table
+	!>@param[in] mbinedges: fixed particle-mass bin edges
+	!>@param[in] adiabatic_prof: true for an adiabatic profile; false when an entraining environmental
+	!>aerosol population is required
+	
     subroutine write_sce_to_bmm(n_bin_mode,n_bin_modew,n_binst,n_mode, n_comps, n_moments, &
                     ice_flag, &
                     npart, moments, mbin, indexc,mbinedges, &
@@ -1413,20 +1480,18 @@
     end subroutine write_sce_to_bmm
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-
-
-
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	! integrate lognormal                                                          !
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! lognormal_n_between_limits
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>finds the number of aerosol particles between two limits
-	!>@param[in] n_aer1,d_aer1, sig_aer1: lognormal parameters
-	!>@param[in] n_intern: number of internal modes
-	!>@param[in] dmin,dmax: max / min diameters
-	!>@param[inout] num: number of aerosol particles
+	!>Integrates the number concentration of a sum of lognormal aerosol modes between two dry diameters.
+	!>@param[in] n_aer1,d_aer1,sig_aer1: number concentration, median diameter and logarithmic width
+	!>of each internal mode
+	!>@param[in] n_intern: number of internal lognormal modes
+	!>@param[in] dmin,dmax: lower and upper dry-diameter limits
+	!>@param[inout] num: integrated number concentration between the limits
     subroutine lognormal_n_between_limits(n_aer1,d_aer1,sig_aer1,n_intern,dmin,dmax, &
                                         num)
     implicit none
@@ -1447,38 +1512,35 @@
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
     
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    !>@author
-    !>Paul J. Connolly, The University of Manchester
-    !>@brief
-    !>calculates the third diameter moment of a lognormal aerosol distribution
-    !>between two diameter limits
-    !>@param[in] n_aer1,d_aer1,sig_aer1: lognormal parameters
-    !>@param[in] n_intern: number of internal modes
-    !>@param[in] dmin,dmax: lower / upper diameter limits
-    !>@param[out] m3: integral of D^3 n(D) dD between dmin and dmax
+	! ============================================================================
+	! lognormal_m3_between_limits
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Integrates the third diameter moment of a sum of lognormal aerosol modes between two dry
+	!>diameters.
+	!>@param[in] n_aer1,d_aer1,sig_aer1: number concentration, median diameter and logarithmic width
+	!>of each internal mode
+	!>@param[in] n_intern: number of internal lognormal modes
+	!>@param[in] dmin,dmax: lower and upper dry-diameter limits
+	!>@param[out] m3: integrated third diameter moment between the limits
     subroutine lognormal_m3_between_limits(n_aer1,d_aer1,sig_aer1, &
                                            n_intern,dmin,dmax,m3)
-
         implicit none
 
         integer(i4b), intent(in) :: n_intern
         real(wp), intent(in) :: dmin,dmax
         real(wp), dimension(n_intern), intent(in) :: n_aer1,d_aer1,sig_aer1
-
         real(wp), intent(out) :: m3
-
         integer(i4b) :: i
         real(wp) :: zmin,zmax,sig
 
         m3=0._wp
-
         do i=1,n_intern
-
             if (n_aer1(i) <= 0._wp) cycle
 
             sig=sig_aer1(i)
-
             zmin=log(dmin/d_aer1(i))/sig
             zmax=log(dmax/d_aer1(i))/sig
 
@@ -1488,22 +1550,22 @@
                 0.5_wp*erfc(-(zmax-3._wp*sig)/sqrt(2._wp)) - &
                 0.5_wp*erfc(-(zmin-3._wp*sig)/sqrt(2._wp)) &
                 )
-
         enddo
-
     end subroutine lognormal_m3_between_limits
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!    
 
 
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	! calculate the upper diameter of bin edge                                     !
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! find_upper_diameter
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>called using zbrent to find the upper bin edge in size distribution
-	!>@param[in] x: dmax guess
-	!>@return find_upper_bin_edge: zero when root found
+	!>Returns the root-finder residual used to locate a size-bin upper diameter containing the target
+	!>aerosol number concentration.
+	!>@param[in] x: trial upper dry diameter
+	!>@return find_upper_diameter: integrated number between the current lower edge and x minus the
+	!>target bin number
     function find_upper_diameter(x)
         use numerics_type
         implicit none
@@ -1519,15 +1581,16 @@
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
     
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	! calculate the height of cloud base                                           !
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! cloud_base
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>called using zbrent to find the pressure of cloud base
-	!>@param[in] p: pressure
-	!>@return cloud_base: zero when root found
+	!>Returns the saturation-mixing-ratio residual used to locate parcel cloud-base pressure.
+	!>@param[in] p: trial pressure
+	!>@return cloud_base: saturation water mixing ratio at the trial pressure minus the parcel
+	!>cloud-base total-water mixing ratio
 	function cloud_base(p)
 	use numerics_type
 	implicit none
@@ -1547,6 +1610,16 @@
 
 
 
+	! ============================================================================
+	! hydrostatic1
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Evaluates dz/dp for a dry hydrostatic profile using the prescribed surface potential temperature.
+	!>@param[in] p: pressure
+	!>@param[in] z: integration-state array containing height
+	!>@param[out] dzdp: hydrostatic height derivative with respect to pressure
 	subroutine hydrostatic1(p,z,dzdp)
 	use numerics_type
 	implicit none
@@ -1559,7 +1632,19 @@
 	dzdp(1)=-(ra*t) / (grav*p)
 	
 	end subroutine hydrostatic1
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
+
+	! ============================================================================
+	! hydrostatic1a
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Evaluates dp/dz for a dry hydrostatic profile using the prescribed surface potential temperature.
+	!>@param[in] z: height
+	!>@param[in] p: integration-state array containing pressure
+	!>@param[out] dpdz: hydrostatic pressure derivative with respect to height
 	subroutine hydrostatic1a(z,p,dpdz)
 	use numerics_type
 	implicit none
@@ -1572,7 +1657,19 @@
 	dpdz(1)=-(grav*p(1)) / (ra*t) 
 	
 	end subroutine hydrostatic1a
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
+
+	! ============================================================================
+	! hydrostatic1b
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Evaluates dp/dz hydrostatically using potential temperature interpolated from the input sounding.
+	!>@param[in] z: height at which the derivative is required
+	!>@param[in] p: integration-state array containing pressure
+	!>@param[out] dpdz: hydrostatic pressure derivative with respect to height
 	subroutine hydrostatic1b(z,p,dpdz)
 	use numerics_type
 	implicit none
@@ -1595,7 +1692,20 @@
 	dpdz(1)=-(grav*p(1)) / (ra*t) 
 	
 	end subroutine hydrostatic1b
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
+
+	! ============================================================================
+	! hydrostatic2
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Evaluates dz/dp for a saturated/moist hydrostatic profile, solving temperature from the
+	!>moist-potential-temperature constraint.
+	!>@param[in] p: pressure
+	!>@param[in] z: integration-state array containing height
+	!>@param[out] dzdp: hydrostatic height derivative with respect to pressure
 	subroutine hydrostatic2(p,z,dzdp)
 	use numerics_type
 	use numerics, only : zeroin
@@ -1614,7 +1724,19 @@
 	dzdp(1)=-(ra*t) / (grav*p)
 	
 	end subroutine hydrostatic2
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
+	! ============================================================================
+	! hydrostatic2a
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Evaluates dp/dz for a saturated/moist hydrostatic profile, solving temperature from the
+	!>moist-potential-temperature constraint.
+	!>@param[in] z: height
+	!>@param[in] p: integration-state array containing pressure
+	!>@param[out] dpdz: hydrostatic pressure derivative with respect to height
 	subroutine hydrostatic2a(z,p,dpdz)
 	use numerics_type
 	use numerics, only : zeroin
@@ -1632,8 +1754,19 @@
 	dpdz(1)=-(grav*p(1))/(ra*t)
 	
 	end subroutine hydrostatic2a
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 	
 
+	! ============================================================================
+	! calc_theta_q
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Returns the moist-potential-temperature residual used by a root finder to recover saturated
+	!>temperature at the module pressure p111.
+	!>@param[in] t111: trial temperature
+	!>@return calc_theta_q: calculated saturated moist potential temperature minus theta_q_sat
 	function calc_theta_q(t111)
 	use numerics_type
 	implicit none
@@ -1646,7 +1779,18 @@
 	calc_theta_q=t111*(1.e5_wp/p111)**(rm/cpm)*exp(lv*qs/cpm/t111)-theta_q_sat
 
 	end function calc_theta_q     
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
+	! ============================================================================
+	! calc_theta_q2
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Returns the moist-potential-temperature residual used by a root finder to recover pressure at
+	!>the module temperature t1old.
+	!>@param[in] p: trial pressure
+	!>@return calc_theta_q2: calculated saturated moist potential temperature minus theta_q_sat
 	function calc_theta_q2(p)
 	use numerics_type
 	implicit none
@@ -1657,17 +1801,20 @@
 	calc_theta_q2=t1old*(1e5_wp/p)**(ra/cp)*exp(lv*ws/cp/t1old)-theta_q_sat
 
 	end function calc_theta_q2    
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	! theta q                                                                      !
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+	! ============================================================================
+	! calc_theta_q3
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the moist potential temperature
+	!>Calculates the parcel moist potential temperature from temperature, pressure and total-water
+	!>mixing ratio.
 	!>@param[in] t: temperature
 	!>@param[in] p: pressure
-	!>@param[in] q: total water
+	!>@param[in] q: total-water mixing ratio
 	!>@return calc_theta_q3: moist potential temperature
 	function calc_theta_q3(t,p,q)
 	use numerics_type
@@ -1686,17 +1833,16 @@
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	! dq_total_water                                                               !
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! dq_total_water
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the rate of change of total water
-	!>@param[in] t: time
-	!>@param[in] q: total water
-	!>@param[inout] dqdt: rate of change of total water
-	!>@return calc_theta_q3: moist potential temperature
+	!>Returns the imposed chamber rate of change of total water at the requested integration time.
+	!>@param[in] t: model/chamber time
+	!>@param[in] q: ODE state array; retained for the derivative-routine interface
+	!>@param[out] dqdt: total-water time derivative
 	subroutine dq_total_water(t,q,dqdt)
 	use numerics_type
 	implicit none
@@ -1719,14 +1865,13 @@
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
-
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	! saturation vapour pressure over liquid                                       !
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! svp_liq
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the saturation vapour pressure over liquid water according to buck fit
+	!>Calculates saturation vapour pressure over liquid water using the Buck formulation.
 	!>@param[in] t: temperature
 	!>@return svp_liq: saturation vapour pressure over liquid water
 	function svp_liq(t)
@@ -1739,14 +1884,17 @@
 			  (t-ttr)/(257.14_wp + (t-ttr)))
 	end function svp_liq
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	! saturation vapour pressure over ice                                          !
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	
+	
+	! ============================================================================
+	! svp_ice
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the saturation vapour pressure over ice water according to buck fit
+	!>Calculates saturation vapour pressure over ice using the Buck formulation.
 	!>@param[in] t: temperature
-	!>@return svp_ice: saturation vapour pressure over ice water
+	!>@return svp_ice: saturation vapour pressure over ice
 	function svp_ice(t)
 		use numerics_type
 		implicit none
@@ -1755,19 +1903,20 @@
 		svp_ice = 100._wp*6.1115_wp* &
             exp((23.036_wp - (t-ttr)/ 333.7_wp)* &
             (t-ttr)/(279.82_wp + (t-ttr)))
-
 	end function svp_ice
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! diffusivity of water vapour in air										   !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! dd
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the diffusivity of water vapour in air
-	!>@param[in] t: temperature, p: pressure
-	!>@return dd: diffusivity of water vapour in air
+	!>Calculates the molecular diffusivity of water vapour in air.
+	!>@param[in] t: temperature
+	!>@param[in] p: pressure
+	!>@return dd: water-vapour diffusivity in air
     function dd(t,p)
       use numerics_type
       implicit none
@@ -1776,14 +1925,15 @@
       t1=max(t,200._wp)
       dd=2.11e-5_wp*(t1/ttr)**1.94_wp*(101325._wp/p)
     end function dd
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! conductivity of water vapour												   !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! ka
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the thermal conductivity of air
+	!>Calculates the thermal conductivity of air.
 	!>@param[in] t: temperature
 	!>@return ka: thermal conductivity of air
     function ka(t)
@@ -1794,16 +1944,17 @@
       t1=max(t,200._wp)
       ka=(5.69_wp+0.017_wp*(t1-ttr))*1.e-3_wp*joules_in_a_cal
     end function ka
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! viscosity of air - page 417 pruppacher and klett							   !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! viscosity_air
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the viscosity of air
+	!>Calculates the dynamic viscosity of air - page 417 pruppacher and klett.
 	!>@param[in] t: temperature
-	!>@return viscosity_air: viscosity of air
+	!>@return viscosity_air: dynamic viscosity of air
     function viscosity_air(t)
         use numerics_type
         implicit none
@@ -1820,17 +1971,18 @@
             viscosity_air = (1.718_wp+0.0049_wp*tc-1.2e-5_wp*tc**2) * 1e-5_wp
         end if
     end function viscosity_air
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! surface tension of water - pruppacher and klett							   !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! surface_tension
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the surface tension of water
+	!>Calculates the surface tension of liquid water - pruppacher and klett	.
 	!>@param[in] t: temperature
-	!>@return surface_tension: surface_tension of water
+	!>@return surface_tension: surface tension of water
     function surface_tension(t)	
         use numerics_type
         real(wp), intent(in) :: t
@@ -1853,23 +2005,24 @@
     !    surface_tension=72d-3
         !sigma = 75.93_wp * joules_in_an_erg*1d4
     end function surface_tension
-    
-    
-    
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! calculate the wet diameter                                				   !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    
+    
+    
+	! ============================================================================
+	! wetdiam
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the wet diameter of a particle
-	!>@param[in] t: temperature
-	!>@param[in] mwat: mass of water
-	!>@param[in] mbin: mass of aerosol components in each bin
-	!>@param[in] rhobin: density of each component
-	!>@param[in] sz: length of array
-	!>@param[out] dw: wet diameter
-	!>@param[out] rhoat: mean particle density
+	!>Calculates wet volume-equivalent particle diameter and, optionally, mean particle density from
+	!>component and water masses.
+	!>@param[in] mwat: water mass per representative particle
+	!>@param[in] mbin: aerosol-component masses per representative particle
+	!>@param[in] rhobin: densities of the aerosol components
+	!>@param[in] sz: number of particles/bins to process
+	!>@param[out] dw: wet volume-equivalent diameter
+	!>@param[out] rhoat: optional mean wet-particle density
  	subroutine wetdiam(mwat,mbin,rhobin,sz,dw,rhoat)
 		implicit none
 		real(wp), dimension(:), intent(in) :: mwat
@@ -1891,12 +2044,25 @@
 		
 	end subroutine wetdiam
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! FHH adsorption correction                                                       !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! Returns the adsorption contribution to water activity.  The insoluble FHH
-    ! component is treated as a spherical core.  Any soluble dry material plus water
-    ! lies outside that core.  When no FHH component (or no FHH mass) is present the
-    ! factor is exactly unity, so the existing Koehler equations are recovered.
+    
+    
+	! ============================================================================
+	! fhh_adsorption_factor
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Calculates the FHH adsorption activity factor for a mixed particle using surface-area-weighted
+	!> effective adsorption coefficients from components with A_FHH greater than zero.
+	!> Returns the adsorption contribution to water activity.  The insoluble FHH
+    !> component is treated as a spherical core.  Any soluble dry material plus water
+    !> lies outside that core.  When no FHH component (or no FHH mass) is present the
+    !> factor is exactly unity, so the existing Koehler equations are recovered.
+	!>@param[in] mwat: water mass per representative particle
+	!>@param[in] dw: wet particle diameter
+	!>@param[in] mbin1: component masses per representative particle
+	!>@param[in] rhobin1: component densities
+	!>@return fads: multiplicative FHH adsorption factor; unity when no adsorbing component is present
     function fhh_adsorption_factor(mwat,dw,mbin1,rhobin1) result(fads)
         implicit none
         real(wp), intent(in) :: mwat,dw
@@ -1971,23 +2137,24 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! calculate the equilibrium humidity over a particle        				   !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! koehler01
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the equilibrium humidity over a particle
+	!>Calculates equilibrium relative humidity for particle arrays using classical Kohler solute
+	!>activity with the mixed FHH adsorption correction.
 	!>@param[in] t: temperature
-	!>@param[in] mwat: mass of water
-	!>@param[in] mbin: mass of aerosol components in each bin
-	!>@param[in] rhobin: density of each component
-	!>@param[in] nubin: van hoff factor in each bin
-	!>@param[in] molwbin: molecular weight in each bin
-	!>@param[in] sz: length of array
-	!>@param[inout] rh_eq: equilibrium humidity
-	!>@param[inout] rhoat: density of particle
-	!>@param[inout] dw: wet diameter
+	!>@param[in] mwat: water mass per representative particle
+	!>@param[in] mbin: aerosol-component masses per representative particle
+	!>@param[in] rhobin: component densities
+	!>@param[in] nubin: van't Hoff factors for the components
+	!>@param[in] molwbin: component molecular weights
+	!>@param[in] sz: number of particles/bins to process
+	!>@param[inout] rh_eq: equilibrium relative humidity
+	!>@param[inout] rhoat: mean wet-particle density
+	!>@param[inout] dw: wet particle diameter
     subroutine koehler01(t,mwat,mbin,rhobin,nubin,molwbin,sz,rh_eq,rhoat,dw) 
       use numerics_type
       implicit none
@@ -2020,30 +2187,26 @@
 
     end subroutine koehler01
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-
-
-
-
    
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! calculate the equilibrium humidity over a particle, using k-koehler          !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! kkoehler01
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the equilibrium humidity over a particle using K-koehler theory
+	!>Calculates equilibrium relative humidity for particle arrays using volume-mixed kappa-Kohler
+	!>activity with the mixed FHH adsorption correction.
 	!>@param[in] t: temperature
-	!>@param[in] mwat: mass of water
-	!>@param[in] mbin: mass of aerosol components in each bin
-	!>@param[in] rhobin: density of each component
-	!>@param[in] kappabin: kappa in each bin
-	!>@param[in] molwbin: molecular weight in each bin
-	!>@param[in] sz: length of array
-	!>@param[inout] rh_eq: equilibrium humidity
-	!>@param[inout] rhoat: density of particle
-	!>@param[inout] dw: wet diameter
+	!>@param[in] mwat: water mass per representative particle
+	!>@param[in] mbin: aerosol-component masses per representative particle
+	!>@param[in] rhobin: component densities
+	!>@param[in] kappabin: component kappa values
+	!>@param[in] molwbin: component molecular weights; retained for interface consistency
+	!>@param[in] sz: number of particles/bins to process
+	!>@param[inout] rh_eq: equilibrium relative humidity
+	!>@param[inout] rhoat: mean wet-particle density
+	!>@param[inout] dw: wet particle diameter
     subroutine kkoehler01(t,mwat,mbin,rhobin,kappabin,molwbin,sz,rh_eq,rhoat,dw) 
       use numerics_type
       implicit none
@@ -2088,17 +2251,17 @@
 
 
 
-
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! koehler equations                                                     	   !
-    ! this is coded so it can be called with a root-finder, to find the inverse	   !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! koehler02
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the equilibrium humidity over a particle using koehler theory
-	!>@param[in] nw: number of moles of water
-	!>@return koehler02: equilibrium rh - but called via root-finder, so nw is returned
+	!>Evaluates the classical-Kohler plus FHH equilibrium-humidity residual for the currently selected
+	!>BMM particle; intended for minimisation/root finding in water content.
+	!>@param[in] nw: trial number of moles of particle water
+	!>@return koehler02: signed equilibrium-humidity residual relative to rh_act, including the module
+	!>multiplier mult
     function koehler02(nw) ! only pass one variable so can use root-finders
       use numerics_type
       implicit none
@@ -2134,18 +2297,17 @@
 
 
 
-
-
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! kappa-koehler equations                                                      !
-    ! this is coded so it can be called with a root-finder, to find the inverse	   !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! kkoehler02
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the equilibrium humidity over a particle using K-koehler theory
-	!>@param[in] nw: number of moles of water
-	!>@return kkoehler02: equilibrium rh - but called via root-finder, so nw is returned
+	!>Evaluates the kappa-Kohler plus FHH equilibrium-humidity residual for the currently selected BMM
+	!>particle; intended for minimisation/root finding in water content.
+	!>@param[in] nw: trial number of moles of particle water
+	!>@return kkoehler02: signed equilibrium-humidity residual relative to rh_act, including the
+	!>module multiplier mult
     function kkoehler02(nw) ! only pass one variable so can use root-finders
       use numerics_type
       implicit none
@@ -2187,16 +2349,17 @@
     
     
     
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! koehler equations                                                     	   !
-    ! this is coded so it can be called with a root-finder, to find the inverse	   !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! koehler02_ent
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the equilibrium humidity over a particle using koehler theory
-	!>@param[in] nw: number of moles of water
-	!>@return koehler02_ent: equilibrium rh - but called via root-finder, so nw is returned
+	!>Evaluates the classical-Kohler plus FHH equilibrium-humidity residual for the currently selected
+	!>entraining aerosol particle.
+	!>@param[in] nw: trial number of moles of particle water
+	!>@return koehler02_ent: signed equilibrium-humidity residual relative to rh_act, including the
+	!>module multiplier mult
     function koehler02_ent(nw) ! only pass one variable so can use root-finders
       use numerics_type
       implicit none
@@ -2232,18 +2395,17 @@
 
 
 
-
-
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! kappa-koehler equations                                                      !
-    ! this is coded so it can be called with a root-finder, to find the inverse	   !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! kkoehler02_ent
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the equilibrium humidity over a particle using K-koehler theory
-	!>@param[in] nw: number of moles of water
-	!>@return kkoehler02_ent: equilibrium rh - but called via root-finder, so nw is returned
+	!>Evaluates the kappa-Kohler plus FHH equilibrium-humidity residual for the currently selected
+	!>entraining aerosol particle.
+	!>@param[in] nw: trial number of moles of particle water
+	!>@return kkoehler02_ent: signed equilibrium-humidity residual relative to rh_act, including the
+	!>module multiplier mult
     function kkoehler02_ent(nw) ! only pass one variable so can use root-finders
       use numerics_type
       implicit none
@@ -2285,20 +2447,19 @@
     
     
     
-    
-
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! koehler equations                                                     	   !
-    ! this is coded so it can be called with a root-finder, to find the inverse	   !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! koehler03
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the equilibrium humidity over a particle using koehler theory
+	!>Evaluates the classical-Kohler plus FHH residual as a function of total dry aerosol mass for the
+	!>selected prescribed aerosol mode.
 	!> n_sel must be set to the mode, d_dummy the water in the bin to return the 
 	!> aerosol dry mass
-	!>@param[in] nw: number of moles of water
-	!>@return koehler03: equilibrium rh - but called via root-finder, so mbin is returned
+	!>@param[in] mbin: trial total dry aerosol mass per particle
+	!>@return koehler03: signed equilibrium-humidity residual relative to rh_act, including the module
+	!>multiplier mult
     function koehler03(mbin) ! only pass one variable so can use root-finders
       use numerics_type
       implicit none
@@ -2332,18 +2493,19 @@
     
     
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! K-koehler equations                                                     	   !
-    ! this is coded so it can be called with a root-finder, to find the inverse	   !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! kkoehler03
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the equilibrium humidity over a particle using koehler theory
+	!>Evaluates the kappa-Kohler plus FHH residual as a function of total dry aerosol mass for the
+	!>selected prescribed aerosol mode.
 	!> n_sel must be set to the mode, d_dummy the water in the bin to return the 
 	!> aerosol dry mass
-	!>@param[in] nw: number of moles of water
-	!>@return kkoehler03: equilibrium rh - but called via root-finder, so mbin is returned
+	!>@param[in] mbin: trial total dry aerosol mass per particle
+	!>@return kkoehler03: signed equilibrium-humidity residual relative to rh_act, including the
+	!>module multiplier mult
     function kkoehler03(mbin) ! only pass one variable so can use root-finders
       use numerics_type
       implicit none
@@ -2381,17 +2543,22 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 	
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! calculate the terminal velocity of cloud drops                               !
-    ! see pruppacher and klett                                                     !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! terminal01
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the terminal velocity of water drops
-	!>@param[inout] vel, nre, cd: terminal velocity, reynolds number and drag coefficient
-	!>@param[in] diam, rhoat, t, p: diameter, density, temperature and pressure
-	!>@param[in] sz: size of the array to calculate terminal velocities
+	!>Calculates liquid-drop terminal velocity, Reynolds number and drag coefficient over the model
+	!>size range. see pruppacher and klett    
+	!>@param[inout] vel: terminal fall speed
+	!>@param[in] diam: wet drop diameter
+	!>@param[in] rhoat: mean drop density
+	!>@param[in] t: temperature
+	!>@param[in] p: pressure
+	!>@param[inout] nre: drop Reynolds number
+	!>@param[inout] cd: drag coefficient
+	!>@param[in] sz: number of drops/bins to process
     subroutine terminal01(vel,diam,rhoat, t,p,nre,cd,sz)
       use numerics_type
       implicit none
@@ -2467,18 +2634,23 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! calculate the ventilation coefficient for cloud drops                        !
-    ! see  pruppacher and klett - page 538-541                                     !
-    ! original reference: pruppacher and rasmussen 1979                            !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! ventilation01
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the ventilation factor for water drops
-	!>@param[inout] fv, fh: ventilation factors for vapour and heat
-	!>@param[in] diam, rhoat, t, p: diameter, density, temperature and pressure
-	!>@param[in] sz: size of the array to calculate ventilation factors
+	!>Calculates vapour and heat ventilation factors for liquid drops from their current terminal
+	!>velocities and transport properties.
+    !> see  pruppacher and klett - page 538-541                                     !
+    !> original reference: pruppacher and rasmussen 1979                            !
+	!>@param[in] diam: wet drop diameter
+	!>@param[in] rhoat: mean drop density
+	!>@param[in] t: temperature
+	!>@param[in] p: pressure
+	!>@param[inout] fv: ventilation factor for vapour diffusion
+	!>@param[inout] fh: ventilation factor for heat transfer
+	!>@param[in] sz: number of drops/bins to process
     subroutine ventilation01(diam, rhoat,t, p, fv, fh,sz)
       use numerics_type
       implicit none
@@ -2534,9 +2706,22 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	! Maximum dimension of an ice crystal / aggregate                              !
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! maxdimension01
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Calculates maximum dimension of unrimed ice aggregates and the equivalent spherical diameter of
+	!>their rime mass.
+	!>@param[in] mice: unrimed/depositional ice mass per representative particle
+	!>@param[in] rhoi: mean depositional-ice density
+	!>@param[in] phi: mean monomer aspect ratio
+	!>@param[in] nump: mean number of monomers per aggregate
+	!>@param[in] rime: rime mass per representative particle
+	!>@param[out] dmax: maximum particle dimension including the provisional rime envelope
+	!>@param[out] drime: equivalent solid-ice diameter of the rime mass
+	!>@param[in] sz: number of ice particles/bins to process
 	subroutine maxdimension01(mice,rhoi,phi,nump,rime,dmax,drime,sz)
 		implicit none
 		integer(i4b), intent(in) :: sz
@@ -2607,15 +2792,28 @@
 	end subroutine maxdimension01
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	! Projected area of ice crystals and aggregates                                !
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+	! ============================================================================
+	! areaaggregates01
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Calculates projected area of ice monomers/aggregates using the current habit, aggregate scaling
+	!>and provisional rime envelope.
+	!>@param[out] area: projected particle area
+	!>@param[in] mice: unrimed/depositional ice mass per representative particle
+	!>@param[in] rhoi: mean depositional-ice density
+	!>@param[in] phi: mean monomer aspect ratio
+	!>@param[in] nump: mean number of monomers per aggregate
+	!>@param[in] dmax: maximum particle dimension
+	!>@param[in] drime: equivalent spherical diameter of rime mass
+	!>@param[in] sz: number of ice particles/bins to process
 	subroutine areaaggregates01( &
 		area,mice,rhoi,phi,nump,dmax,drime,sz)
 		implicit none
 		integer(i4b), intent(in) :: sz
-		real(wp), dimension(:), intent(in) :: &
-			mice,rhoi,phi,nump,dmax,drime
+		real(wp), dimension(:), intent(in) :: mice,rhoi,phi,nump,dmax,drime
 		real(wp), dimension(sz), intent(out) :: area
 		integer(i4b) :: i
 		real(wp), parameter :: dfract=1.33_wp
@@ -2692,20 +2890,32 @@
 	end subroutine areaaggregates01
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! calculate the terminal velocity of ice particles                             !
-    ! see heymsfield and westbrook (2010, jas)                                     !
-    ! who corrected a bias in the fall speeds derived by mitchell and others       !
-    ! this method also works reasonably well for sub-100 micron crystals           !
-    ! see westbrook qj paper for latter point                                      !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+	! ============================================================================
+	! terminal02
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the terminal velocity of ice crystals
-	!>@param[inout] vel, nre: terminal velocity and reynolds number
-	!>@param[in] mwat, t, p, phi, rhoi, nump, rime
-	!>@param[in] sz: size of the array to calculate terminal velocities
+	!>Calculates ice-particle terminal velocity and Reynolds number using the Heymsfield-Westbrook
+	!>area-ratio formulation and current aggregate geometry.
+    !> calculate the terminal velocity of ice particles                             
+    !> see heymsfield and westbrook (2010, jas)                                     
+    !> who corrected a bias in the fall speeds derived by mitchell and others       
+    !> this method also works reasonably well for sub-100 micron crystals           
+    !> see westbrook qj paper for latter point                                      
+	!>@param[inout] vel: terminal fall speed
+	!>@param[in] mwat: total ice-particle mass per representative particle
+	!>@param[in] t: temperature
+	!>@param[in] p: pressure
+	!>@param[in] phi: mean monomer aspect ratio
+	!>@param[in] rhoi: mean depositional-ice density
+	!>@param[in] nump: mean number of monomers per aggregate
+	!>@param[in] rime: rime mass per representative particle
+	!>@param[inout] nre: Reynolds number
+	!>@param[in] sz: number of ice particles/bins to process
+	!>@param[out] dmax_out: optional maximum-dimension diagnostic
+	!>@param[out] area_out: optional projected-area diagnostic
 	subroutine terminal02( &
 		vel,mwat,t,p,phi,rhoi,nump,rime,nre,sz,dmax_out,area_out)
       use numerics_type
@@ -2786,18 +2996,27 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
     
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! calculate ventilation coefficients for ice crystals                          !
-    ! see page 553 p+k                                                             !
-    ! original reference: ji 1991 and wang and ji 1992                             !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! ventilation02
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the ventilation coefficients for ice crystals
-	!>@param[inout] fv, fh: ventilation coefficients for mass and heat
-	!>@param[in] mwat, t, p, phi, rhoi, nump, rime
-	!>@param[in] sz: size of the array to calculate terminal velocities
+	!>Calculates vapour and heat ventilation factors for ice particles using current shape, density,
+	!>aggregation state and terminal velocity.
+    !> calculate ventilation coefficients for ice crystals                          
+    !> see page 553 p+k                                                             
+    !> original reference: ji 1991 and wang and ji 1992                             
+	!>@param[in] mwat: total ice-particle mass per representative particle
+	!>@param[in] t: temperature
+	!>@param[in] p: pressure
+	!>@param[in] phi: mean monomer aspect ratio
+	!>@param[in] rhoi: mean depositional-ice density
+	!>@param[in] nump: mean number of monomers per aggregate
+	!>@param[in] rime: rime mass per representative particle
+	!>@param[inout] fv: ventilation factor for vapour diffusion
+	!>@param[inout] fh: ventilation factor for heat transfer
+	!>@param[in] sz: number of ice particles/bins to process
     subroutine ventilation02(mwat, t, p,phi, rhoi, nump,rime,fv, fh,sz)
       use numerics_type
 
@@ -2867,17 +3086,22 @@
     
     
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! calculate growth rate of a cloud droplet					  				   !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! dropgrowthrate01
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates diffusional growth rate for water drops
-	!>@param[in] t,p, rh: temperature, pressure, and rh
-	!>@param[in] rh_eq, rhoat, diam: equilibrium rh, density, diameter
-	!>@param[in] sz: size of array
-	!>@return dropgrowthrate01: growth rate of drops
+	!>Calculates diffusional liquid-drop radial growth rate including kinetic, thermal and optional
+	!>ventilation corrections.
+	!>@param[in] t: temperature
+	!>@param[in] p: pressure
+	!>@param[in] rh: ambient liquid-water saturation ratio/relative humidity used by the growth equation
+	!>@param[in] rh_eq: equilibrium relative humidity at each particle surface
+	!>@param[in] rhoat: mean wet-particle density
+	!>@param[in] diam: wet particle diameter
+	!>@param[in] sz: number of particles/bins to process
+	!>@return dropgrowthrate01: radial growth rate of each liquid particle
     function dropgrowthrate01(t,p,rh,rh_eq,rhoat,diam,sz) 
       use numerics_type
       implicit none
@@ -2917,9 +3141,27 @@
 
 
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! calculate growth rate of an ice crystal					  				   !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! icegrowthrate01
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Calculates diffusional ice mass-growth rate using particle capacitance, deposition kinetics,
+	!>thermal resistance and optional ventilation.
+	!>@param[in] t: temperature
+	!>@param[in] p: pressure
+	!>@param[in] rh_ice: ambient relative humidity with respect to ice
+	!>@param[in] rh_eq: equilibrium relative humidity with respect to ice for each particle
+	!>@param[in] mwat: total ice-particle mass per representative particle
+	!>@param[in] mbin: aerosol-component masses carried by the ice particles
+	!>@param[in] rhobin: aerosol-component densities
+	!>@param[in] phi: mean monomer aspect ratio
+	!>@param[in] rhoi: mean depositional-ice density
+	!>@param[in] nump: mean monomer number per aggregate
+	!>@param[in] rime: rime mass per representative particle
+	!>@param[in] sz: number of ice particles/bins to process
+	!>@return icegrowthrate01: vapour-deposition/sublimation mass-growth rate for each ice particle
     function icegrowthrate01(t,p,rh_ice,rh_eq,mwat,mbin,rhobin,phi, rhoi, nump,rime,sz) 
       use numerics_type
 
@@ -2961,12 +3203,25 @@
     end function icegrowthrate01
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! calculate the capacitance of an ice crystal				  				   !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! calculates the capacitance of oblate (longer a) and prolate (longer c) 
-    ! spheroids. a is the length of the prism axis (half of) and c the basal 
-    ! (half of). see page 1214 of chen and lamb, jas, 1994.
+
+	! ============================================================================
+	! capacitance01
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Calculates electrostatic/diffusional capacitance of oblate and prolate spheroidal ice particles
+	!>from their mass, density and aspect ratio.
+    !> calculates the capacitance of oblate (longer a) and prolate (longer c) 
+    !> spheroids. a is the length of the prism axis (half of) and c the basal 
+    !> (half of). see page 1214 of chen and lamb, jas, 1994.
+	!>@param[in] mwat: ice-particle mass
+	!>@param[in] phi: aspect ratio c/a
+	!>@param[in] rhoice: particle/depositional ice density
+	!>@param[in] numi: mean monomer number; retained for aggregate-capacitance extensions
+	!>@param[in] rimemass: rime mass; retained for aggregate-capacitance extensions
+	!>@param[in] sz: number of particles/bins to process
+	!>@return capacitance01: ice-particle capacitance length
     function capacitance01(mwat,phi,rhoice,numi,rimemass,sz)
       use numerics_type
       implicit none
@@ -3003,17 +3258,20 @@
 
 
 
-
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! koop et al 2000 nucleation rate                                              !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! koopnucrate
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates nucleation rate of ice in supercooled water according to koop etal (2000)
-	!>@param[in] aw, t, p: activity of water, temperature, and pressure
-	!>@param[in] sz: size of array
-	!>@return koopnucrate: nucleation rate
+	!>Calculates homogeneous ice nucleation rate in supercooled liquid water using 
+	!> the Koop et al. (2000)
+	!> water-activity formulation with pressure correction.
+	!>@param[in] aw: liquid-water activity
+	!>@param[in] t: temperature
+	!>@param[in] p: pressure
+	!>@param[in] sz: number of elements in the activity array
+	!>@return koopnucrate: homogeneous nucleation rate for each element
     function koopnucrate(aw,t,p,sz)
           use numerics_type
           implicit none
@@ -3053,19 +3311,20 @@
     
     
     
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! derivatives for a warm parcel model                                          !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! fparcelwarm
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates rates of change for a warm parcel model
-	!>@param[in] neq: length of solution vector
-	!>@param[in] tt: time
-	!>@param[in] y: solution vector
-	!>@param[inout] ydot: derivates calculated
-	!>@param[in] rpar: real data coming in
-	!>@param[in] ipar: integer data coming in
+	!>Evaluates the warm-parcel ODE tendencies for condensation/evaporation, pressure, temperature,
+	!>relative humidity, height, velocity and parcel geometry.
+	!>@param[inout] neq: number of ODE equations
+	!>@param[inout] tt: ODE integration time
+	!>@param[inout] y: parcel state vector
+	!>@param[inout] ydot: parcel-state time derivatives
+	!>@param[inout] rpar: real workspace required by the ODE interface
+	!>@param[inout] ipar: integer workspace required by the ODE interface
     subroutine fparcelwarm(neq, tt, y, ydot, rpar, ipar)
         use numerics_type
         use numerics, only : dfsid1,find_pos
@@ -3307,19 +3566,20 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! derivatives for a cold parcel model                                          !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! fparcelcold
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates rates of change for a the ice part of the parcel model
-	!>@param[in] neq: length of solution vector
-	!>@param[in] tt: time
-	!>@param[in] y: solution vector
-	!>@param[inout] ydot: derivates calculated
-	!>@param[in] rpar: real data coming in
-	!>@param[in] ipar: integer data coming in
+	!>Evaluates the ice-parcel ODE tendencies for vapour deposition/sublimation and the associated
+	!>thermodynamic changes.
+	!>@param[inout] neq: number of ODE equations
+	!>@param[inout] tt: ODE integration time
+	!>@param[inout] y: ice/parcel state vector
+	!>@param[inout] ydot: ice/parcel-state time derivatives
+	!>@param[inout] rpar: real workspace required by the ODE interface
+	!>@param[inout] ipar: integer workspace required by the ODE interface
     subroutine fparcelcold(neq, tt, y, ydot, rpar, ipar)
         use numerics_type
         use numerics, only : dfsid1,find_pos
@@ -3417,9 +3677,22 @@
 
 
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! jacobian for a warm parcel model : dummy subroutine                          !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! jparcelwarm
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Dummy Jacobian callback retained for compatibility with the parcel ODE solver interface; no
+	!>Jacobian entries are currently calculated.
+	!>@param[in] neq: number of ODE equations
+	!>@param[in] t: ODE integration time
+	!>@param[in] y: current solution vector
+	!>@param[in] ml,mu: lower and upper Jacobian bandwidth parameters
+	!>@param[out] pd: Jacobian work array; currently left unchanged
+	!>@param[in] nrpd: leading dimension of pd
+	!>@param[inout] rpar: real solver workspace
+	!>@param[inout] ipar: integer solver workspace
     subroutine jparcelwarm(neq, t, y, ml, mu, pd, nrpd, rpar, ipar)
           use numerics_type
           implicit none
@@ -3434,17 +3707,19 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
     
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	! INP source function                                                          !
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! demott_2010
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the number concentration of INPs using the DeMott et al. (2010)
-	!> parameterisation (Predicting global atmospheric ice...
+	!>Calculates primary ice-nucleating-particle number concentration using the DeMott et al. (2010)
+	!>parameterisation.
+	!>  (Predicting global atmospheric ice...
 	!>                    https://doi.org/10.1073/pnas.0910818107)
-	!>@param[in] t, naer05: temperature, number concentration of aerosols > 0.5 um
-	!>@return demott_2010: number concentration of INPs
+	!>@param[in] t: temperature
+	!>@param[in] naer05: aerosol number concentration with dry diameter greater than 0.5 micrometres
+	!>@return demott_2010: predicted INP number concentration
 	function demott_2010(t,naer05)
 		implicit none
 		real(wp), intent(in) :: t,naer05
@@ -3465,9 +3740,35 @@
 	end function demott_2010
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! ice nucleation                                                               !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! noncollisional_iceformation
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Forms ice without particle-particle collisions, transfers liquid particles and conserved
+	!>component moments to the fixed ice grid, and applies latent heating.
+	!>@param[inout] npart: liquid-particle number concentration
+	!>@param[inout] npartice: ice-particle number concentration
+	!>@param[in] mwat: liquid-water mass per representative drop
+	!>@param[in] mbin2: aerosol-component masses in liquid particles
+	!>@param[inout] mbin2_ice: aerosol-component and ice masses in ice particles
+	!>@param[in] rhobin,nubin,kappabin,molwbin: aerosol-component thermodynamic properties
+	!>@param[inout] moments: conserved liquid and ice moments
+	!>@param[in] medges: fixed mass-bin edges for each mode
+	!>@param[inout] t: parcel temperature, updated for latent heat of freezing
+	!>@param[in] p: pressure
+	!>@param[in] nbins1: number of fixed bins per mode
+	!>@param[in] ncomps: number of aerosol composition components
+	!>@param[in] nbinw: number of liquid/warm bins
+	!>@param[in] nmoms: number of conserved moments
+	!>@param[in] nmodes: number of external modes
+	!>@param[inout] yice: ice mass per representative particle
+	!>@param[in] rh: ambient relative humidity
+	!>@param[in] dt: timestep
+	!>@param[in] sce_flag: SCE switch controlling fixed-grid treatment
+	!>@param[in] mode1_flag: switch for mode-1 secondary-ice treatment
+	!>@param[in] ice_nucleation_flag: selects the enabled non-collisional ice-nucleation treatment
     subroutine noncollisional_iceformation(npart, npartice, mwat,mbin2,mbin2_ice, &
                          rhobin,nubin,kappabin,molwbin, &
                          moments,medges, &
@@ -3741,10 +4042,22 @@
 	    t=t+lf/cp*sum(mwat(:)*dn01(:))
     end subroutine noncollisional_iceformation
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
     
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! helper function                                                              !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! find_medge
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Finds the flattened fixed-grid bin index immediately below a specified particle mass in a
+	!>selected external mode.
+	!>@param[in] medges: mass-bin edges for all modes
+	!>@param[in] m: particle mass to locate
+	!>@param[in] nbins1: number of bins per mode
+	!>@param[in] nmodes: number of external modes
+	!>@param[in] imode: external mode to search
+	!>@return find_medge: flattened bin index below the requested mass
     function find_medge(medges,m,nbins1,nmodes,imode)
         use numerics_type
         implicit none
@@ -3759,15 +4072,33 @@
         enddo
         i=i-1
         find_medge=i+(imode-1)*(nbins1)
-        
-    
     end function find_medge    
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
     
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! ice nucleation                                                               !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! icenucleation
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Converts liquid particles to ice using homogeneous Koop nucleation and DeMott primary
+	!>nucleation, transfers aerosol/ice moments and applies latent heating.
+	!>@param[inout] npart: liquid-particle number concentration
+	!>@param[inout] npartice: ice-particle number concentration
+	!>@param[in] mwat: liquid-water mass per representative particle
+	!>@param[in] mbin2: aerosol-component masses in liquid particles
+	!>@param[inout] mbin2_ice: aerosol-component and ice masses in ice particles
+	!>@param[in] rhobin,nubin,kappabin,molwbin: aerosol-component thermodynamic properties
+	!>@param[inout] moments: conserved liquid and ice moments
+	!>@param[inout] t: parcel temperature, updated for latent heat of freezing
+	!>@param[in] p: pressure
+	!>@param[in] sz: number of aerosol composition components
+	!>@param[in] sz2: number of liquid/warm bins
+	!>@param[in] sz3: number of conserved moments
+	!>@param[inout] yice: ice mass per representative particle
+	!>@param[in] rh: ambient relative humidity
+	!>@param[in] dt: timestep
     subroutine icenucleation(npart, npartice, mwat,mbin2,mbin2_ice, &
                          rhobin,nubin,kappabin,molwbin, &
                          moments,t,p,sz,sz2,sz3,yice,rh,dt) 
@@ -3935,14 +4266,19 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
 
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	! calculate new volume and phi                                                       !
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! chen_and_lamb_prop
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
-	!>@brief calculates ice growth model of Chen and Lamb (1994) 
-	!>@param[in] t,qv, qvsat,rhoa,dm,gamma_t,dep_density
-	!>@param[inout] v,phi
+	!>@brief
+	!>Updates deposited ice volume and spheroidal aspect ratio for a vapour-deposition mass increment
+	!>following Chen and Lamb (1994).
+	!>@param[in] dm: deposited/sublimated ice-mass increment
+	!>@param[in] gamma_t: Chen-Lamb temperature-dependent growth-ratio parameter
+	!>@param[inout] v: deposited ice volume
+	!>@param[inout] phi: particle aspect ratio c/a
+	!>@param[in] dep_density: density assigned to newly deposited ice
     subroutine chen_and_lamb_prop(dm,gamma_t,v,phi, dep_density)
         implicit none
         real(wp), intent(in) :: dm, gamma_t,dep_density
@@ -3972,12 +4308,28 @@
     end subroutine chen_and_lamb_prop
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	! moving centre binning                                                              !
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+	! ============================================================================
+	! moving_centre
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
-	!>@brief rebins according to the moving centre scheme - Jacobson's book
+	!>@brief
+	!>Conservatively reassigns particles and extensive moments to the fixed bin whose mass interval
+	!>contains each current representative mass using the moving-centre scheme.
+	!> see Jacobson's Book, Fundamentals of Atmospheric Modelling
+	!>@param[in] n_bin_mode: total number of bins represented by the state
+	!>@param[in] n_bin_modew: number of bins being remapped
+	!>@param[in] n_binst: number of bins per mode
+	!>@param[in] n_mode: number of external modes
+	!>@param[in] n_comps: number of aerosol composition components
+	!>@param[in] n_moments: number of conserved moments
+	!>@param[inout] npart: particle number concentration
+	!>@param[inout] masses: representative particle mass in each bin
+	!>@param[inout] moments: extensive conserved moments
+	!>@param[inout] mbin: per-particle component and water/ice masses
+	!>@param[in] mbinedges: fixed mass-bin edges for each mode
     subroutine moving_centre(n_bin_mode,n_bin_modew,n_binst,n_mode, &
                     n_comps, n_moments, &
                     npart, masses, moments, mbin,mbinedges) 
@@ -4023,15 +4375,11 @@
                             ! add the moment from i to newplace
                             momtemp(newplace,:)=momtemp(newplace,:)+moments(i,:)
                             nparttemp(newplace)=nparttemp(newplace)+npart(i)
-                            totmass(newplace)=totmass(newplace)+masses(i)*npart(i)
-                            
+                            totmass(newplace)=totmass(newplace)+masses(i)*npart(i)   
                         endif
                     enddo
-                    
                 endif                
-                
             endif
-        
         enddo
         
         
@@ -4065,9 +4413,20 @@
     end subroutine moving_centre
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	! bin-growth dispatcher, just choose the correct one to apply and do it              !
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+	! ============================================================================
+	! apply_growth_bin_scheme
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Dispatches diffusional-growth remapping to the configured full-moving, moving-centre or
+	!>Chen-Lamb bin scheme.
+	!>@param[inout] npart: particle number concentration
+	!>@param[in] mass_old: representative masses before diffusional growth
+	!>@param[inout] mass_new: representative masses after growth and, when required, after remapping
+	!>@param[inout] moments: extensive conserved moments
+	!>@param[inout] mbin: per-particle component and water/ice masses
 	subroutine apply_growth_bin_scheme(npart,mass_old,mass_new,moments,mbin)
 		implicit none
 		real(wp), dimension(parcel1%n_bin_modew), intent(inout) :: npart,mass_new
@@ -4099,11 +4458,22 @@
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	! Chen and Lamb (1994) binning														 !
-	! Eqs. (6)–(8), with analytical transfer integrals in Eq. (15) for Chen and Lamb	 !
-	! binning number integral															 !
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!	
+	! ============================================================================
+	! chen_lamb_int_number
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Analytically integrates the Chen-Lamb linear within-bin number distribution over a specified
+	!>mass interval using a numerically stable local coordinate.
+	!> Chen and Lamb (1994) binning														 
+	!> Eqs. (6)–(8), with analytical transfer integrals in Eq. (15) for Chen and Lamb	 
+	!> binning number integral															 
+	!>@param[in] nref: number-distribution value at reference mass xref
+	!>@param[in] xref: reference mass coordinate
+	!>@param[in] slope: slope of the linear number distribution
+	!>@param[in] a,b: lower and upper integration limits
+	!>@return val: integrated particle number over [a,b]
 	pure function chen_lamb_int_number(nref,xref,slope,a,b) result(val)
 		implicit none
 		real(wp), intent(in) :: nref,xref,slope,a,b
@@ -4131,11 +4501,23 @@
 	end function chen_lamb_int_number
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	! Chen and Lamb (1994) binning														 !
-	! Eqs. (6)–(8), with analytical transfer integrals in Eq. (15) for Chen and Lamb	 !
-	! binning mass integral				    											 !
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!	
+
+	! ============================================================================
+	! chen_lamb_int_mass
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Analytically integrates the first mass moment of the Chen-Lamb linear within-bin number
+	!>distribution over a specified mass interval.
+	!> Chen and Lamb (1994) binning														 
+	!> Eqs. (6)–(8), with analytical transfer integrals in Eq. (15) for Chen and Lamb	 
+	!> binning mass integral				    											 
+	!>@param[in] nref: number-distribution value at reference mass xref
+	!>@param[in] xref: reference mass coordinate
+	!>@param[in] slope: slope of the linear number distribution
+	!>@param[in] a,b: lower and upper integration limits
+	!>@return val: integrated particle mass moment over [a,b]
 	pure function chen_lamb_int_mass(nref,xref,slope,a,b) result(val)
 		implicit none
 		real(wp), intent(in) :: nref,xref,slope,a,b
@@ -4175,11 +4557,24 @@
 	end function chen_lamb_int_mass
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	! Chen and Lamb (1994) binning														 !
-	! Eqs. (8)–(10)  Chen and Lamb binning, calculate the density and slope, with        !
-	! special cases	for when they go negative - see paper                                !
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!	
+	! ============================================================================
+	! chen_lamb_distribution
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Constructs the positive linear Chen-Lamb within-bin number distribution that reproduces
+	!>specified bin number and mass moments.
+	!> Chen and Lamb (1994) binning														 
+	!> Eqs. (8)–(10)  Chen and Lamb binning, calculate the density and slope, with        
+	!> special cases	for when they go negative - see paper                                
+	!>@param[in] x1,x2: lower and upper source-bin mass edges
+	!>@param[in] N: total particle number in the source bin
+	!>@param[in] M: total first mass moment in the source bin
+	!>@param[out] nref: reconstructed distribution value at xref
+	!>@param[out] xref: reference mass for the linear representation
+	!>@param[out] slope: reconstructed distribution slope
+	!>@param[out] xlo,xhi: lower and upper support over which the reconstructed distribution is positive
 	subroutine chen_lamb_distribution(x1,x2,N,M,nref,xref,slope,xlo,xhi)
 		implicit none
 		real(wp), intent(in) :: x1,x2,N,M
@@ -4281,17 +4676,34 @@
 	end subroutine chen_lamb_distribution
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	! Chen and Lamb (1994) POSTGROWTH linear hybrid bin method.
-	!
-	! The accepted mean mass change is supplied by the BMM/DVODE solution.
-	! The lower and upper sub-bin limits are shifted independently assuming
-	! dm/dt proportional to m^(1/3), following the Chen & Lamb condensation
-	! example.  A new postgrowth linear distribution is then reconstructed
-	! from number and total postgrowth mass.
-	!
-	! For ice, use of the m^(1/3) edge scaling is a BMM approximation.
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!	
+
+
+	! ============================================================================
+	! chen_lamb_growth_remap
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Remaps a population after diffusional growth using the Chen-Lamb linear within-bin distribution
+	!>and analytical number/mass transfer integrals while conserving extensive moments.
+	!> The accepted mean mass change is supplied by the BMM/DVODE solution.
+	!> The lower and upper sub-bin limits are shifted independently assuming
+	!> dm/dt proportional to m^(1/3), following the Chen & Lamb condensation
+	!> example.  A new postgrowth linear distribution is then reconstructed
+	!> from number and total postgrowth mass.
+	!>
+	!> For ice, use of the m^(1/3) edge scaling is a BMM approximation.
+	!>@param[in] n_bin_modew: number of bins being remapped
+	!>@param[in] n_binst: number of fixed bins per mode
+	!>@param[in] n_mode: number of external modes
+	!>@param[in] n_comps: number of aerosol composition components
+	!>@param[in] n_moments: number of conserved moments
+	!>@param[inout] npart: particle number concentration
+	!>@param[in] mass_old: representative mass before growth
+	!>@param[inout] mass_new: representative mass after growth/remapping
+	!>@param[inout] moments: extensive conserved moments
+	!>@param[inout] mbin: per-particle component and water/ice masses
+	!>@param[in] mbinedges: fixed mass-bin edges for each mode
 	subroutine chen_lamb_growth_remap( n_bin_modew,n_binst,&
 		n_mode,n_comps,n_moments, &
 		npart,mass_old,mass_new,moments,mbin,mbinedges)
@@ -4866,14 +5278,21 @@
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	! Chen and Lamb (1994) ancillary variables                                           !
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! chen_and_lamb_anc
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
-	!>@brief calculates ancillary variables for ice growth model of Chen and Lamb (1994) 
-	!>@param[in] t,qv, qvsat,rhoa
-	!>@param[inout] v,phi,gamma_t,dep_density
+	!>@brief
+	!>Calculates the Chen-Lamb (1994) temperature/supersaturation-dependent 
+	!> growth-ratio parameter and
+	!>density of newly deposited ice.
+	!>@param[in] t: temperature
+	!>@param[in] qv: ambient water-vapour mixing ratio
+	!>@param[in] qvsat: saturation water-vapour mixing ratio over ice
+	!>@param[in] rhoa: air density
+	!>@param[inout] gamma_t: Chen-Lamb growth-ratio parameter
+	!>@param[inout] dep_density: density of newly deposited ice
     subroutine chen_and_lamb_anc(t,qv,qvsat,rhoa,gamma_t, dep_density)
         implicit none
         real(wp), intent(in) :: t,qv,qvsat,rhoa
@@ -4902,22 +5321,23 @@
     end subroutine chen_and_lamb_anc
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	! Chen and Lamb (1994) capacitance factors                                           !
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+	! ============================================================================
+	! chen_and_lamb_cap_fac
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
-	!>@brief calculates the ratio of capacitance to that of an equivalent spehre
-	!  Chen and Lamb (1994) 
-	!>@param[in] phi
-	!>@return cap_fac
+	!>@brief
+	!>Calculates the ratio of spheroidal ice capacitance to the radius of an equal-volume sphere
+	!>following Chen and Lamb (1994).
+	!>@param[in] phi: spheroid aspect ratio c/a
+	!>@return chen_and_lamb_cap_fac: capacitance correction factor relative to an equal-volume sphere
     function chen_and_lamb_cap_fac(phi)
         implicit none
         real(wp), intent(in) :: phi
         real(wp) :: chen_and_lamb_cap_fac
         real(wp) :: ecc, phi1
 
-        
         ! convert between R and a - derived from equating volume of sphere to 
         ! volume of spheroid and taking the ratio of a / r
         phi1=max(phi,1.e-8_wp)
@@ -4940,26 +5360,34 @@
 			ecc=sqrt(max(1._wp-phi1**(-2._wp),0._wp))
 	
 			chen_and_lamb_cap_fac = &
-				phi1**(twothirds) * ecc / &
-				log((1._wp+ecc)*phi1)
+				phi1**(twothirds) * ecc / log((1._wp+ecc)*phi1)
         else
 	        ! Spherical limit
             chen_and_lamb_cap_fac=1._wp
         endif
         
-        
-          
     end function chen_and_lamb_cap_fac
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
     
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! perform mass balance                                                         !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! mass_balance
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculate current mass
+	!>Calculates total parcel water mass mixing ratio from vapour, liquid and optionally ice for
+	!>mass-conservation diagnostics/correction.
+	!>@param[in] neq: length of the warm-parcel state vector
+	!>@param[in] neqice: length of the ice state vector
+	!>@param[in] y: warm-parcel state vector
+	!>@param[in] yice: ice mass state vector
+	!>@param[in] npart: liquid-particle number concentrations
+	!>@param[in] npartice: ice-particle number concentrations
+	!>@param[inout] mass1: returned total water mass mixing ratio
+	!>@param[in] n_bin_modew: number of liquid/warm bins
+	!>@param[in] irh,ite,ipr: indices of relative humidity, temperature and pressure in y
+	!>@param[in] ice_flag: switch indicating whether ice mass is included
     subroutine mass_balance(neq,neqice,y,yice,npart,npartice, &
                         mass1,n_bin_modew,irh,ite,ipr,ice_flag)
     implicit none
@@ -4984,13 +5412,20 @@
        
        
        
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! adjust the relative humidity for mass balance                                !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! adjust_relative_humidity
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>subtract the difference from the water vapour and compute new RH
+	!>Adjusts vapour mixing ratio and relative humidity so that total water matches a target mass
+	!>after a microphysical step.
+	!>@param[in] mass1: target total-water mass before the step
+	!>@param[in] mass2: calculated total-water mass after the step
+	!>@param[inout] vapour_mass: vapour mixing ratio corrected for the mass imbalance
+	!>@param[in] t: temperature
+	!>@param[in] p: pressure
+	!>@param[inout] rh: relative humidity corrected to the adjusted vapour mixing ratio
     subroutine adjust_relative_humidity(mass1,mass2,vapour_mass,t,p, rh)
         implicit none
         real(wp), intent(in) :: mass1, mass2, t, p
@@ -5007,9 +5442,24 @@
     end subroutine adjust_relative_humidity
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	! Recover mean ice-particle properties from conserved moments                  !
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+	! ============================================================================
+	! ice_particle_properties_from_moments
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Recovers mean ice aspect ratio, monomer number, depositional density and rime mass from the
+	!>conserved ice moments.
+	!>@param[in] yice: ice mass per representative particle
+	!>@param[in] npartice: ice-particle number concentration
+	!>@param[in] moments: conserved liquid and ice moments
+	!>@param[in] n_bin_modew: number of ice categories corresponding to the liquid grid
+	!>@param[in] n_comps: number of aerosol composition components preceding the ice-property moments
+	!>@param[out] phi: mean monomer aspect ratio
+	!>@param[out] nump: mean monomer number per aggregate
+	!>@param[out] rhoi: mean density of deposited/unrimed ice
+	!>@param[out] rime: rime mass per representative particle
 	subroutine ice_particle_properties_from_moments( &
 		yice,npartice,moments,n_bin_modew,n_comps, &
 		phi,nump,rhoi,rime)
@@ -5019,7 +5469,6 @@
 		real(wp), dimension(:,:), intent(in) :: moments
 		real(wp), dimension(n_bin_modew), intent(out) :: &
 			phi,nump,rhoi,rime
-			
 		integer(i4b) :: i,ii
 		real(wp), parameter :: small=1.e-60_wp
 		real(wp) :: monomer_moment
@@ -5089,13 +5538,31 @@
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! calculate the ice properties and vapour growth conditions                    !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! ice_vapour_growth_properties
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>using moments, calculate the ice growth properties
+	!>Calculates air/vapour quantities needed for ice deposition, updates Chen-Lamb deposition
+	!>properties and reconstructs current ice-particle properties from moments.
+	!>@param[inout] rhoa: air density
+	!>@param[inout] qvsat: saturation vapour mixing ratio over ice
+	!>@param[inout] qv: ambient vapour mixing ratio
+	!>@param[in] neqice: length of the ice state vector
+	!>@param[in] yice: ice mass state vector
+	!>@param[in] n_bin_modew: number of ice categories
+	!>@param[inout] npartice: ice-particle number concentration
+	!>@param[inout] phi,nump,rhoi,rime: reconstructed mean ice properties
+	!>@param[in] n_bin_mode: total liquid-plus-ice bin count
+	!>@param[in] n_moms: number of conserved moments
+	!>@param[in] n_comps: number of aerosol composition components
+	!>@param[in] moments: conserved particle moments
+	!>@param[inout] gamma_t: Chen-Lamb growth-ratio parameter
+	!>@param[inout] dep_density: density assigned to newly deposited ice
+	!>@param[in] t: temperature
+	!>@param[in] p: pressure
+	!>@param[in] rhi: relative humidity used to derive ambient vapour mixing ratio
     subroutine ice_vapour_growth_properties(rhoa,qvsat,qv,&
         neqice,yice,n_bin_modew,npartice,phi,nump,rhoi, rime, &
         n_bin_mode,n_moms,n_comps,moments, &
@@ -5125,13 +5592,33 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
        
  
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! Cloud-top entrainment according to sanchez et al 2017                        !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! cloud_top_entrainment
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>using moments, calculate the ice growth properties
+	!>Applies the cloud-top entrainment thermodynamic mixing treatment, diagnoses the entrained
+	!>fraction from moist potential temperature and updates parcel temperature and relative humidity.
+    !> Cloud-top entrainment according to sanchez et al 2017                        
+	!>@param[in] n_levels_s: number of sounding levels used in the interpolation
+	!>@param[in] n_sound: length of the supplied sounding arrays
+	!>@param[in] neq: length of the parcel state vector
+	!>@param[in] n_bin_modew: number of liquid bins
+	!>@param[inout] rh: parcel relative humidity
+	!>@param[inout] t: parcel temperature
+	!>@param[in] p: parcel pressure
+	!>@param[in] z: parcel height
+	!>@param[in] z_cbase: diagnosed cloud-base height
+	!>@param[in] theta_q_ctop,q_ctop: cloud-top moist potential temperature and total-water mixing ratio
+	!>@param[inout] theta_q_cbase,q_cbase: cloud-base moist potential temperature and total-water
+	!>mixing ratio
+	!>@param[inout] theta_q: current parcel moist potential temperature
+	!>@param[inout] x_ent: diagnosed cloud-top entrained-air fraction
+	!>@param[in] y: parcel state vector
+	!>@param[in] npart: liquid-particle number concentration
+	!>@param[in] z_sound,theta_q_sound: sounding height and moist-potential-temperature profiles
+	!>@param[inout] set_theta_q_cb_flag: flag controlling initial cloud-base reference setup
     subroutine cloud_top_entrainment(n_levels_s, n_sound, neq, n_bin_modew, &
             rh, t, p, z, z_cbase, theta_q_ctop, q_ctop, theta_q_cbase, q_cbase, theta_q, &
             x_ent, y, npart, z_sound, theta_q_sound, set_theta_q_cb_flag)   
@@ -5220,20 +5707,31 @@
             x2old=max(x2,1.e-20_wp)
             print *,x1,x2
         endif
-        
-        
     end subroutine cloud_top_entrainment        
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
                    
            
                 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! update volume and shape in moments                                           !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! update_volume_and_shape
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>update volume and shape of each crystal
+	!>Updates deposited-ice volume and phi-weighted moments after vapour deposition/sublimation using
+	!>the Chen-Lamb volume-ratio relation.
+	!>@param[in] n_bin_modew: number of ice categories
+	!>@param[in] n_bin_mode: total liquid-plus-ice bin count
+	!>@param[in] n_moments: number of conserved moments
+	!>@param[in] n_comps: number of aerosol composition components
+	!>@param[inout] momtemp: temporary deposited-volume moment array
+	!>@param[inout] moments: conserved moments to update
+	!>@param[in] neqice: length of the ice mass state vector
+	!>@param[in] yice: new ice mass state
+	!>@param[in] yoldice: old ice mass state
+	!>@param[in] gamma_t: Chen-Lamb growth-ratio parameter
+	!>@param[in] dep_density: density of newly deposited ice
+	!>@param[in] npartice: ice-particle number concentration
 	subroutine update_volume_and_shape( n_bin_modew,n_bin_mode,n_moments,n_comps, &
 		momtemp,moments,neqice,yice,yoldice, gamma_t,dep_density,npartice)
 		implicit none
@@ -5333,17 +5831,22 @@
 			! ------------------------------------------------------
 			moments(ii,n_comps+3)=vnew
 		enddo
-	
 	end subroutine update_volume_and_shape
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! reduce the rime mass in proportion during evaporation                        !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+	! ============================================================================
+	! reduce_rime
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>rime mass reduces in proportion to total mass
+	!>Reduces rime mass in proportion to total particle mass lost during sublimation/evaporation while
+	!>preventing negative rime mass.
+	!>@param[in] ipart: number of ice categories
+	!>@param[in] massnew: new total particle mass
+	!>@param[in] massold: old total particle mass
+	!>@param[inout] rimemass: rime mass per representative particle
     subroutine reduce_rime(ipart, massnew, massold, rimemass)
         implicit none
         integer(i4b), intent(in) :: ipart
@@ -5360,13 +5863,18 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
                   
                 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! one time-step of the bin-microphysics                                        !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! bin_microphysics
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates one time-step of bin-microphysics
+	!>Advances one BMM microphysics timestep, including condensational/depositional growth,
+	!>nucleation, bin remapping, entrainment and water-mass correction.
+	!>@param[in] func1: warm-parcel ODE tendency callback
+	!>@param[in] func2: ice-parcel ODE tendency callback
+	!>@param[in] func3: moving-grid/non-fixed ice-nucleation callback
+	!>@param[in] func4: fixed-grid/non-collisional ice-formation callback
     subroutine bin_microphysics(func1,func2,func3,func4)
     use numerics_type
     use numerics, only : zeroin, dvode, fmin, vode_integrate
@@ -5379,6 +5887,19 @@
     real(wp), dimension(parcel1%n_bin_modew) :: stk, vd, impaction_time, loss_rate
     integer(i4b) :: iloc, i
     
+	! ============================================================================
+	! func1
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Interface-compatible wrapper for the warm-parcel ODE tendency routine used by bin_microphysics.
+	!>@param[inout] neq: number of ODE equations
+	!>@param[inout] tt: ODE integration time
+	!>@param[inout] y: solution vector
+	!>@param[inout] ydot: derivative vector
+	!>@param[inout] rpar: real ODE workspace
+	!>@param[inout] ipar: integer ODE workspace
     interface
         subroutine func1(neq, tt, y, ydot, rpar, ipar)
             use numerics_type
@@ -5392,6 +5913,19 @@
             integer(i4b), intent(inout) :: ipar
         end subroutine func1
     end interface
+	! ============================================================================
+	! func2
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Interface-compatible wrapper for the ice-parcel ODE tendency routine used by bin_microphysics.
+	!>@param[inout] neq: number of ODE equations
+	!>@param[inout] tt: ODE integration time
+	!>@param[inout] y: solution vector
+	!>@param[inout] ydot: derivative vector
+	!>@param[inout] rpar: real ODE workspace
+	!>@param[inout] ipar: integer ODE workspace
     interface
         subroutine func2(neq, tt, y, ydot, rpar, ipar)
             use numerics_type
@@ -5405,6 +5939,29 @@
             integer(i4b), intent(inout) :: ipar
         end subroutine func2
     end interface
+	! ============================================================================
+	! func3
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Interface-compatible ice-nucleation callback used by bin_microphysics for the non-fixed/moving
+	!>particle representation.
+	!>@param[inout] npart: liquid-particle number concentration
+	!>@param[inout] npartice: ice-particle number concentration
+	!>@param[in] mwat: liquid-water mass per representative particle
+	!>@param[in] mbin2: aerosol-component masses in liquid particles
+	!>@param[inout] mbin2_ice: aerosol-component and ice masses in ice particles
+	!>@param[in] rhobin,nubin,kappabin,molwbin: aerosol-component thermodynamic properties
+	!>@param[inout] moments: conserved liquid/ice moments
+	!>@param[inout] t: parcel temperature
+	!>@param[in] p: pressure
+	!>@param[in] sz: number of aerosol composition components
+	!>@param[in] sz2: number of liquid/warm bins
+	!>@param[in] sz3: number of conserved moments
+	!>@param[inout] yice: ice mass per representative particle
+	!>@param[in] rh: relative humidity
+	!>@param[in] dt: timestep
     interface
         subroutine func3(npart, npartice, mwat,mbin2,mbin2_ice, &
                          rhobin,nubin,kappabin,molwbin,moments, &
@@ -5423,6 +5980,34 @@
             real(wp), intent(inout), dimension(sz2) :: yice
         end subroutine func3
     end interface
+	! ============================================================================
+	! func4
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Interface-compatible fixed-grid non-collisional ice-formation callback used by bin_microphysics.
+	!>@param[inout] npart: liquid-particle number concentration
+	!>@param[inout] npartice: ice-particle number concentration
+	!>@param[in] mwat: liquid-water mass per representative particle
+	!>@param[in] mbin2: aerosol-component masses in liquid particles
+	!>@param[inout] mbin2_ice: aerosol-component and ice masses in ice particles
+	!>@param[in] rhobin,nubin,kappabin,molwbin: aerosol-component thermodynamic properties
+	!>@param[inout] moments: conserved liquid/ice moments
+	!>@param[in] medges: fixed mass-bin edges
+	!>@param[inout] t: parcel temperature
+	!>@param[in] p: pressure
+	!>@param[in] nbins1: number of fixed bins per mode
+	!>@param[in] ncomps: number of aerosol composition components
+	!>@param[in] nbinw: number of liquid/warm bins
+	!>@param[in] nmoms: number of conserved moments
+	!>@param[in] nmodes: number of external modes
+	!>@param[inout] yice: ice mass per representative particle
+	!>@param[in] rh: relative humidity
+	!>@param[in] dt: timestep
+	!>@param[in] sce_flag: SCE switch
+	!>@param[in] mode1_flag: switch for mode-1 secondary-ice treatment
+	!>@param[in] ice_nucleation_flag: selector for the non-collisional ice-nucleation treatment
     interface
         subroutine func4(npart, npartice, mwat,mbin2,mbin2_ice, &
                          rhobin,nubin,kappabin,molwbin,moments,medges, &
@@ -5741,14 +6326,16 @@
     
     
     
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! output to netcdf                                                             !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! inhomog_mix
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>output 1 time-step of model
-	!>@param[inout] new_file
+	!>Returns the temperature-balance residual for an inhomogeneous entrainment/mixing event while
+	!>diagnosing dilution, evaporation and parcel-radius/velocity changes.
+	!>@param[in] dt_guess: trial parcel temperature change used by the root finder
+	!>@return inhomog_mix: calculated latent-plus-mixing temperature change minus dt_guess
     function inhomog_mix(dt_guess)
     use numerics_type
     implicit none
@@ -5852,6 +6439,17 @@
     end function inhomog_mix
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
+	! ============================================================================
+	! entrainment
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Applies environmental entrainment/dilution, optional inhomogeneous mixing and aerosol
+	!>release/entrainment, then equilibrates entraining/temporary aerosol water with Kohler or
+	!>kappa-Kohler plus FHH theory.
+	!>@param[in] tth: model-time threshold used when deciding whether an inhomogeneous entrainment
+	!>event is allowed
 	subroutine entrainment(tth)
 		use numerics_type
 		use numerics, only : zeroin, fmin
@@ -6133,9 +6731,15 @@
 	end subroutine entrainment
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 	
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! TERMINAL VELOCITY UPDATE                                             !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	
+	! ============================================================================
+	! update_terminal_velocities
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Recomputes current wet diameters, liquid terminal velocities and, when ice is enabled, ice
+	!>properties, projected areas and terminal velocities.
 	subroutine update_terminal_velocities()
 		implicit none
 		integer(i4b) :: n
@@ -6178,21 +6782,27 @@
 	end subroutine update_terminal_velocities
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 	
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	! Particle fallout from finite-depth parcel
-	!
-	! Treat parcel as a well-mixed volume of vertical depth residence_depth.
-	! Particles are removed with residence time:
-	!
-	!      tau = residence_depth / terminal_velocity
-	!
-	! Hence:
-	!
-	!      N(t+dt) = N(t) exp(-Vt dt / residence_depth)
-	!
-	! Per-particle masses and properties are unchanged.  All extensive moments
-	! must be reduced by the same factor as particle number.
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! apply_particle_fallout
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Applies finite-residence-depth fallout to liquid and ice populations using exponential survival
+	!>and removes all extensive moments by the same fraction.
+	!> Particle fallout from finite-depth parcel
+	!>
+	!> Treat parcel as a well-mixed volume of vertical depth residence_depth.
+	!> Particles are removed with residence time:
+	!>
+	!>      tau = residence_depth / terminal_velocity
+	!>
+	!> Hence:
+	!>
+	!>      N(t+dt) = N(t) exp(-Vt dt / residence_depth)
+	!>
+	!> Per-particle masses and properties are unchanged.  All extensive moments
+	!> must be reduced by the same factor as particle number.
 	subroutine apply_particle_fallout()
 		implicit none
 		integer(i4b) :: i,n
@@ -6257,9 +6867,14 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
     
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! HELPER ROUTINE                                                       !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! check
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Checks a NetCDF status code and terminates with the corresponding NetCDF error message on failure.
+	!>@param[in] status: NetCDF status code returned by an nf90 call
     subroutine check(status)
     use netcdf
     use numerics_type
@@ -6273,14 +6888,18 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
     
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! output to netcdf                                                             !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! output
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
+	!>Writes the current BMM parcel, particle, moment, optical and fallout diagnostics to the NetCDF
+	!>output file.
 	!>output 1 time-step of model
-	!>@param[inout] new_file
+	!>@param[inout] new_file: true when the NetCDF output file and variables must be created; reset
+	!>after initial creation
+	!>@param[in] outputfile: path/name of the NetCDF output file
     subroutine output(new_file,outputfile)
 
     use numerics_type
@@ -6941,18 +7560,18 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! map to sce                                                                   !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! map_to_sce
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>map the BMM to the SCE variables
-	!>@param[in] ice_flag - flag to say if we are computing ice
+	!>Copies the current BMM liquid and optional ice populations into the combined arrays used by the
+	!>SCE routines.
+	!>@param[in] ice_flag: switch indicating whether ice populations are included
 	subroutine map_to_sce(ice_flag)
 	implicit none
 	integer(i4b), intent(in) :: ice_flag
-	
 	
     ! map BMM to SCE
     parcel1%npartall(1:parcel1%n_bin_modew)=parcel1%npart
@@ -6968,14 +7587,17 @@
                         parcel1%n_comps+1)= &
             parcel1%yice(1:parcel1%n_bin_modew)
     endif      
-	
-	
     end subroutine map_to_sce
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	! Update collision kernel from current BMM particle properties                 !
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! update_collision_kernel
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Recomputes the full symmetric collision kernel from current liquid/ice dimensions, projected
+	!>areas, masses, terminal velocities and air properties.
 	subroutine update_collision_kernel()	
 		use sce, only : collision_air_properties, &
 						collision_kernel_pair, &
@@ -7098,18 +7720,18 @@
 	end subroutine update_collision_kernel
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! map to bmm                                                                   !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! map_to_bmm
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>map the SCE to the BMM variables
-	!>@param[in] ice_flag - flag to say if we are computing ice
+	!>Copies the combined post-SCE liquid and optional ice populations back into the native BMM arrays
+	!>and solution vectors.
+	!>@param[in] ice_flag: switch indicating whether ice populations are included
 	subroutine map_to_bmm(ice_flag)
 	implicit none
 	integer(i4b), intent(in) :: ice_flag
-	
 	
     parcel1%npart=parcel1%npartall(1:parcel1%n_bin_modew)
     parcel1%mbin=parcel1%mbinall(1:parcel1%n_bin_modew,:)
@@ -7119,25 +7741,26 @@
             parcel1%npartall(1+parcel1%n_bin_modew:parcel1%n_bin_mode)         
         parcel1%mbinice= &
             parcel1%mbinall(1+parcel1%n_bin_modew:parcel1%n_bin_mode,:) 
-        parcel1%yice(1:parcel1%n_bin_modew)=parcel1%mbinice(:,parcel1%n_comps+1)
-                        
-        
+        parcel1%yice(1:parcel1%n_bin_modew)=parcel1%mbinice(:,parcel1%n_comps+1)    
     endif 
-	
 	
     end subroutine map_to_bmm
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! adjust t and rh                                                              !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! adjust_t_rh
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>adjust the temperature and rh for latent heating
-	!>@param[in] totmass,p
-	!>@param[inout] t,rh
+	!>Applies latent heat of freezing/melting to temperature and recomputes relative humidity at fixed
+	!>vapour mixing ratio.
+	!>@param[in] totmass: net water mass undergoing the phase change represented by the latent-heating
+	!>adjustment
+	!>@param[inout] t: parcel temperature
+	!>@param[inout] rh: parcel relative humidity
+	!>@param[in] p: parcel pressure
 	subroutine adjust_t_rh(totmass,t,rh,p)
 	implicit none
 	real(wp), intent(inout) :: t,rh
@@ -7157,14 +7780,19 @@
 
 
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! driver for bmm                                                               !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! bmm_driver
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>driver for the bin-microphysics module
-	!>@param[in] sce_flag - flag to say if we are computing the SCE
+	!>Main BMM timestep driver coordinating output, diffusional microphysics, SCE collection/secondary
+	!>ice, terminal velocities, fallout and entrainment.
+	!>@param[in] sce_flag: switch selecting stochastic collection
+	!>@param[in] hm_flag: switch for Hallett-Mossop secondary-ice production
+	!>@param[in] break_flag: selector for collisional ice-breakup treatment
+	!>@param[in] mode1_flag: switch for mode-1 secondary-ice production
+	!>@param[in] mode2_flag: switch for mode-2 secondary-ice production
     subroutine bmm_driver(sce_flag,hm_flag,break_flag,mode1_flag, mode2_flag)
     use numerics_type
     use sce, only : sce_microphysics, sce_sip_microphysics, qsmall
@@ -7283,16 +7911,8 @@
     call output(io1%new_file,outputfile)
     
     
-    
-    
     end subroutine bmm_driver
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-
-
-
-
-
 
 	end module bmm	
 
