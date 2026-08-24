@@ -3764,7 +3764,7 @@
 	!>@param[in] nmoms: number of conserved moments
 	!>@param[in] nmodes: number of external modes
 	!>@param[inout] yice: ice mass per representative particle
-	!>@param[in] rh: ambient relative humidity
+	!>@param[inout] rh: ambient relative humidity
 	!>@param[in] dt: timestep
 	!>@param[in] sce_flag: SCE switch controlling fixed-grid treatment
 	!>@param[in] mode1_flag: switch for mode-1 secondary-ice treatment
@@ -3778,7 +3778,7 @@
     use sce, only : calculate_mode1
     implicit none
     real(wp), intent(inout) :: t
-    real(wp), intent(in) :: p,rh,dt
+    real(wp), intent(in) :: p,dt
     real(wp), dimension(nbinw), intent(inout) :: npart,npartice
     real(wp), dimension(nbinw), intent(in) :: mwat
     real(wp), dimension(nbinw,ncomps), intent(in) :: &
@@ -3790,7 +3790,6 @@
     real(wp), dimension(nbins1+1,nmodes), intent(in) :: medges
     integer(i4b), intent(in) :: sce_flag, ice_nucleation_flag
     logical, intent(in) :: mode1_flag
-    
 
     real(wp), dimension(nbinw) :: nw,aw,jw,dn01,m01,ns,dw,dd,kappa,rhoat
     real(wp), dimension(nbinw,ncomps) :: dmaer01
@@ -3798,7 +3797,8 @@
     real(wp), dimension(nmoms) :: momtemp
 
     real(wp), intent(inout), dimension(nbinw) :: yice
-
+	real(wp), intent(inout) :: rh
+	
     integer(i4b) :: i,j,k, inew, it, ib
     real(wp) :: fracinliq, fracinice, naer05, nprimary
     real(wp) :: n, nt, nb, mt, mb, mnew, nleft, mttot, mbtot, mleft, mall,  &
@@ -4037,9 +4037,12 @@
 
 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! latent heat of fusion (these freeze so this is how much heat is released):
-    if (.not.chamber_override) &
-	    t=t+lf/cp*sum(mwat(:)*dn01(:))
+	! Freezing releases latent heat.  Vapour mass is unchanged, so
+	! recompute RH at the updated temperature.
+	if (.not.chamber_override) then
+		call adjust_t_rh(sum(mwat(:)*dn01(:)),t,rh,p)
+	endif
+	
     end subroutine noncollisional_iceformation
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
@@ -4097,7 +4100,7 @@
 	!>@param[in] sz2: number of liquid/warm bins
 	!>@param[in] sz3: number of conserved moments
 	!>@param[inout] yice: ice mass per representative particle
-	!>@param[in] rh: ambient relative humidity
+	!>@param[inout] rh: ambient relative humidity
 	!>@param[in] dt: timestep
     subroutine icenucleation(npart, npartice, mwat,mbin2,mbin2_ice, &
                          rhobin,nubin,kappabin,molwbin, &
@@ -4106,7 +4109,7 @@
       use sce, only : calculate_mode1
       implicit none
       real(wp), intent(inout) :: t
-      real(wp), intent(in) :: p,rh,dt
+      real(wp), intent(in) :: p,dt
       real(wp), dimension(sz2), intent(inout) :: npart,npartice
       real(wp), dimension(sz2), intent(in) :: mwat
       real(wp), dimension(sz2,sz), intent(in) :: &
@@ -4120,6 +4123,7 @@
       real(wp), dimension(sz2,sz) :: dmaer01
       
       real(wp), intent(inout), dimension(sz2) :: yice
+      real(wp), intent(inout) :: rh
       
       integer(i4b) :: i
       real(wp) :: fracinliq, fracinice, naer05, nprimary, dprimary
@@ -4260,8 +4264,11 @@
       moments(1+sz2:2*sz2,1:sz)=dmaer01(:,:)
       mbin2_ice(:,sz+1)=yice
       
-      ! latent heat of fusion:
-      t=t+lf/cp*sum(mwat(:)*dn01(:))
+	! Freezing releases latent heat.  Vapour mass is unchanged, so
+	! recompute RH at the updated temperature.
+	if (.not.chamber_override) then
+		call adjust_t_rh(sum(mwat(:)*dn01(:)),t,rh,p)
+	endif
     end subroutine icenucleation
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
@@ -5960,7 +5967,7 @@
 	!>@param[in] sz2: number of liquid/warm bins
 	!>@param[in] sz3: number of conserved moments
 	!>@param[inout] yice: ice mass per representative particle
-	!>@param[in] rh: relative humidity
+	!>@param[inout] rh: relative humidity
 	!>@param[in] dt: timestep
     interface
         subroutine func3(npart, npartice, mwat,mbin2,mbin2_ice, &
@@ -5969,7 +5976,7 @@
             use numerics_type
             implicit none
             real(wp), intent(inout) :: t
-            real(wp), intent(in) :: p,rh,dt
+            real(wp), intent(in) :: p,dt
             real(wp), dimension(sz2), intent(inout) :: npart,npartice
             real(wp), dimension(sz2), intent(in) :: mwat
             real(wp), dimension(sz2,sz), intent(in) :: mbin2, &
@@ -5978,6 +5985,7 @@
             integer(i4b), intent(in) :: sz,sz2, sz3
             real(wp), dimension(sz2,sz+1), intent(inout) :: mbin2_ice
             real(wp), intent(inout), dimension(sz2) :: yice
+            real(wp), intent(inout) :: rh
         end subroutine func3
     end interface
 	! ============================================================================
@@ -6003,7 +6011,7 @@
 	!>@param[in] nmoms: number of conserved moments
 	!>@param[in] nmodes: number of external modes
 	!>@param[inout] yice: ice mass per representative particle
-	!>@param[in] rh: relative humidity
+	!>@param[inout] rh: relative humidity
 	!>@param[in] dt: timestep
 	!>@param[in] sce_flag: SCE switch
 	!>@param[in] mode1_flag: switch for mode-1 secondary-ice treatment
@@ -6016,7 +6024,7 @@
             use numerics_type
             implicit none
             real(wp), intent(inout) :: t
-            real(wp), intent(in) :: p,rh,dt
+            real(wp), intent(in) :: p,dt
             real(wp), dimension(nbinw), intent(inout) :: npart,npartice
             real(wp), dimension(nbinw), intent(in) :: mwat
             real(wp), dimension(nbinw,ncomps), intent(in) :: mbin2, &
@@ -6028,6 +6036,7 @@
             real(wp), intent(in), dimension(nbins1+1,nmodes) :: medges
             integer(i4b), intent(in) :: sce_flag, ice_nucleation_flag
             logical, intent(in) :: mode1_flag
+            real(wp), intent(inout) :: rh
         end subroutine func4
     end interface
     
