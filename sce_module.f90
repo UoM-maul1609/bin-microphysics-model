@@ -41,8 +41,7 @@
                             ice_flag, imoms
             real(wp) :: dt
             real(wp) :: z,p,t,w,rh
-                        
-                        
+                           
             ! liquid water
             real(wp), dimension(:), allocatable :: d, maer, npart, rho_core, &
                             rh_eq, rhoat, dw, da_dt, ndrop
@@ -59,13 +58,8 @@
                             phi, rhoi, nump, rime, vel, nre, cd
             real(wp), dimension(:,:), allocatable :: mbinice, rhobinice, &
                                         nubinice,molwbinice,kappabinice ! all bins x all comps                                
-
-            
-            
             logical :: break_flag=.false.
-            
         end type parcel
-
 
         type io
             ! variables for io
@@ -108,9 +102,7 @@
 
         ! cloud spec
         real(wp), allocatable, dimension(:,:) :: lwc, dbar, iwc, dbari
-        
-        
-
+    
         ! Vardiman (1978) fits to figure 6 - note delta M in units on g cm s-1
         real(wp), dimension(3), parameter :: vard01=[0.000495314304309_wp, &
                                                  0.281199363154805_wp, &
@@ -141,29 +133,29 @@
 	contains	
 	
 		
-		
+	! ============================================================================
+	! allocate_arrays
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>allocate arrays for activation code
-	!>@param[in] n_intern: number of aerosol modes of same kind
-	!>@param[in] n_mode: number of aerosol modes
-	!>@param[in] n_sv: number of organic / volatility modes
-	!>@param[in] n_bins: number of size bins in a mode
-	!>@param[in] n_comps: number of different compositions in a mode
-	!>@param[inout] n_aer1: number conc. in modes
-	!>@param[inout] d_aer1: diameter in modes
-	!>@param[inout] sig_aer1: geo std in modes
-	!>@param[inout] mass_frac_aer1:mass_fraction of each component
-	!>@param[inout] molw_core1:molw in core
-	!>@param[inout] density_core1: solute density
-	!>@param[inout] nu_core1: van hoff factor
-	!>@param[inout] kappa_core1: kappa parameter
-	!>@param[inout] lwc: liquid water content
-	!>@param[inout] dbar: mean diameter
-	!>@param[inout] iwc: ice water content
-	!>@param[inout] dbari: mean diameter of ice
-	!>@param[inout] ncloud: for initialisation
+	!>Allocates aerosol, cloud, ice, composition and semivolatile-property arrays used by the SCE
+	!>module.
+	!>@param[in] n_intern: number of internal lognormal modes in each aerosol mode
+	!>@param[in] n_mode: number of external aerosol modes
+	!>@param[in] n_sv: number of semivolatile/volatility bins
+	!>@param[in] n_bins: number of aerosol size bins per mode
+	!>@param[in] n_comps: number of aerosol composition components
+	!>@param[inout] n_aer1,d_aer1,sig_aer1: allocatable aerosol lognormal parameters
+	!>@param[inout] mass_frac_aer1: allocatable component mass fractions for each aerosol mode
+	!>@param[inout] molw_core1,density_core1,nu_core1,kappa_core1: allocatable aerosol-component
+	!>thermodynamic properties
+	!>@param[inout] org_content1,molw_org1,kappa_org1,density_org1,delta_h_vap1,nu_org1,log_c_star1:
+	!>allocatable semivolatile-organic properties
+	!>@param[inout] lwc,dbar: allocatable liquid-water-content and mean-drop-diameter specifications
+	!>@param[inout] iwc,dbari: allocatable ice-water-content and mean-ice-diameter specifications
+	!>@param[inout] ncloud: allocatable cloud number-concentration specification used during
+	!>initialisation
 	subroutine allocate_arrays(n_intern,n_mode,n_sv,n_bins,n_comps, &
 		                    n_aer1,d_aer1,sig_aer1,mass_frac_aer1, molw_core1, &
 		                    density_core1, nu_core1, kappa_core1, &
@@ -242,17 +234,21 @@
 		if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
 
 	end subroutine allocate_arrays
-	
-	
-	
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	! read in the namelist                                                         !
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	
+	
+	
+	! ============================================================================
+	! read_in_sce_namelist
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>read in the data from the namelists for the sce microphysics model
-	!>@param[in] nmlfile
+	!>Reads the SCE run/cloud namelist and the aerosol/composition specification, allocating arrays
+	!>and validating FHH/component properties.
+	!>@param[in] nmlfile: path to the SCE namelist file
+	!>@param[in] nmlfile_b: optional path to a separate BMM aerosol namelist from which aerosol_setup
+	!>and aerosol_spec are read
 	subroutine read_in_sce_namelist(nmlfile, nmlfile_b)
 		implicit none
         character (len=200), intent(in) :: nmlfile
@@ -276,10 +272,6 @@
         namelist /cloud_setup/ n_binsc,kfac,dminc,dmaxc
         namelist /cloud_spec/ lwc,dbar,iwc,dbari
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-
-
-
 
 
 
@@ -336,21 +328,34 @@
         n_binst=n_bins+n_binsc
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 	end subroutine read_in_sce_namelist
-
-
-
-
-
+	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
 	
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	! initialise arrays                                                            !
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! initialise_sce_arrays
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>interpolates the sounding to the grid
+	!>Initialises the SCE fixed mass grid, aerosol/cloud populations, component masses, equilibrium
+	!>water contents, moments and liquid/ice phase indexing.
+	!>@param[in] n_bins: number of aerosol-range bins per mode
+	!>@param[in] n_binsc: number of cloud-range bins per mode
+	!>@param[in] n_mode: number of external modes
+	!>@param[in] n_comps: number of aerosol composition components
+	!>@param[in] n_intern: number of internal lognormal modes
+	!>@param[in] ice_flag: switch indicating whether ice bins and ice moments are required
+	!>@param[in] pinit,tinit,rhinit: initial pressure, temperature and relative humidity
+	!>@param[in] dt: model timestep
+	!>@param[in] dmina,dmaxa: lower and upper aerosol dry-diameter limits
+	!>@param[in] dminc,dmaxc: lower and upper cloud-particle diameter limits used to construct the
+	!>mass grid
+	!>@param[in] mass_frac_aer1: component mass fractions for each aerosol mode
+	!>@param[in] density_core1,nu_core1,molw_core1,kappa_core1: aerosol-component thermodynamic
+	!>properties
+	!>@param[in] n_aer2,d_aer2,sig_aer2: aerosol lognormal number, median-diameter and width
+	!>parameters used for initialisation
     subroutine initialise_sce_arrays(n_bins, n_binsc,n_mode, n_comps, n_intern, &
                     ice_flag, &
                     pinit,tinit,rhinit,dt,dmina,dmaxa,dminc,dmaxc,&
@@ -400,7 +405,6 @@
     parcel1%imoms=ice_flag*5                            ! phi, nmon, vol, rim, unf
     !--
 
-    
     parcel1%p=pinit
     parcel1%t=tinit
     parcel1%rh=rhinit
@@ -474,9 +478,6 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
-
-
-
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! set-up size distribution                                                     !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -522,8 +523,6 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
     
-    
-    
 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! aerosol mass - total                                                         !
@@ -556,7 +555,6 @@
                         parcel1%maer(1:parcel1%n_bin_modew)
     endif
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
 
 
 
@@ -596,7 +594,6 @@
     endif
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-    
     
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! put water on bin, using koehler equation                                     !
@@ -821,28 +818,27 @@
         enddo
     enddo
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-
     end subroutine initialise_sce_arrays
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
 
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	! collision efficiency                                                         !
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! ecollision
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the collision efficiency between two droplets according to the 
-	!> `Long' kernel
-	!>@param[in] t, p - temperature and pressure
-	!>@param[in] dw, mw - diameters and masses of droplets
-	!>@param[in] sz - size of array
-	!>@param[inout] ecoll: collision efficiency, vel: terminal fall-speed
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	! Liquid collision kernel                                                      !
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	!>Builds the symmetric liquid-liquid collision kernel using Long gravitational collection
+	!>efficiency together with turbulent and Brownian collision contributions.
+	!>@param[in] t: temperature
+	!>@param[in] p: pressure
+	!>@param[in] dw: wet drop diameters
+	!>@param[in] mw: total drop masses
+	!>@param[in] sz: number of liquid bins
+	!>@param[out] ecoll: symmetric collision-kernel matrix
+	!>@param[in] vel: terminal fall speeds
+	!>@param[in] nre: particle Reynolds numbers
 	subroutine ecollision(t,p,dw,mw,sz,ecoll,vel,nre)
 		implicit none
 		real(wp), intent(in) :: t,p
@@ -878,9 +874,17 @@
 	end subroutine ecollision
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	! Long liquid-drop collection efficiency for one pair                          !
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! long_collection_efficiency_pair
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Calculates the Long liquid-drop gravitational collection efficiency for one pair of particle
+	!>diameters.
+	!>@param[in] d1,d2: particle diameters
+	!>@return long_collection_efficiency_pair: gravitational collection efficiency, bounded between
+	!>zero and one
 	real(wp) function long_collection_efficiency_pair(d1,d2)
 		implicit none
 		real(wp), intent(in) :: d1,d2
@@ -900,9 +904,18 @@
 	end function long_collection_efficiency_pair
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	! Air properties used by the collision kernel                                  !
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! collision_air_properties
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Calculates air transport quantities reused by the pairwise Brownian/turbulent collision kernel.
+	!>@param[in] t: temperature
+	!>@param[in] p: pressure
+	!>@param[out] va: kinematic viscosity of air
+	!>@param[out] prefac: Brownian-diffusion prefactor used in the particle diffusion coefficient
+	!>@param[out] lambda_air: molecular mean free path of air
 	subroutine collision_air_properties(t,p,va,prefac,lambda_air)
 		implicit none
 		real(wp), intent(in) :: t,p
@@ -922,9 +935,25 @@
 	end subroutine collision_air_properties
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	! Complete collision kernel for one particle pair                              !
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! collision_kernel_pair
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Calculates the complete collision kernel for one particle pair from gravitational settling,
+	!>turbulent inertia, turbulent shear, Brownian motion and Brownian enhancement.
+	!>@param[in] t: temperature
+	!>@param[in] dia1,dia2: characteristic collision diameters of the two particles
+	!>@param[in] area1,area2: projected areas of the two particles
+	!>@param[in] mass1,mass2: total masses of the two particles
+	!>@param[in] vel1,vel2: terminal fall speeds
+	!>@param[in] reyn1,reyn2: Reynolds numbers
+	!>@param[in] effgrav: gravitational collection efficiency for the pair
+	!>@param[in] va: air kinematic viscosity
+	!>@param[in] prefac: Brownian diffusion prefactor
+	!>@param[in] lambda_air: air mean free path
+	!>@param[out] kernel: total collision kernel
 	subroutine collision_kernel_pair( &
 		t,dia1,dia2,area1,area2,mass1,mass2,vel1,vel2,reyn1,reyn2,effgrav, &
 		va,prefac,lambda_air,kernel)
@@ -995,24 +1024,15 @@
 		jump1=8._wp*diff1/(pi*vtherm1)
 		jump2=8._wp*diff2/(pi*vtherm2)
 	
-		delta1sq = &
-			((dia1+jump1)**3 - &
-			 (dia1**2+jump1**2)**1.5_wp) / &
-			 (3._wp*dia1*jump1) - dia1
+		delta1sq = ((dia1+jump1)**3 - &
+			 (dia1**2+jump1**2)**1.5_wp) /  (3._wp*dia1*jump1) - dia1
 		delta1sq=delta1sq**2
-		delta2sq = &
-			((dia2+jump2)**3 - &
-			 (dia2**2+jump2**2)**1.5_wp) / &
-			 (3._wp*dia2*jump2) - dia2
+		delta2sq = ((dia2+jump2)**3 - &
+			 (dia2**2+jump2**2)**1.5_wp) /  (3._wp*dia2*jump2) - dia2
 		delta2sq=delta2sq**2
-		kbrown = &
-			2._wp*pi*(dia1+dia2)*(diff1+diff2) / &
-			( &
-			(dia1+dia2) / &
-			(dia1+dia2+2._wp*sqrt(delta1sq+delta2sq)) + &
-			8._wp*(diff1+diff2) / &
-			(sqrt(vtherm1**2+vtherm2**2)*(dia1+dia2)) &
-			)
+		kbrown = 2._wp*pi*(dia1+dia2)*(diff1+diff2) / &
+			( (dia1+dia2) / (dia1+dia2+2._wp*sqrt(delta1sq+delta2sq)) + &
+			8._wp*(diff1+diff2) / (sqrt(vtherm1**2+vtherm2**2)*(dia1+dia2)) )
 		! ----------------------------------------------------------------------
 		! Brownian diffusion enhancement
 		!
@@ -1052,24 +1072,24 @@
 
 
 
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	! integrate lognormal                                                          !
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! lognormal_n_between_limits
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>finds the number of aerosol particles between two limits
-	!>@param[in] n_aer1,d_aer1, sig_aer1: lognormal parameters
-	!>@param[in] n_intern: number of internal modes
-	!>@param[in] dmin,dmax: max / min diameters
-	!>@param[inout] num: number of aerosol particles
+	!>Integrates the number concentration of a sum of lognormal aerosol modes between two dry diameters.
+	!>@param[in] n_aer1,d_aer1,sig_aer1: number concentration, median diameter and logarithmic width
+	!>of each internal mode
+	!>@param[in] n_intern: number of internal lognormal modes
+	!>@param[in] dmin,dmax: lower and upper dry-diameter limits
+	!>@param[inout] num: integrated number concentration between the limits
     subroutine lognormal_n_between_limits(n_aer1,d_aer1,sig_aer1,n_intern,dmin,dmax, &
                                         num)
     real(wp), intent(in) :: dmin,dmax
     real(wp), intent(in), dimension(n_intern) :: n_aer1,d_aer1,sig_aer1
     integer(i4b), intent(in) :: n_intern
     real(wp), intent(inout) :: num
-    
     integer(i4b) :: i
 
     num=0._wp                                 
@@ -1081,19 +1101,19 @@
     end subroutine lognormal_n_between_limits
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
-    
-    
 
 
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	! calculate the upper diameter of bin edge                                     !
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! find_upper_diameter
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>called using zbrent to find the upper bin edge in size distribution
-	!>@param[in] x: dmax guess
-	!>@return find_upper_bin_edge: zero when root found
+	!>Returns the root-finder residual used to locate an aerosol-bin upper diameter containing the
+	!>target particle number.
+	!>@param[in] x: trial upper dry diameter
+	!>@return find_upper_diameter: integrated number between the current lower edge and x minus the
+	!>target bin number
     function find_upper_diameter(x)
         use numerics_type
         implicit none
@@ -1109,13 +1129,13 @@
 
     
 
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	! saturation vapour pressure over liquid                                       !
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! svp_liq
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the saturation vapour pressure over liquid water according to buck fit
+	!>Calculates saturation vapour pressure over liquid water using the Buck formulation.
 	!>@param[in] t: temperature
 	!>@return svp_liq: saturation vapour pressure over liquid water
 	function svp_liq(t)
@@ -1128,14 +1148,17 @@
 			  (t-ttr)/(257.14_wp + (t-ttr)))
 	end function svp_liq
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	! saturation vapour pressure over ice                                          !
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+	! ============================================================================
+	! svp_ice
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the saturation vapour pressure over ice water according to buck fit
+	!>Calculates saturation vapour pressure over ice using the Buck formulation.
 	!>@param[in] t: temperature
-	!>@return svp_ice: saturation vapour pressure over ice water
+	!>@return svp_ice: saturation vapour pressure over ice
 	function svp_ice(t)
 		use numerics_type
 		implicit none
@@ -1144,19 +1167,20 @@
 		svp_ice = 100._wp*6.1115_wp* &
             exp((23.036_wp - (t-ttr)/ 333.7_wp)* &
             (t-ttr)/(279.82_wp + (t-ttr)))
-
 	end function svp_ice
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! diffusivity of water vapour in air										   !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! dd
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the diffusivity of water vapour in air
-	!>@param[in] t: temperature, p: pressure
-	!>@return dd: diffusivity of water vapour in air
+	!>Calculates the molecular diffusivity of water vapour in air.
+	!>@param[in] t: temperature
+	!>@param[in] p: pressure
+	!>@return dd: water-vapour diffusivity in air
     function dd(t,p)
       use numerics_type
       implicit none
@@ -1165,14 +1189,15 @@
       t1=max(t,200._wp)
       dd=2.11e-5_wp*(t1/ttr)**1.94_wp*(101325._wp/p)
     end function dd
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! conductivity of water vapour												   !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! ka
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the thermal conductivity of air
+	!>Calculates the thermal conductivity of air.
 	!>@param[in] t: temperature
 	!>@return ka: thermal conductivity of air
     function ka(t)
@@ -1183,16 +1208,17 @@
       t1=max(t,200._wp)
       ka=(5.69_wp+0.017_wp*(t1-ttr))*1.e-3_wp*joules_in_a_cal
     end function ka
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! viscosity of air - page 417 pruppacher and klett							   !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! viscosity_air
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the viscosity of air
+	!>Calculates the dynamic viscosity of air page 417 pruppacher and klett.
 	!>@param[in] t: temperature
-	!>@return viscosity_air: viscosity of air
+	!>@return viscosity_air: dynamic viscosity of air
     function viscosity_air(t)
         use numerics_type
         implicit none
@@ -1209,17 +1235,19 @@
             viscosity_air = (1.718_wp+0.0049_wp*tc-1.2e-5_wp*tc**2) * 1e-5_wp
         end if
     end function viscosity_air
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! surface tension of water - pruppacher and klett							   !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! surface_tension
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the surface tension of water
+	!>Calculates the surface tension of liquid water.
+	!>  - pruppacher and klett
 	!>@param[in] t: temperature
-	!>@return surface_tension: surface_tension of water
+	!>@return surface_tension: surface tension of water
     function surface_tension(t)	
         use numerics_type
         real(wp), intent(in) :: t
@@ -1242,22 +1270,22 @@
     !    surface_tension=72d-3
         !sigma = 75.93_wp * joules_in_an_erg*1d4
     end function surface_tension
-    
-    
-    
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! calculate the wet diameter                                				   !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    
+    
+    
+	! ============================================================================
+	! wetdiam
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the wet diameter of a particle
-	!>@param[in] t: temperature
-	!>@param[in] mwat: mass of water
-	!>@param[in] mbin: mass of aerosol components in each bin
-	!>@param[in] rhobin: density of each component
-	!>@param[in] sz: length of array
-	!>@param[inout] dw: wet diameter
+	!>Calculates wet volume-equivalent particle diameter from aerosol-component and water masses.
+	!>@param[in] mwat: water mass per representative particle
+	!>@param[in] mbin: aerosol-component masses per representative particle
+	!>@param[in] rhobin: aerosol-component densities
+	!>@param[in] sz: number of particles/bins to process
+	!>@param[inout] dw: wet volume-equivalent particle diameter
     subroutine wetdiam(mwat,mbin,rhobin,sz,dw) 
       use numerics_type
       implicit none
@@ -1279,9 +1307,19 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! FHH adsorption correction                                                       !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! fhh_adsorption_factor
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Calculates the FHH adsorption activity factor for a mixed particle using surface-area-weighted
+	!>effective adsorption coefficients from components with A_FHH greater than zero.
+	!>@param[in] mwat: water mass per representative particle
+	!>@param[in] dw: wet particle diameter
+	!>@param[in] mbin1: component masses per representative particle
+	!>@param[in] rhobin1: component densities
+	!>@return fads: multiplicative FHH adsorption factor; unity when no adsorbing component is present
     function fhh_adsorption_factor(mwat,dw,mbin1,rhobin1) result(fads)
         implicit none
         real(wp), intent(in) :: mwat,dw
@@ -1412,23 +1450,24 @@
 
    
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! calculate the equilibrium humidity over a particle, using k-koehler          !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! koehler01
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the equilibrium humidity over a particle using K-koehler theory
+	!>Calculates equilibrium relative humidity for particle arrays using classical Kohler solute
+	!>activity with the mixed FHH adsorption correction.
 	!>@param[in] t: temperature
-	!>@param[in] mwat: mass of water
-	!>@param[in] mbin: mass of aerosol components in each bin
-	!>@param[in] rhobin: density of each component
-	!>@param[in] kappabin: kappa in each bin
-	!>@param[in] molwbin: molecular weight in each bin
-	!>@param[in] sz: length of array
-	!>@param[inout] rh_eq: equilibrium humidity
-	!>@param[inout] rhoat: density of particle
-	!>@param[inout] dw: wet diameter
+	!>@param[in] mwat: water mass per representative particle
+	!>@param[in] mbin: aerosol-component masses per representative particle
+	!>@param[in] rhobin: component densities
+	!>@param[in] nubin: van't Hoff factors for the components
+	!>@param[in] molwbin: component molecular weights
+	!>@param[in] sz: number of particles/bins to process
+	!>@param[inout] rh_eq: equilibrium relative humidity
+	!>@param[inout] rhoat: mean wet-particle density
+	!>@param[inout] dw: wet particle diameter
     subroutine kkoehler01(t,mwat,mbin,rhobin,kappabin,molwbin,sz,rh_eq,rhoat,dw) 
       use numerics_type
       implicit none
@@ -1471,16 +1510,17 @@
 
 
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! koehler equations                                                     	   !
-    ! this is coded so it can be called with a root-finder, to find the inverse	   !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! koehler02
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the equilibrium humidity over a particle using koehler theory
-	!>@param[in] nw: number of moles of water
-	!>@return koehler02: equilibrium rh - but called via root-finder, so nw is returned
+	!>Evaluates the classical-Kohler plus FHH equilibrium-humidity residual for the currently selected
+	!>BMM particle; intended for minimisation/root finding in water content.
+	!>@param[in] nw: trial number of moles of particle water
+	!>@return koehler02: signed equilibrium-humidity residual relative to rh_act, including the module
+	!>multiplier mult
     function koehler02(nw) ! only pass one variable so can use root-finders
       use numerics_type
       implicit none
@@ -1518,16 +1558,17 @@
 
 
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! kappa-koehler equations                                                      !
-    ! this is coded so it can be called with a root-finder, to find the inverse	   !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+ 	! ============================================================================
+	! kkoehler02
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the equilibrium humidity over a particle using K-koehler theory
-	!>@param[in] nw: number of moles of water
-	!>@return kkoehler02: equilibrium rh - but called via root-finder, so nw is returned
+	!>Evaluates the kappa-Kohler plus FHH equilibrium-humidity residual for the currently selected BMM
+	!>particle; intended for minimisation/root finding in water content.
+	!>@param[in] nw: trial number of moles of particle water
+	!>@return kkoehler02: signed equilibrium-humidity residual relative to rh_act, including the
+	!>module multiplier mult
     function kkoehler02(nw) ! only pass one variable so can use root-finders
       use numerics_type
       implicit none
@@ -1571,18 +1612,19 @@
     
     
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! koehler equations                                                     	   !
-    ! this is coded so it can be called with a root-finder, to find the inverse	   !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! koehler03
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the equilibrium humidity over a particle using koehler theory
+	!>Evaluates the classical-Kohler plus FHH residual as a function of total dry aerosol mass for the
+	!>selected prescribed aerosol mode.
 	!> n_sel must be set to the mode, d_dummy the water in the bin to return the 
 	!> aerosol dry mass
-	!>@param[in] nw: number of moles of water
-	!>@return koehler03: equilibrium rh - but called via root-finder, so mbin is returned
+	!>@param[in] mbin: trial total dry aerosol mass per particle
+	!>@return koehler03: signed equilibrium-humidity residual relative to rh_act, including the module
+	!>multiplier mult
     function koehler03(mbin) ! only pass one variable so can use root-finders
       use numerics_type
       implicit none
@@ -1616,18 +1658,19 @@
     
     
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! K-koehler equations                                                     	   !
-    ! this is coded so it can be called with a root-finder, to find the inverse	   !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! kkoehler03
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the equilibrium humidity over a particle using koehler theory
+	!>Evaluates the kappa-Kohler plus FHH residual as a function of total dry aerosol mass for the
+	!>selected prescribed aerosol mode.
 	!> n_sel must be set to the mode, d_dummy the water in the bin to return the 
 	!> aerosol dry mass
-	!>@param[in] nw: number of moles of water
-	!>@return kkoehler03: equilibrium rh - but called via root-finder, so mbin is returned
+	!>@param[in] mbin: trial total dry aerosol mass per particle
+	!>@return kkoehler03: signed equilibrium-humidity residual relative to rh_act, including the
+	!>module multiplier mult
     function kkoehler03(mbin) ! only pass one variable so can use root-finders
       use numerics_type
       implicit none
@@ -1667,17 +1710,22 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 	
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! calculate the terminal velocity of cloud drops                               !
-    ! see pruppacher and klett                                                     !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! terminal01
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the terminal velocity of water drops
-	!>@param[inout] vel, nre, cd: terminal velocity, reynolds number and drag coefficient
-	!>@param[in] diam, rhoat, t, p: diameter, density, temperature and pressure
-	!>@param[in] sz: size of the array to calculate terminal velocities
+	!>Calculates liquid-drop terminal velocity, Reynolds number and drag coefficient over the model
+	!>size range. see pruppacher and klett    
+	!>@param[inout] vel: terminal fall speed
+	!>@param[in] diam: wet drop diameter
+	!>@param[in] rhoat: mean drop density
+	!>@param[in] t: temperature
+	!>@param[in] p: pressure
+	!>@param[inout] nre: drop Reynolds number
+	!>@param[inout] cd: drag coefficient
+	!>@param[in] sz: number of drops/bins to process
     subroutine terminal01(vel,diam,rhoat, t,p,nre,cd,sz)
       use numerics_type
       implicit none
@@ -1753,18 +1801,23 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! calculate the ventilation coefficient for cloud drops                        !
-    ! see  pruppacher and klett - page 538-541                                     !
-    ! original reference: pruppacher and rasmussen 1979                            !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! ventilation01
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the ventilation factor for water drops
-	!>@param[inout] fv, fh: ventilation factors for vapour and heat
-	!>@param[in] diam, rhoat, t, p: diameter, density, temperature and pressure
-	!>@param[in] sz: size of the array to calculate ventilation factors
+	!>Calculates vapour and heat ventilation factors for liquid drops from their current terminal
+	!>velocities and transport properties.
+    !> see  pruppacher and klett - page 538-541                                     !
+    !> original reference: pruppacher and rasmussen 1979                            !
+	!>@param[in] diam: wet drop diameter
+	!>@param[in] rhoat: mean drop density
+	!>@param[in] t: temperature
+	!>@param[in] p: pressure
+	!>@param[inout] fv: ventilation factor for vapour diffusion
+	!>@param[inout] fh: ventilation factor for heat transfer
+	!>@param[in] sz: number of drops/bins to process
     subroutine ventilation01(diam, rhoat,t, p, fv, fh,sz)
       use numerics_type
       implicit none
@@ -1820,20 +1873,31 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! calculate the terminal velocity of ice particles                             !
-    ! see heymsfield and westbrook (2010, jas)                                     !
-    ! who corrected a bias in the fall speeds derived by mitchell and others       !
-    ! this method also works reasonably well for sub-100 micron crystals           !
-    ! see westbrook qj paper for latter point                                      !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! terminal02
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the terminal velocity of ice crystals
-	!>@param[inout] vel, nre: terminal velocity and reynolds number
-	!>@param[in] mwat, t, p, phi, rhoi, nump, rime
-	!>@param[in] sz: size of the array to calculate terminal velocities
+	!>Calculates ice-particle terminal velocity and Reynolds number using the Heymsfield-Westbrook
+	!>area-ratio formulation and current aggregate geometry.
+    !> calculate the terminal velocity of ice particles                             
+    !> see heymsfield and westbrook (2010, jas)                                     
+    !> who corrected a bias in the fall speeds derived by mitchell and others       
+    !> this method also works reasonably well for sub-100 micron crystals           
+    !> see westbrook qj paper for latter point                                      
+	!>@param[inout] vel: terminal fall speed
+	!>@param[in] mwat: total ice-particle mass per representative particle
+	!>@param[in] t: temperature
+	!>@param[in] p: pressure
+	!>@param[in] phi: mean monomer aspect ratio
+	!>@param[in] rhoi: mean depositional-ice density
+	!>@param[in] nump: mean number of monomers per aggregate
+	!>@param[in] rime: rime mass per representative particle
+	!>@param[inout] nre: Reynolds number
+	!>@param[in] sz: number of ice particles/bins to process
+	!>@param[out] dmax_out: optional maximum-dimension diagnostic
+	!>@param[out] area_out: optional projected-area diagnostic
     subroutine terminal02(vel,mwat, t,p,phi,rhoi,nump,rime,nre,sz)
       use numerics_type
       implicit none
@@ -1877,18 +1941,27 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
     
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! calculate ventilation coefficients for ice crystals                          !
-    ! see page 553 p+k                                                             !
-    ! original reference: ji 1991 and wang and ji 1992                             !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! ventilation02
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the ventilation coefficients for ice crystals
-	!>@param[inout] fv, fh: ventilation coefficients for mass and heat
-	!>@param[in] mwat, t, p, phi, rhoi, nump, rime
-	!>@param[in] sz: size of the array to calculate terminal velocities
+	!>Calculates vapour and heat ventilation factors for ice particles using current shape, density,
+	!>aggregation state and terminal velocity.
+    !> calculate ventilation coefficients for ice crystals                          
+    !> see page 553 p+k                                                             
+    !> original reference: ji 1991 and wang and ji 1992                             
+	!>@param[in] mwat: total ice-particle mass per representative particle
+	!>@param[in] t: temperature
+	!>@param[in] p: pressure
+	!>@param[in] phi: mean monomer aspect ratio
+	!>@param[in] rhoi: mean depositional-ice density
+	!>@param[in] nump: mean number of monomers per aggregate
+	!>@param[in] rime: rime mass per representative particle
+	!>@param[inout] fv: ventilation factor for vapour diffusion
+	!>@param[inout] fh: ventilation factor for heat transfer
+	!>@param[in] sz: number of ice particles/bins to process
     subroutine ventilation02(mwat, t, p,phi, rhoi, nump,rime,fv, fh,sz)
       use numerics_type
 
@@ -1958,17 +2031,22 @@
     
     
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! calculate growth rate of a cloud droplet					  				   !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! dropgrowthrate01
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates diffusional growth rate for water drops
-	!>@param[in] t,p, rh: temperature, pressure, and rh
-	!>@param[in] rh_eq, rhoat, diam: equilibrium rh, density, diameter
-	!>@param[in] sz: size of array
-	!>@return dropgrowthrate01: growth rate of drops
+	!>Calculates diffusional liquid-drop radial growth rate including kinetic, thermal and optional
+	!>ventilation corrections.
+	!>@param[in] t: temperature
+	!>@param[in] p: pressure
+	!>@param[in] rh: ambient liquid-water saturation ratio/relative humidity used by the growth equation
+	!>@param[in] rh_eq: equilibrium relative humidity at each particle surface
+	!>@param[in] rhoat: mean wet-particle density
+	!>@param[in] diam: wet particle diameter
+	!>@param[in] sz: number of particles/bins to process
+	!>@return dropgrowthrate01: radial growth rate of each liquid particle
     function dropgrowthrate01(t,p,rh,rh_eq,rhoat,diam,sz) 
       use numerics_type
       implicit none
@@ -2008,9 +2086,27 @@
 
 
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! calculate growth rate of an ice crystal					  				   !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! icegrowthrate01
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Calculates diffusional ice mass-growth rate using particle capacitance, deposition kinetics,
+	!>thermal resistance and optional ventilation.
+	!>@param[in] t: temperature
+	!>@param[in] p: pressure
+	!>@param[in] rh_ice: ambient relative humidity with respect to ice
+	!>@param[in] rh_eq: equilibrium relative humidity with respect to ice for each particle
+	!>@param[in] mwat: total ice-particle mass per representative particle
+	!>@param[in] mbin: aerosol-component masses carried by the ice particles
+	!>@param[in] rhobin: aerosol-component densities
+	!>@param[in] phi: mean monomer aspect ratio
+	!>@param[in] rhoi: mean depositional-ice density
+	!>@param[in] nump: mean monomer number per aggregate
+	!>@param[in] rime: rime mass per representative particle
+	!>@param[in] sz: number of ice particles/bins to process
+	!>@return icegrowthrate01: vapour-deposition/sublimation mass-growth rate for each ice particle
     function icegrowthrate01(t,p,rh_ice,rh_eq,mwat,mbin,rhobin,phi, rhoi, nump,rime,sz) 
       use numerics_type
 
@@ -2052,12 +2148,24 @@
     end function icegrowthrate01
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! calculate the capacitance of an ice crystal				  				   !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! calculates the capacitance of oblate (longer a) and prolate (longer c) 
-    ! spheroids. a is the length of the prism axis (half of) and c the basal 
-    ! (half of). see page 1214 of chen and lamb, jas, 1994.
+	! ============================================================================
+	! capacitance01
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Calculates electrostatic/diffusional capacitance of oblate and prolate spheroidal ice particles
+	!>from their mass, density and aspect ratio.
+    !> calculates the capacitance of oblate (longer a) and prolate (longer c) 
+    !> spheroids. a is the length of the prism axis (half of) and c the basal 
+    !> (half of). see page 1214 of chen and lamb, jas, 1994.
+	!>@param[in] mwat: ice-particle mass
+	!>@param[in] phi: aspect ratio c/a
+	!>@param[in] rhoice: particle/depositional ice density
+	!>@param[in] numi: mean monomer number; retained for aggregate-capacitance extensions
+	!>@param[in] rimemass: rime mass; retained for aggregate-capacitance extensions
+	!>@param[in] sz: number of particles/bins to process
+	!>@return capacitance01: ice-particle capacitance length
     function capacitance01(mwat,phi,rhoice,numi,rimemass,sz)
       use numerics_type
       implicit none
@@ -2095,16 +2203,20 @@
 
 
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! koop et al 2000 nucleation rate                                              !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! koopnucrate
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates nucleation rate of ice in supercooled water according to koop etal (2000)
-	!>@param[in] aw, t, p: activity of water, temperature, and pressure
-	!>@param[in] sz: size of array
-	!>@return koopnucrate: nucleation rate
+	!>Calculates homogeneous ice nucleation rate in supercooled liquid water using 
+	!> the Koop et al. (2000)
+	!> water-activity formulation with pressure correction.
+	!>@param[in] aw: liquid-water activity
+	!>@param[in] t: temperature
+	!>@param[in] p: pressure
+	!>@param[in] sz: number of elements in the activity array
+	!>@return koopnucrate: homogeneous nucleation rate for each element
     function koopnucrate(aw,t,p,sz)
           use numerics_type
           implicit none
@@ -2143,15 +2255,17 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
     
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! Vardiman 1978 collisional breakup                                            !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! vardiman_br
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates break up of ice particles during collisions according to vardiman (1978)
-	!>@param[in] m1,m2,v1,v2
-	!>@return nfrag: number of fragments
+	!>Calculates the number of ice fragments produced by a collision using the Vardiman (1978)
+	!>momentum-change parameterisation.
+	!>@param[in] m1,m2: masses of the colliding ice particles
+	!>@param[in] v1,v2: fall speeds of the colliding ice particles
+	!>@return vardiman_br: predicted number of collision fragments, bounded by the implementation limit
     function vardiman_br(m1,m2,v1,v2)
         use numerics_type
         implicit none
@@ -2171,24 +2285,27 @@
 		endif        
         vardiman_br = max(vard05(1)*(log(delm)**2)+vard05(2)*log(delm)+vard05(3),0._wp)
         vardiman_br = min(vardiman_br,40._wp)
-
     end function vardiman_br
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
     
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! Phillips et al 2017 collisional breakup                                      !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! phillips_br
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates break up of ice particles during collisions according to 
-	!> Phillips et al (2017)
-	!>@param[in] m1,m2,v1,v2
-	!>@return phillips_br: number of fragments
+	!>Calculates collisional ice-fragment production using the Phillips et al. (2017) breakup
+	!>parameterisation and current particle moments.
+	!>@param[in] t: temperature
+	!>@param[in] m1,m2: masses of the colliding ice particles
+	!>@param[in] vel1,vel2: fall speeds of the colliding particles
+	!>@param[in] n_comps: number of aerosol composition components preceding the ice moments
+	!>@param[in] n_moments: number of conserved moments
+	!>@param[in] n1,n2: number concentrations of the two source categories
+	!>@param[in] mom1,mom2: conserved moment vectors of the two source categories
+	!>@return phillips_br: predicted number of fragments from one collision event
     function phillips_br(t,m1,m2,vel1,vel2,n_comps,n_moments,n1,n2,mom1,mom2)
-    
-
         use numerics_type
         implicit none
         real(wp), intent(in) :: t, m1,m2,vel1,vel2,n1,n2
@@ -2331,13 +2448,30 @@
     
     
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! self collection for one bin                                                !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    !>@brief
-    !>performs the diagonal (i=i) part of the stochastic collection equation.
+	! ============================================================================
+	! sce_self_collection
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Performs diagonal self-collection for one SCE bin, removing two source particles per event and
+	!>conservatively placing the product and its moments on the mass grid.
     !>The collision-event rate is 0.5*Kii*Ni**2; each event removes two
     !>particles from bin i and creates one particle of mass 2*xn(i).
+	!>@param[in] i: source-bin index undergoing self-collection
+	!>@param[in] n_binst: number of bins per mode
+	!>@param[in] n_bin_mode: total number of bins
+	!>@param[in] n_bin_modew: number of bins in one phase block
+	!>@param[in] n_moments: number of conserved moments
+	!>@param[inout] npart: particle number concentration
+	!>@param[inout] moments: conserved extensive moments
+	!>@param[in] momtype: moment-type identifiers controlling gain-integral treatment
+	!>@param[in] ecoll: collision-kernel matrix
+	!>@param[in] indexc: receiving-mode lookup table
+	!>@param[inout] xn: representative particle mass in each bin
+	!>@param[in] rhoa: air density used to convert the kernel to collision rate in the model
+	!>concentration convention
+	!>@param[in] dt: timestep
     subroutine sce_self_collection(i,n_binst,n_bin_mode,n_bin_modew, &
     			n_moments,npart,moments, momtype,ecoll,indexc,xn,rhoa,dt)
     use numerics_type
@@ -2401,13 +2535,22 @@
     end subroutine sce_self_collection
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! one time-step of the bin-microphysics                                        !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! calculate_mode1
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates the number of fragments and their mass
+	!>Calculates Phillips mode-1 freezing-fragment production, separating small and large fragments
+	!>and limiting their total mass to the available drop mass.
+	!>@param[in] min1: liquid-drop mass participating in the freezing interaction
+	!>@param[in] min2: colliding ice-particle mass
+	!>@param[in] t: temperature
+	!>@param[inout] n: total number of generated fragments
+	!>@param[inout] nt: number of small fragments
+	!>@param[inout] nb: number of large fragments
+	!>@param[inout] mb: mass assigned to each large fragment
+	!>@param[inout] mt: mass assigned to each small fragment
     subroutine calculate_mode1(min1,min2,t,n,nt,nb,mb,mt)
         use numerics_type
         implicit none
@@ -2489,13 +2632,29 @@
     
         
     
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! one time-step of the bin-microphysics                                        !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! sce_microphysics
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates one time-step of sce-microphysics
+	!>Advances one ordinary stochastic-collection-equation timestep, including self collection,
+	!>off-diagonal collection and conservative transfer of all tracked moments.
+	!>@param[in] n_binst: number of bins per mode
+	!>@param[in] n_bin_mode: total number of liquid/ice bins
+	!>@param[in] n_bin_modew: number of bins in one phase block
+	!>@param[in] n_moments: number of conserved moments
+	!>@param[inout] npart: particle number concentration
+	!>@param[inout] moments: conserved extensive moments
+	!>@param[in] momtype: moment-type identifiers
+	!>@param[in] ecoll: collision-kernel matrix
+	!>@param[in] indexc: receiving-mode lookup table
+	!>@param[inout] xn: representative mass in each bin
+	!>@param[in] dt: timestep
+	!>@param[inout] t: temperature; retained for compatibility and phase-change coupling
+	!>@param[in] rhoa: air density used in collision rates
+	!>@param[out] totaddto: total liquid mass transferred in liquid-ice collisions for subsequent
+	!>phase-change/latent-heat bookkeeping
     subroutine sce_microphysics(n_binst,n_bin_mode,n_bin_modew,n_moments,&
     	npart,moments,momtype, ecoll,indexc,xn,dt,t,rhoa,totaddto)
     	
@@ -2512,13 +2671,11 @@
     real(wp), intent(inout) :: t
     real(wp), intent(in) :: rhoa
     real(wp), intent(out) :: totaddto
-
     
     real(wp) :: remove1,remove2,massn,massaddto,nnew, &
                 frac1, frac2
     real(wp), dimension(n_moments) :: momtemp, oldprop
     integer(i4b) :: i,j,k,l,il,ih,jl,jh, modeinto, phase, phase1,phase2
-    
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Find the min and max bins to do computations on                                    !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -2531,7 +2688,6 @@
         if (npart(i).gt.qsmall2) il=i            
     enddo
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
 
     totaddto=0._wp
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -2564,7 +2720,6 @@
             endif
             ! number to add to new bin:
             nnew = massaddto/massn
-
             
             if (nnew.lt.qsmall2) cycle
             
@@ -2587,8 +2742,6 @@
             frac1=remove1/(npart(i))
             frac2=remove2/(npart(j))
             !*****
-            
-            
             !*****
             ! the moments that need to be transferred out
             oldprop=moments(j,:)/npart(j)
@@ -2618,28 +2771,47 @@
 				remove1, remove2, momtype, xn, momtemp, oldprop, &
 				npart, moments, phase1, phase2)
 
-            
-
         enddo
     enddo    
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    
-
-
-    
+        
     end subroutine sce_microphysics
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
     
     
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! one time-step of the bin-microphysics                                        !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! sce_sip_microphysics
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>calculates one time-step of sce-sip_microphysics
+	!>Advances one SCE timestep with secondary-ice processes, including Hallett-Mossop production,
+	!>collisional breakup and Phillips mode-1/mode-2 fragmentation while conserving tracked moments.
+	!>@param[in] n_binst: number of bins per mode
+	!>@param[in] n_bin_mode: total number of liquid/ice bins
+	!>@param[in] n_bin_modew: number of bins in one phase block
+	!>@param[in] n_comps: number of aerosol composition components
+	!>@param[in] n_moments: number of conserved moments
+	!>@param[inout] npart: particle number concentration
+	!>@param[inout] moments: conserved extensive moments
+	!>@param[in] momtype: moment-type identifiers
+	!>@param[in] ecoll: collision-kernel matrix
+	!>@param[in] indexc: receiving-mode lookup table
+	!>@param[inout] xn: representative mass in each bin
+	!>@param[inout] vel: particle fall speeds used by breakup/fragmentation parameterisations
+	!>@param[in] dt: timestep
+	!>@param[inout] t: temperature
+	!>@param[in] rhoa: air density used in collision rates
+	!>@param[inout] totaddto: accumulated liquid mass transferred/frozen during mixed-phase collisions
+	!>@param[in] mass_hm_splinter: prescribed mass of a Hallett-Mossop splinter
+	!>@param[in] mass_coll_splinter: prescribed representative mass of collisional-breakup splinters
+	!>@param[in] mass_mode2_frag: representative fragment mass for Phillips mode-2 production
+	!>@param[in] hm_flag: switch for Hallett-Mossop secondary-ice production
+	!>@param[in] break_flag: selector for collisional breakup treatment
+	!>@param[in] mode1_flag: switch for Phillips mode-1 freezing fragmentation
+	!>@param[in] mode2_flag: switch for Phillips mode-2 fragmentation
     subroutine sce_sip_microphysics(n_binst,n_bin_mode,n_bin_modew,n_comps,&
     						n_moments,npart,moments,momtype, &
                             ecoll,indexc,xn,vel,dt,t, rhoa, totaddto, &
@@ -2684,7 +2856,6 @@
     enddo
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-
     totaddto=0._wp
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Main loop                                                                          !
@@ -2709,7 +2880,6 @@
             massn = xn(i) + xn(j)
             ! total mass removed (i.e. added to new bin):
             massaddto=xn(i)*remove1+xn(j)*remove2
-            
             
             !+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
             ! if ice-ice adjust this mass and reduce massaddto - do some limiting.
@@ -2786,8 +2956,7 @@
 
             endif            
             !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-            
+                        
             if((phase1.eq.0).and.(phase2.eq.1).and.(t.lt.ttr).and. &
                 (xn(i)>7.2382e-12_wp).and.(mode1_flag.or.(mode2_flag.or.hm_flag))) then
                 
@@ -2905,9 +3074,6 @@
             endif            
             !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-            
-            
-            
             ! number to add to new bin:
             nnew = massaddto/massn
             
@@ -2927,20 +3093,13 @@
             if (l.eq.jh) cycle ! this means do not do the interaction (as goes off grid)
             !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-
-
-
-
             ! the loss integral is the same as before
             ! Loss integral+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
             !*****
             ! fraction to be removed from both bins
             frac1=remove1/npart(i)
             frac2=remove2/npart(j)
-            !*****
-            
-                        
-            
+            !*****  
             
             !*****
             ! the moments that need to be transferred out
@@ -2958,23 +3117,18 @@
             moments(j,:)=moments(j,:)*(1._wp-frac2)
             !*****
             !-----------------------------------------------------------------------------
-            
-            
+                        
             ! remove the particles from the colliding bins
             npart(i)=npart(i)-remove1
             npart(j)=npart(j)-remove2  
             
-            
-            
-            
+
             ! gain integral bit+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
             call add_moments_to_new_bin(l,n_moments, n_bin_mode, &
                     massaddto, massn, masstot, remove1, remove2, momtype, xn, &
                     momtemp, oldprop, npart, moments, phase1, phase2)
 
             !-----------------------------------------------------------------------------
-
-
 
             ! Now for "fragment" category for ice-ice collisions           
             ! if both are ice phase
@@ -2990,7 +3144,6 @@
 	                    momtemp, oldprop, npart, moments,phase1,phase2)
                 !-------------------------------------------------------------------------
             endif            
-            
             
             ! Now for "splinter" category for H-M collisions           
             ! if one liquid and two ice
@@ -3040,9 +3193,7 @@
                             momtemp, oldprop, npart, moments, phase1,phase2)
                     !---------------------------------------------------------------------
                 endif            
-            endif
-            
-                        
+            endif      
             
             if (.not.mode2_flag) cycle
             ! mode 2 from here
@@ -3075,28 +3226,35 @@
                 
             endif            
             
-            
-            
-            
-            
-            
         enddo
     enddo    
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
     !t=t+totaddto*lf/cp
-
-
-
     
     end subroutine sce_sip_microphysics
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
     
     
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! Phillips et al 2018, mode 2                                                        !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! mode2_interaction
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Calculates Phillips et al. (2018)
+	!> mode-2 liquid/ice collision fragmentation from collision kinetic
+	!>energy and stage-1 frozen fraction.
+	!>@param[in] massd: liquid-drop mass
+	!>@param[in] massi: ice-particle mass
+	!>@param[in] veld: liquid-drop fall speed
+	!>@param[in] veli: ice-particle fall speed
+	!>@param[inout] nfrag_drops: number of splash-drop fragments
+	!>@param[inout] nfrag_ice: number of ice fragments
+	!>@param[in] mass_mode2_frag: representative mass assigned to mode-2 fragments
+	!>@param[inout] frac_i: fraction of splash fragments assigned to the ice phase
+	!>@param[in] t: temperature
     subroutine mode2_interaction(massd,massi,veld,veli, &
                                     nfrag_drops,nfrag_ice,mass_mode2_frag,frac_i,t)
     use numerics_type
@@ -3148,16 +3306,29 @@
     
     
     
-    
-    
-    
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! gain integral                                                                !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! add_moments_to_new_bin
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>gain integral
+	!>Applies the Bott-type gain integral to distribute collision-product number, mass and conserved
+	!>moments between the two neighbouring receiving bins.
+	!>@param[in] lf1: lower receiving-bin index
+	!>@param[in] n_moments: number of conserved moments
+	!>@param[in] n_bin_mode: total number of bins
+	!>@param[in] mass_stot: total product mass concentration to add
+	!>@param[in] mass_s: mass of one physical collision/fragment product used to locate the gain
+	!>within the receiving interval
+	!>@param[in] masstot: total transferred mass used to normalise product number and moment fractions
+	!>@param[in] remove1,remove2: particle numbers removed from the two source categories
+	!>@param[in] momtype: moment-type identifiers controlling extensive versus number-property treatment
+	!>@param[in] xn: representative mass in each grid bin
+	!>@param[inout] momtemp: transferred source-moment vector
+	!>@param[in] oldprop: per-particle properties used for number-type mixed-phase moments
+	!>@param[inout] npart: particle number concentration
+	!>@param[inout] moments: conserved extensive moments
+	!>@param[in] phase1,phase2: phase indices of the two source categories
 	subroutine add_moments_to_new_bin(lf1,n_moments, n_bin_mode, &
 	    mass_stot, mass_s, masstot, remove1, remove2, momtype, xn, &
 	    momtemp, oldprop, npart, moments, phase1,phase2)
@@ -3228,19 +3399,28 @@
     npart(lf1)=npart(lf1)+masstot*fracl
     npart(lf1+1)=npart(lf1+1)+masstot*fraclp
 	
-	
     end subroutine add_moments_to_new_bin
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
     
     
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! set the ice moments for creating new categories                              !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! set_ice_moments
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>set ice moments
+	!>Initialises phi, monomer-number, volume, rime and unfrozen-water moments for a newly created
+	!>ice-fragment population.
+	!>@param[inout] moments: moment vector to modify
+	!>@param[in] n_moments: length of the moment vector
+	!>@param[in] pm: index of the phi-weighted monomer moment
+	!>@param[in] nm: index of the monomer-number moment
+	!>@param[in] vm: index of the deposited-ice-volume moment
+	!>@param[in] rm: index of the rime-mass moment
+	!>@param[in] um: index of the unfrozen-water-mass moment
+	!>@param[in] mass_stot: total mass concentration assigned to the new fragment class
+	!>@param[in] mass_s: mass of one representative fragment
     subroutine set_ice_moments(moments,n_moments,pm,nm,vm,rm,um,mass_stot,mass_s)
     use numerics_type
     implicit none
@@ -3255,24 +3435,21 @@
     moments(vm)=mass_stot/rhoice
     moments(rm)=0._wp
     moments(um)=0._wp
-    
-    
+
     end subroutine set_ice_moments
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
 
 
-
-
-
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! driver for bmm                                                               !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! sce_driver
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>driver for the sce module
+	!>Standalone SCE driver that advances the configured collection calculation over the requested
+	!>runtime and writes diagnostics.
     subroutine sce_driver()
     use numerics_type
     implicit none
@@ -3280,23 +3457,18 @@
     real(wp), dimension(parcel1%n_bin_mode) :: tmp
     real(wp) :: rhoa, totaddto
     
-    
     nt=ceiling(runtime / real(dt,kind=wp))
     do i=1,nt
     	! calculate density
     	rhoa = parcel1%p/(parcel1%t*ra)
-    	
         ! output to file
         call output(io1%new_file,outputfile)
-        
-        
         ! one time-step of model
         call sce_microphysics(parcel1%n_binst,parcel1%n_bin_mode, parcel1%n_bin_modew, &
         			parcel1%n_comps+parcel1%imoms,&
                     parcel1%npart,parcel1%moments,parcel1%momenttype, &
                     parcel1%ecoll,parcel1%indexc, &
                     parcel1%mbin(:,parcel1%n_comps+1),parcel1%dt,parcel1%t,rhoa,totaddto)
-        
         
         ! redefine the mass of each component of aerosol
         do j=1,parcel1%n_comps
@@ -3318,20 +3490,19 @@
     ! output to file
     call output(io1%new_file,outputfile)
     
-    
-    
     end subroutine sce_driver
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
 
-
-
-
-
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! HELPER ROUTINE                                                       !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! check
+	! ============================================================================
+	!>@author
+	!>Paul J. Connolly, The University of Manchester
+	!>@brief
+	!>Checks a NetCDF status code and terminates with the corresponding NetCDF error message on failure.
+	!>@param[in] status: NetCDF status code returned by an nf90 call
     subroutine check(status)
     use netcdf
     use numerics_type
@@ -3345,14 +3516,17 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
     
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! output to netcdf                                                             !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	! ============================================================================
+	! output
+	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>output 1 time-step of model
-	!>@param[inout] new_file
+	!>Writes the current SCE particle distributions and bulk liquid/ice diagnostics to the NetCDF
+	!>output file.
+	!>@param[inout] new_file: true when the NetCDF file and variables must be created; reset after
+	!>initial creation
+	!>@param[in] outputfile: path/name of the NetCDF output file
     subroutine output(new_file,outputfile)
 
     use numerics_type
@@ -3682,18 +3856,14 @@
                 1:parcel1%n_comps), &
             (/parcel1%n_binst,parcel1%n_modes,parcel1%n_comps/)), start = (/1,1,1,io1%icur/)))
 
-
     endif
     
-
     call check( nf90_close(io1%ncid) )
 
 
     io1%icur=io1%icur+1
     end subroutine output
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-
 
 
 	end module sce	
