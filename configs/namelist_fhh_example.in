@@ -28,7 +28,9 @@
 	rhinit=0.95,
     !> Initial parcel/bubble radius [m].
 	radinit=500.,
-    !> Enable parcel/bubble radius evolution when .true.
+	!> Parcel geometry switch:
+	!>   .true.  = treat the parcel as a bubble
+	!>   .false. = treat the parcel as a plume/jet
 	bubble_flag=.false.,
     !> Legacy microphysics flag retained for compatibility; it currently does not bypass the BMM driver.
 	microphysics_flag=1,
