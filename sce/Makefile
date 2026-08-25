@@ -38,7 +38,7 @@ main.exe	:  sce_micro_lib.a  osnf_code main.$(OBJ) sce_module.$(OBJ)
 		${NETCDFLIB} -I ${NETCDFMOD} ${NETCDF_LIB} $(DEBUG)
 sce_micro_lib.a	:  osnf_code 
 	cp $(OSNF_DIR)/osnf_lib.a sce_micro_lib.a 
-sce_module.$(OBJ)	: sce_module.f90
+sce_module.$(OBJ)	: sce_module.f90 | osnf_code
 	$(FOR) sce_module.f90 -I ${NETCDFMOD} -I${OSNF_DIR}\
 	     $(FFLAGS)sce_module.$(OBJ)
 main.$(OBJ)   : main.f90 sce_module.$(OBJ) 
@@ -47,8 +47,8 @@ main.$(OBJ)   : main.f90 sce_module.$(OBJ)
 osnf_code:
 	$(MAKE) -C $(OSNF_DIR)
 clean :
-	rm *.exe *.o *.mod *~ \
-	*.a;rm -R *.dSYM
+	rm -f *.exe *.o *.mod *~ *.a
+	rm -rf *.dSYM
 
 cleanall:
 	for i in $(CLEANDIRS); do \
