@@ -28,19 +28,42 @@
         						onequarter=1._wp/4._wp, &
         						onethird=1._wp/3._wp, &
         						twothirds=2._wp/3._wp, fourthirds=4._wp/3._wp, &
-                                dh2o=2.75e-10_wp, fhh_theta_min=1.e-12_wp
+                                dh2o=2.75e-10_wp, fhh_theta_min=1.e-12_wp, &
+                                qsmall2=1.e-20_wp
 		
 		! the different bin schemes        						
 		integer(i4b), parameter :: BIN_FULL_MOVING   = 0_i4b
 		integer(i4b), parameter :: BIN_MOVING_CENTRE = 1_i4b
 		integer(i4b), parameter :: BIN_CHEN_LAMB     = 2_i4b
+
+        ! Conserved-moment semantics used by the collection solver.
+        integer(i4b), parameter :: MOMENT_EXTENSIVE = 1_i4b
+        integer(i4b), parameter :: MOMENT_NUMBER    = 2_i4b
+        integer(i4b), parameter :: MOMENT_INHERIT   = 3_i4b
+
+        ! Ice-nucleation mechanisms.  These are independent switches;
+        ! component categories below determine heterogeneous eligibility.
+        integer(i4b), parameter :: INUC_KOOP   = 1_i4b
+        integer(i4b), parameter :: INUC_INAS   = 2_i4b
+        integer(i4b), parameter :: INUC_DEMOTT = 3_i4b
+        integer(i4b), parameter :: INUC_DAILY  = 4_i4b
+        integer(i4b), parameter :: N_INUC_MECH = 4_i4b
+
+        ! Component-level heterogeneous ice-nucleation categories.
+        integer(i4b), parameter :: INP_NONE          = 0_i4b
+        integer(i4b), parameter :: INP_DEMOTT        = 1_i4b
+        integer(i4b), parameter :: INP_NIEMAND12     = 2_i4b
+        integer(i4b), parameter :: INP_KAOLINITE_M11 = 3_i4b
+        integer(i4b), parameter :: INP_KFELDSPAR_A13 = 4_i4b
+        integer(i4b), parameter :: INP_DAILY25       = 5_i4b
         						
         logical :: l_inhom		
 
         type parcel
             ! variables for bin model
             integer(i4b) :: n_bins1,n_modes,n_comps, n_bin_mode, n_bin_modew, n_bin_mode1, &
-                            n_sound, n_chamber, ice_flag, sce_flag,bin_scheme_flag
+                            n_sound, n_chamber, ice_flag, sce_flag,bin_scheme_flag, &
+                            n_inp_classes, iinp_start
             real(wp) :: dt
 			! Cumulative hydrometeor mass removed by fallout
 			! kg hydrometeor / kg dry air
@@ -162,7 +185,9 @@
         logical :: use_prof_for_tprh, hm_flag, mode1_flag, mode2_flag, &
         	chamber_override=.false., bubble_flag, &
         	release_aerosol, entrain_aerosol
-        integer(i4b) :: break_flag, ice_nucleation_flag=0
+        integer(i4b) :: break_flag
+        logical, dimension(N_INUC_MECH) :: ice_nucleation_mech = &
+            [.true.,.false.,.true.,.false.]
         real(wp) :: dz,dt, runtime, t_thresh
         ! sounding spec
         real(wp) :: psurf, tsurf
@@ -175,11 +200,14 @@
         real(wp), allocatable, dimension(:) :: time_chamber, press_chamber, temp_chamber, &
         	qtot_chamber
         ! aerosol setup
-        integer(i4b) :: n_intern, n_mode,n_sv,sv_flag,n_bins,n_comps
+        integer(i4b) :: n_intern, n_mode,n_sv,sv_flag,n_bins,n_comps, &
+                        n_inp_classes=5_i4b
         ! aerosol_spec
         real(wp), allocatable, dimension(:,:) :: n_aer1,d_aer1,sig_aer1, mass_frac_aer1
         real(wp), allocatable, dimension(:) ::  molw_core1,density_core1,nu_core1, &
-                                        kappa_core1, afhh_core1, bfhh_core1
+                                        kappa_core1, afhh_core1, bfhh_core1, inp_temp
+        character(len=32), allocatable, dimension(:) :: inp_category
+        integer(i4b), allocatable, dimension(:) :: inp_kind
         real(wp), allocatable, dimension(:) :: org_content1, molw_org1, kappa_org1, &
                                     density_org1, delta_h_vap1,nu_org1,log_c_star1
         
@@ -304,10 +332,19 @@
 		if (AllocateStatus /= 0) STOP "*** Not enough memory ***"
 		allocate( bfhh_core1(1:n_comps), STAT = AllocateStatus)
 		if (AllocateStatus /= 0) STOP "*** Not enough memory ***"
+        allocate( inp_temp(1:n_inp_classes), STAT = AllocateStatus)
+        if (AllocateStatus /= 0) STOP "*** Not enough memory ***"
+        allocate( inp_category(1:n_comps), STAT = AllocateStatus)
+        if (AllocateStatus /= 0) STOP "*** Not enough memory ***"
+        allocate( inp_kind(1:n_comps), STAT = AllocateStatus)
+        if (AllocateStatus /= 0) STOP "*** Not enough memory ***"
 
-		! Backward-compatible defaults: no component uses FHH unless requested.
+		! Backward-compatible defaults: no component uses FHH or INAS unless requested.
 		afhh_core1=0._wp
 		bfhh_core1=0._wp
+        inp_temp=0._wp
+        inp_category='demott'
+        inp_kind=INP_DEMOTT
 
 		allocate( org_content1(1:n_sv), STAT = AllocateStatus)
 		if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
@@ -352,7 +389,7 @@
                     zinit,tpert,use_prof_for_tprh,winit,winit2,amplitude2, &
                     tinit,pinit,rhinit, radinit, bubble_flag, &
                     microphysics_flag, ice_flag, bin_scheme_flag, sce_flag, &
-                    ice_nucleation_flag, &
+                    ice_nucleation_mech, &
                     hm_flag, break_flag, mode1_flag, mode2_flag, &
                     use_adt_optics, optics_wavelength, chamber_override, &
                     chamber_inhom, vent_flag, &
@@ -362,11 +399,11 @@
                     z_ctop, ent_rate,n_levels_s, n_levels_c, &
                     fallout_flag,residence_depth, &
                     alpha_therm,alpha_cond,alpha_therm_ice,alpha_dep
-        namelist /aerosol_setup/ n_intern,n_mode,n_sv,sv_flag, n_bins,n_comps
+        namelist /aerosol_setup/ n_intern,n_mode,n_sv,sv_flag, n_bins,n_comps,n_inp_classes
         namelist /aerosol_spec/ n_aer1,d_aer1,sig_aer1, dmina,dmaxa, &
                                 mass_frac_aer1, molw_core1, &
                                 density_core1,nu_core1,kappa_core1, &
-                                afhh_core1,bfhh_core1, &
+                                afhh_core1,bfhh_core1, inp_temp,inp_category, &
                                 org_content1, molw_org1,kappa_org1, &
                                 density_org1, delta_h_vap1,nu_org1, log_c_star1
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -411,6 +448,36 @@
                 'Aerosol component requires positive molecular weight'
         enddo
 
+        ! Convert the namelist strings to compact integer categories once.
+        do k=1,n_comps
+            select case(trim(adjustl(inp_category(k))))
+            case('none')
+                inp_kind(k)=INP_NONE
+            case('demott','demott2010')
+                inp_kind(k)=INP_DEMOTT
+            case('niemand','niemand12','desert_dust_niemand12')
+                inp_kind(k)=INP_NIEMAND12
+            case('kaolinite','kaolinite_murray11')
+                inp_kind(k)=INP_KAOLINITE_M11
+            case('kfeldspar','k-feldspar','kfeldspar_atkinson13')
+                inp_kind(k)=INP_KFELDSPAR_A13
+            case('daily25','daily2025','daly25','dcmex_daily25','dcmex_daly25')
+                inp_kind(k)=INP_DAILY25
+            case default
+                print *,'Unknown inp_category(',k,'): ',trim(inp_category(k))
+                error stop 'Unknown inp_category'
+            end select
+        enddo
+
+        if (ice_nucleation_mech(INUC_INAS)) then
+            if (n_inp_classes.lt.1) error stop &
+                'INAS enabled but n_inp_classes < 1'
+            do k=2,n_inp_classes
+                if (inp_temp(k).ge.inp_temp(k-1)) error stop &
+                    'inp_temp must be ordered from warm to cold'
+            enddo
+        endif
+
         if(chamber_override) then 
         	read(8,nml=chamber_spec)
         	if(chamber_override) use_prof_for_tprh=.false.
@@ -419,6 +486,209 @@
         tau2 = 2._wp*pi/winit2*amplitude2
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 	end subroutine read_in_bmm_namelist
+
+
+    ! ============================================================================
+    ! is_explicit_inas
+    ! ============================================================================
+    logical function is_explicit_inas(kind)
+        implicit none
+        integer(i4b), intent(in) :: kind
+
+        is_explicit_inas = kind.eq.INP_NIEMAND12 .or. &
+                           kind.eq.INP_KAOLINITE_M11 .or. &
+                           kind.eq.INP_KFELDSPAR_A13
+    end function is_explicit_inas
+
+
+    ! ============================================================================
+    ! ice_active_site_density
+    ! ============================================================================
+    ! Ice-active surface-site density, m-2 of geometric component area.
+    ! The fits are evaluated only over their published temperature ranges.
+    ! At warmer temperatures ns is zero; at colder temperatures the cold-end
+    ! value is held fixed rather than extrapolating the exponential.
+    function ice_active_site_density(tc,kind) result(ns_site)
+        implicit none
+        real(wp), intent(in) :: tc
+        integer(i4b), intent(in) :: kind
+        real(wp) :: ns_site, teval, tk
+
+        ns_site=0._wp
+        tk=tc+ttr
+
+        select case(kind)
+        case(INP_NIEMAND12)
+            ! Niemand et al. (2012), natural desert dust.
+            ! ns = exp(-0.517 Tc + 8.934) m-2; -12 >= Tc >= -36 C.
+            if (tc.gt.-12._wp) return
+            teval=max(tc,-36._wp)
+            ns_site=exp(-0.517_wp*teval+8.934_wp)
+
+        case(INP_KAOLINITE_M11)
+            ! Murray et al. (2011), kaolinite singular fit.
+            ! ln(ns_BET[cm-2]) = -0.8881 T[K] + 226.29.
+            ! Convert cm-2 -> m-2 and BET -> geometric area using 3.49.
+            if (tk.gt.245.5_wp) return
+            teval=max(tk,236.1_wp)
+            ns_site=3.49_wp*1.e4_wp*exp(-0.8881_wp*teval+226.29_wp)
+
+        case(INP_KFELDSPAR_A13)
+            ! Atkinson et al. (2013), K-feldspar.
+            ! ln(ns_BET[cm-2]) = -1.038 T[K] + 275.26; 248--268 K.
+            ! Convert cm-2 -> m-2 and BET -> geometric area using 3.5.
+            if (tk.gt.268._wp) return
+            teval=max(tk,248._wp)
+            ns_site=3.5_wp*1.e4_wp*exp(-1.038_wp*teval+275.26_wp)
+
+        case default
+            ns_site=0._wp
+        end select
+    end function ice_active_site_density
+
+
+    ! ============================================================================
+    ! initialise_inp_moments
+    ! ============================================================================
+    ! Convert a fresh aerosol population into cumulative intrinsic freezing
+    ! threshold moments.  This routine must be called only for newly created
+    ! aerosol populations (initial aerosol, entrained aerosol, emissions).
+    ! Once created, the IN moments are prognostic and must not be recalculated
+    ! from composition after coagulation or phase changes.
+    subroutine initialise_inp_moments(npart,mbin_comp,rhobin_comp,moments, &
+                                      nbin,ncomps_local,iinp_start_local)
+        implicit none
+        integer(i4b), intent(in) :: nbin,ncomps_local,iinp_start_local
+        real(wp), dimension(nbin), intent(in) :: npart
+        real(wp), dimension(nbin,ncomps_local), intent(in) :: mbin_comp,rhobin_comp
+        real(wp), dimension(:,:), intent(inout) :: moments
+
+        integer(i4b) :: i,j,k
+        real(wp) :: vcomp, acomp, lambda, ffrz, fprev, ns_site
+
+        if (n_inp_classes.le.0) return
+
+        moments(1:nbin,iinp_start_local: &
+                iinp_start_local+n_inp_classes-1)=0._wp
+
+        do i=1,nbin
+            if (npart(i).le.qsmall2) cycle
+
+            fprev=0._wp
+            do k=1,n_inp_classes
+                lambda=0._wp
+
+                do j=1,ncomps_local
+                    if (.not.is_explicit_inas(inp_kind(j))) cycle
+                    if (mbin_comp(i,j).le.tiny(1._wp)) cycle
+                    if (rhobin_comp(i,j).le.0._wp) cycle
+
+                    ! Geometric area of the volume-equivalent sphere formed
+                    ! by this component alone.  This is also consistent with
+                    ! the component-area proxy used by the FHH treatment.
+                    vcomp=mbin_comp(i,j)/rhobin_comp(i,j)
+                    acomp=pi*(6._wp*vcomp/pi)**twothirds
+                    ns_site=ice_active_site_density(inp_temp(k),inp_kind(j))
+                    lambda=lambda+acomp*ns_site
+                enddo
+
+                ffrz=1._wp-exp(-max(lambda,0._wp))
+                ffrz=max(fprev,min(ffrz,1._wp))
+
+                moments(i,iinp_start_local+k-1)=npart(i)*ffrz
+                fprev=ffrz
+            enddo
+        enddo
+    end subroutine initialise_inp_moments
+
+
+    ! ============================================================================
+    ! get_inp_control
+    ! ============================================================================
+    ! Diagnose heterogeneous-nucleation control from the aerosol composition
+    ! carried by a representative particle.  Explicit INAS has highest
+    ! precedence after internal mixing/coagulation; the DCMEX Daily/Daly
+    ! concentration spectrum then takes precedence over DeMott.
+    subroutine get_inp_control(mcomp,has_inas,has_demott,has_daily)
+        implicit none
+        real(wp), dimension(:), intent(in) :: mcomp
+        logical, intent(out) :: has_inas,has_demott,has_daily
+        integer(i4b) :: j
+
+        has_inas=.false.
+        has_demott=.false.
+        has_daily=.false.
+
+        do j=1,min(size(mcomp),n_comps)
+            if (mcomp(j).le.tiny(1._wp)) cycle
+            if (is_explicit_inas(inp_kind(j))) then
+                has_inas=.true.
+            elseif (inp_kind(j).eq.INP_DAILY25) then
+                has_daily=.true.
+            elseif (inp_kind(j).eq.INP_DEMOTT) then
+                has_demott=.true.
+            endif
+        enddo
+    end subroutine get_inp_control
+
+
+    ! ============================================================================
+    ! particle_is_activated
+    ! ============================================================================
+    !>Return true when a warm BMM particle lies beyond the maximum of its
+    !>current Koehler/FHH equilibrium curve.  This is the same activation
+    !>criterion used by the ndrop diagnostic: current water mass must exceed
+    !>the critical water mass at the Koehler/FHH maximum.  For a fixed dry
+    !>composition this is equivalent to wet diameter being greater than the
+    !>critical wet diameter.
+    !>
+    !>The minimisation helper functions use the module scratch variables
+    !>n_sel, rh_act and mult, and historically read parcel1%t.  Save/restore
+    !>those values here and temporarily set parcel1%t to the current ODE
+    !>temperature so the activation test is evaluated at the current state.
+    logical function particle_is_activated(ibin,mwat_current,t_current) result(activated)
+        use numerics, only : fmin
+        implicit none
+        integer(i4b), intent(in) :: ibin
+        real(wp), intent(in) :: mwat_current,t_current
+        integer(i4b) :: n_sel_save
+        real(wp) :: rh_act_save,mult_save,t_save,nwcrit,mcrit
+
+        activated=.false.
+        if (ibin.lt.1 .or. ibin.gt.parcel1%n_bin_modew) return
+        if (mwat_current.le.tiny(1._wp)) return
+
+        n_sel_save=n_sel
+        rh_act_save=rh_act
+        mult_save=mult
+        t_save=parcel1%t
+
+        n_sel=ibin
+        rh_act=0._wp
+        mult=-1._wp
+        parcel1%t=t_current
+
+        select case(kappa_flag)
+        case(0)
+            nwcrit=fmin(1.e-50_wp,1.e1_wp,koehler02,1.e-30_wp)
+        case(1)
+            nwcrit=fmin(1.e-50_wp,1.e1_wp,kkoehler02,1.e-30_wp)
+        case default
+            parcel1%t=t_save
+            mult=mult_save
+            rh_act=rh_act_save
+            n_sel=n_sel_save
+            error stop 'Unknown kappa_flag in particle_is_activated'
+        end select
+
+        mcrit=max(nwcrit,0._wp)*molw_water
+        activated=mwat_current.gt.mcrit
+
+        parcel1%t=t_save
+        mult=mult_save
+        rh_act=rh_act_save
+        n_sel=n_sel_save
+    end function particle_is_activated
 
 
 
@@ -508,6 +778,8 @@
     parcel1%n_bins1=n_bins    
     parcel1%n_modes=n_mode
     parcel1%n_comps=n_comps
+    parcel1%n_inp_classes=n_inp_classes
+    parcel1%iinp_start=n_comps+6
     parcel1%n_bin_modew=n_bins*n_mode
     parcel1%n_bin_mode1=(n_bins+1)*n_mode
     parcel1%z=zinit
@@ -532,7 +804,7 @@
     parcel1%ice_flag=ice_flag
     parcel1%n_bin_mode=&
         parcel1%n_bins1*n_mode*(1+parcel1%ice_flag)     ! for all the liquid and ice    
-    parcel1%imoms=ice_flag*5                            ! phi, nmon, vol, rim, unf
+    parcel1%imoms=ice_flag*(5+n_inp_classes)            ! phi, nmon, vol, rim, unf, cumulative Nin
     
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! validate bin_scheme_flag					                                   !
@@ -1230,7 +1502,7 @@
             parcel1%moments(i,j)=parcel1%npart(i)*parcel1%mbin(i,j)
         enddo
     enddo
-    parcel1%momenttype(1:parcel1%n_comps)=1 ! 1 is mass, 2 is number
+    parcel1%momenttype(1:parcel1%n_comps)=MOMENT_EXTENSIVE
 
     ! ** ice **
     ! same for the ice
@@ -1272,7 +1544,18 @@
                 parcel1%mbin(i,parcel1%n_comps+1)
 
         enddo        
-        parcel1%momenttype(parcel1%n_comps+1:parcel1%n_comps+parcel1%imoms)=[2,2,1,1,1]
+        parcel1%momenttype(parcel1%n_comps+1:parcel1%n_comps+5)= &
+            [MOMENT_NUMBER,MOMENT_NUMBER,MOMENT_EXTENSIVE, &
+             MOMENT_EXTENSIVE,MOMENT_EXTENSIVE]
+        if (n_inp_classes.gt.0) then
+            parcel1%momenttype(parcel1%iinp_start: &
+                parcel1%iinp_start+n_inp_classes-1)=MOMENT_INHERIT
+
+            ! Fresh aerosol receives its intrinsic IN threshold spectrum once.
+            call initialise_inp_moments(parcel1%npart, &
+                parcel1%mbin(:,1:n_comps),parcel1%rhobin,parcel1%moments, &
+                parcel1%n_bin_modew,n_comps,parcel1%iinp_start)
+        endif
     endif
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
@@ -1456,7 +1739,13 @@
 				! unf: mass
 				parcel1%moments_ent(i,parcel1%n_comps+5)=parcel1%npart_ent(i)* &
 					parcel1%mbin_ent(i,parcel1%n_comps+1)
-			enddo        
+			enddo
+            if (parcel1%n_inp_classes.gt.0) then
+                call initialise_inp_moments(parcel1%npart_ent, &
+                    parcel1%mbin_ent(:,1:parcel1%n_comps),parcel1%rhobin, &
+                    parcel1%moments_ent,parcel1%n_bin_modew,parcel1%n_comps, &
+                    parcel1%iinp_start)
+            endif
 		endif
     endif
     
@@ -3707,6 +3996,56 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
     
+
+    ! ============================================================================
+    ! daily_dcmex_2025
+    ! ============================================================================
+    !>@author
+    !>Paul J. Connolly, The University of Manchester
+    !>@brief
+    !>Temperature-only DCMEX INP concentration spectrum from the supplied
+    !>Daily/Daly et al. example.  The returned concentration is in m-3.
+    !>
+    !>The spectrum is the sum of (1) a fixed mineral-dust/K-feldspar term using
+    !>the Harrison et al. polynomial and (2) a warm biological/empirical term.
+    !>It is zero at and above -4 deg C.  The supplied example evaluates the
+    !>curve down to -40 deg C, so colder temperatures are clamped at -40 deg C.
+    !>
+    !>This function deliberately has no aerosol-size argument.  The caller caps
+    !>the requested INP number by the number of eligible aerosol particles.
+    !>@param[in] t: temperature [K]
+    !>@return daily_dcmex_2025: target INP number concentration [m-3]
+    function daily_dcmex_2025(t) result(ninp)
+        implicit none
+        real(wp), intent(in) :: t
+        real(wp) :: ninp
+        real(wp) :: tc,teval,log_ns,ns_site,ninp1,ninp2
+        real(wp), parameter :: adust=7.5e-6_wp ! 7.5 um2 cm-3 -> m2 m-3
+        real(wp), parameter :: fkfsp=0.05_wp
+
+        tc=t-ttr
+        ninp=0._wp
+        if(tc.ge.-4._wp) return
+
+        teval=max(tc,-40._wp)
+
+        ! Harrison et al. K-feldspar polynomial as used in the supplied
+        ! DCMEX example.  log_ns is log10(sites cm-2), hence the 1e4 conversion
+        ! to sites m-2.
+        log_ns = -3.25_wp - 0.793_wp*teval - &
+                 6.91e-2_wp*teval**2 - 4.17e-3_wp*teval**3 - &
+                 1.05e-4_wp*teval**4 - 9.08e-7_wp*teval**5
+        ns_site=10._wp**log_ns*1.e4_wp
+        ninp1=adust*fkfsp*ns_site
+
+        ! a*exp(b*(Tmax-T)^c), written exactly as in the supplied example:
+        ! 1000 converts L-1 to m-3 and exp(-50)=1.9287e-22.
+        ninp2=1000._wp*exp(-50._wp + &
+            45.25_wp*(-4._wp-teval)**0.046_wp)
+
+        ninp=max(ninp1+ninp2,0._wp)
+    end function daily_dcmex_2025
+
 	! ============================================================================
 	! demott_2010
 	! ============================================================================
@@ -3768,12 +4107,12 @@
 	!>@param[in] dt: timestep
 	!>@param[in] sce_flag: SCE switch controlling fixed-grid treatment
 	!>@param[in] mode1_flag: switch for mode-1 secondary-ice treatment
-	!>@param[in] ice_nucleation_flag: selects the enabled non-collisional ice-nucleation treatment
+	!>@param[in] ice_nucleation_mech_in: logical switches for Koop, INAS, DeMott and Daily/DCMEX
     subroutine noncollisional_iceformation(npart, npartice, mwat,mbin2,mbin2_ice, &
                          rhobin,nubin,kappabin,molwbin, &
                          moments,medges, &
                          t,p,nbins1,ncomps,nbinw,nmoms,nmodes,yice,rh,dt,&
-                         sce_flag,mode1_flag, ice_nucleation_flag) 
+                         sce_flag,mode1_flag, ice_nucleation_mech_in)
     use numerics_type
     use sce, only : calculate_mode1
     implicit none
@@ -3788,261 +4127,342 @@
     real(wp), dimension(nbinw,ncomps), intent(in) :: mbin2
     real(wp), dimension(nbinw,ncomps+1), intent(inout) :: mbin2_ice
     real(wp), dimension(nbins1+1,nmodes), intent(in) :: medges
-    integer(i4b), intent(in) :: sce_flag, ice_nucleation_flag
+    integer(i4b), intent(in) :: sce_flag
     logical, intent(in) :: mode1_flag
+    logical, dimension(N_INUC_MECH), intent(in) :: ice_nucleation_mech_in
 
-    real(wp), dimension(nbinw) :: nw,aw,jw,dn01,m01,ns,dw,dd,kappa,rhoat
-    real(wp), dimension(nbinw,ncomps) :: dmaer01
-    real(wp), dimension(ncomps) :: dmaer01a
+    real(wp), dimension(nbinw) :: nw,aw,jw,dn01,dn_inas,dn_daily,dn_demott,dn_koop, &
+                                  nremain,m01,dw,dd,kappa,rhoat
+    real(wp), dimension(nbinw,n_inp_classes) :: nin_freeze
     real(wp), dimension(nmoms) :: momtemp
 
     real(wp), intent(inout), dimension(nbinw) :: yice
-	real(wp), intent(inout) :: rh
-	
-    integer(i4b) :: i,j,k, inew, it, ib
-    real(wp) :: fracinliq, fracinice, naer05, nprimary
-    real(wp) :: n, nt, nb, mt, mb, mnew, nleft, mttot, mbtot, mleft, mall,  &
-            mtot_orig, mtot_mt, mtot_mb, ns_nuc, dprimary
+    real(wp), intent(inout) :: rh
 
-    ! (1) calculate the homogeneous nucleation of ice in SC water
-    ! (2) calculate the primary nucleation
-    ! (3) calculate the mode-1 freezing fragmentation
-    ! (4) transfer the moments to the ice phase
+    integer(i4b) :: i,j,k,kk,im,inew,it,ib
+    real(wp) :: fracinliq,naer05,naer_daily,nprimary,nprimary_existing, &
+                ndaily_target,ndaily_existing,avail, &
+                n,nt,nb,mt,mb,mnew,nleft,mttot,mbtot,mleft,mall, &
+                dprimary,dn,frac,dcin,tc
+    logical :: has_inas,has_demott,has_daily
 
+    ! Non-collisional freezing is only relevant below the melting point.
     if(t.gt.ttr) return
 
-    m01 = yice*npartice
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! (1) first calculate the ice formation over dt using koop et al. 2000   !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! number of moles of water
-    nw = mwat / molw_water
-    ! activity of water
-    select case(kappa_flag)
+    tc=t-ttr
+    m01=yice*npartice
+    dn_inas=0._wp
+    dn_daily=0._wp
+    dn_demott=0._wp
+    dn_koop=0._wp
+    dn01=0._wp
+    nin_freeze=0._wp
+
+    ! -------------------------------------------------------------------------
+    ! (1) Immersion freezing by the prognostic discrete INAS spectrum.
+    ! Only activated liquid particles (current water mass above the
+    ! Koehler/FHH critical water mass) are eligible.
+    !
+    ! The IN moments are cumulative and ordered from warm to cold threshold.
+    ! When a threshold is crossed, the remaining cumulative value at that
+    ! threshold is the number in that cohort after warmer cohorts have already
+    ! been removed.  The intrinsic IN spectrum is transferred with the frozen
+    ! particles; ns(T) is not evaluated here.
+    ! -------------------------------------------------------------------------
+    if(ice_nucleation_mech_in(INUC_INAS) .and. n_inp_classes.gt.0) then
+
+        do i=1,nbinw
+            if(npart(i).le.qsmall2) cycle
+            if(mwat(i).le.tiny(1._wp)) cycle
+            if(.not.particle_is_activated(i,mwat(i),t)) cycle
+
+            call get_inp_control(mbin2(i,:),has_inas,has_demott,has_daily)
+            if(.not.has_inas) cycle
+
+            do kk=1,n_inp_classes
+                if(tc.gt.inp_temp(kk)) cycle
+
+                im=ncomps+5+kk
+                dn=max(moments(i,im),0._wp)
+                dn=min(dn,max(npart(i)-dn_inas(i),0._wp))
+                if(dn.le.qsmall2) cycle
+
+                ! Remove one differential threshold cohort from all cumulative
+                ! moments that contain it.
+                moments(i,im:ncomps+5+n_inp_classes)= &
+                    max(moments(i,im:ncomps+5+n_inp_classes)-dn,0._wp)
+
+                ! The same intrinsic threshold identity follows the particles
+                ! into the ice phase.
+                nin_freeze(i,kk:n_inp_classes)= &
+                    nin_freeze(i,kk:n_inp_classes)+dn
+                dn_inas(i)=dn_inas(i)+dn
+            enddo
+        enddo
+    endif
+
+    ! -------------------------------------------------------------------------
+    ! (2) Daily/Daly et al. DCMEX concentration spectrum.
+    !
+    ! This is a temperature-only target number concentration: there is no dry
+    ! diameter criterion.  It is therefore applied proportionally across every
+    ! eligible liquid aerosol bin.  The new ice requested at this timestep is
+    ! min(max(N_target-N_existing,0),N_available), which explicitly limits the
+    ! parameterisation by the available aerosol reservoir.
+    !
+    ! Explicit INAS components take precedence.  Daily/DCMEX in turn takes
+    ! precedence over DeMott if internal mixing produces both categories.
+    ! -------------------------------------------------------------------------
+    if(ice_nucleation_mech_in(INUC_DAILY)) then
+        naer_daily=0._wp
+
+        do i=1,nbinw
+            if(npart(i).le.qsmall2) cycle
+            if(mwat(i).le.tiny(1._wp)) cycle
+            if(.not.particle_is_activated(i,mwat(i),t)) cycle
+            call get_inp_control(mbin2(i,:),has_inas,has_demott,has_daily)
+            if(has_inas .or. .not.has_daily) cycle
+            naer_daily=naer_daily+max(npart(i)-dn_inas(i),0._wp)
+        enddo
+
+        ! As with the no-extra-moment DeMott treatment, use carried aerosol
+        ! composition plus ice monomer number to diagnose already nucleated
+        ! Daily/DCMEX primary ice.
+        ndaily_existing=0._wp
+        do i=1,nbinw
+            if(moments(nbinw+i,ncomps+2).le.qsmall2) cycle
+            call get_inp_control(mbin2_ice(i,1:ncomps), &
+                                 has_inas,has_demott,has_daily)
+            if(has_inas .or. .not.has_daily) cycle
+            ndaily_existing=ndaily_existing+moments(nbinw+i,ncomps+2)
+        enddo
+
+        ndaily_target=max(daily_dcmex_2025(t)-ndaily_existing,0._wp)
+        ndaily_target=min(ndaily_target,naer_daily)
+
+        ! No aerosol-size dependence: sample all eligible liquid bins in
+        ! proportion to their currently available aerosol number.
+        if(ndaily_target.gt.qsmall2 .and. naer_daily.gt.qsmall2) then
+            do i=1,nbinw
+                if(mwat(i).le.tiny(1._wp)) cycle
+                if(.not.particle_is_activated(i,mwat(i),t)) cycle
+                call get_inp_control(mbin2(i,:), &
+                                     has_inas,has_demott,has_daily)
+                if(has_inas .or. .not.has_daily) cycle
+
+                avail=max(npart(i)-dn_inas(i),0._wp)
+                dn_daily(i)=min(avail,ndaily_target*avail/naer_daily)
+            enddo
+        endif
+    endif
+
+    ! -------------------------------------------------------------------------
+    ! (3) DeMott et al. (2010) for particles assigned to the DeMott category.
+    ! Explicit INAS components take precedence after internal mixing.
+    ! No additional DeMott provenance moment is introduced: existing primary
+    ! ice is diagnosed from the aerosol composition carried by ice bins and the
+    ! existing monomer-number moment.
+    ! -------------------------------------------------------------------------
+    if(ice_nucleation_mech_in(INUC_DEMOTT)) then
+        dd(:)=((sum(mbin2(:,:)/rhobin(:,:),2))*6._wp/pi)**onethird
+        naer05=0._wp
+
+        do i=1,nbinw
+            if(mwat(i).le.tiny(1._wp)) cycle
+            if(.not.particle_is_activated(i,mwat(i),t)) cycle
+            call get_inp_control(mbin2(i,:),has_inas,has_demott,has_daily)
+            if(has_inas .or. has_daily .or. .not.has_demott) cycle
+            if(dd(i).gt.0.5e-6_wp) then
+                naer05=naer05+max(npart(i)-dn_inas(i),0._wp)
+            endif
+        enddo
+
+        nprimary=min(naer05,demott_2010(t,naer05))
+
+        ! Track already-existing DeMott-eligible primary monomers without an
+        ! extra state variable.  Aggregation does not erase monomer number.
+        nprimary_existing=0._wp
+        do i=1,nbinw
+            if(moments(nbinw+i,ncomps+2).le.qsmall2) cycle
+            call get_inp_control(mbin2_ice(i,1:ncomps),has_inas,has_demott,has_daily)
+            if(has_inas .or. has_daily .or. .not.has_demott) cycle
+            nprimary_existing=nprimary_existing+moments(nbinw+i,ncomps+2)
+        enddo
+        nprimary=max(nprimary-nprimary_existing,0._wp)
+
+        ! Deplete eligible aerosol from the large end, retaining the existing
+        ! BMM ordering used by the DeMott implementation.
+        do i=nbinw,1,-1
+            if(nprimary.le.qsmall2) exit
+            if(mwat(i).le.tiny(1._wp)) cycle
+            if(.not.particle_is_activated(i,mwat(i),t)) cycle
+
+            call get_inp_control(mbin2(i,:),has_inas,has_demott,has_daily)
+            if(has_inas .or. has_daily .or. .not.has_demott) cycle
+            if(dd(i).le.0.5e-6_wp) cycle
+
+            avail=max(npart(i)-dn_inas(i)-dn_daily(i)-dn_demott(i),0._wp)
+            dprimary=min(nprimary,avail)
+            dn_demott(i)=dn_demott(i)+dprimary
+            nprimary=nprimary-dprimary
+        enddo
+    endif
+
+    ! -------------------------------------------------------------------------
+    ! (4) Koop homogeneous freezing of whatever liquid remains.
+    ! Homogeneous freezing samples the remaining intrinsic IN spectrum
+    ! proportionally rather than preferentially selecting a threshold class.
+    ! -------------------------------------------------------------------------
+    nremain=max(npart-dn_inas-dn_daily-dn_demott,0._wp)
+
+    if(ice_nucleation_mech_in(INUC_KOOP)) then
+        nw=mwat/molw_water
+
+        select case(kappa_flag)
         case(0)
-            aw(:)=(nw(:))/(nw(:)+sum(mbin2(:,:)/molwbin(:,:)*nubin(:,:),2) )
+            aw(:)=nw(:)/(nw(:)+sum(mbin2(:,:)/molwbin(:,:)*nubin(:,:),2))
+
         case(1)
             rhoat(:)=mwat(:)/rhow+sum(mbin2(:,:)/rhobin(:,:),2)
-            rhoat(:)=(mwat(:)+sum(mbin2(:,:),2))/rhoat(:);
+            rhoat(:)=(mwat(:)+sum(mbin2(:,:),2))/max(rhoat(:),tiny(1._wp))
+            dw(:)=((mwat(:)+sum(mbin2(:,:),2))*6._wp/ &
+                    (pi*max(rhoat(:),tiny(1._wp))))**onethird
+            dd(:)=((sum(mbin2(:,:)/rhobin(:,:),2))*6._wp/pi)**onethird
+            kappa(:)=sum((mbin2(:,:)+1.e-60_wp)/rhobin(:,:)*kappabin(:,:),2) / &
+                     sum((mbin2(:,:)+1.e-60_wp)/rhobin(:,:),2)
+            aw=(dw**3-dd**3)/(dw**3-dd**3*(1._wp-kappa))
 
-            dw(:)=((mwat(:)+sum(mbin2(:,:),2))*6._wp/(pi*rhoat(:)))**(onethird)
-
-            dd(:)=((sum(mbin2(:,:)/rhobin(:,:),2))* &
-                    6._wp/(pi))**(onethird) ! dry diameter
-                          ! needed for eqn 6, petters and kreidenweis (2007)
-            kappa(:)=sum((mbin2(:,:)+1.e-60_wp)/rhobin(:,:)*kappabin(:,:),2) &
-                    / sum((mbin2(:,:)+1.e-60_wp)/rhobin(:,:),2)
-            ! equation 7, petters and kreidenweis (2007)
-            aw=(dw**3-dd**3)/(dw**3-dd**3*(1._wp-kappa)) ! from eq 6,p+k(acp,2007)
         case default
-            print *,'error kappa_flag'
-            stop
-    end select
-    ! koop et al. (2000) nucleation rate - due to homogeneous nucleation.
-    jw(:)=koopnucrate(aw,t,p,nbinw)
-    dn01=0._wp
-    ! the number of ice crystals nucleated by homogeneous nucleation:
-    dn01(:)=dn01(:)+abs( npart(:)*(1._wp-exp(-jw(:)*mwat(:)/rhow*dt)) )
-    !dn01(:)=dn01(:)+npart(:)*min(jw(:)*mwat(:)/rhow*dt,1.0_wp)
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    
-     
-    select case(ice_nucleation_flag)
-    	case(0)
-		!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-		! (2) second calculate the ice formation over dt using DeMott et al. 2010!
-		!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-		! calculate the dry size of the aerosol particle                         
-		dd(:)=((sum(mbin2(:,:)/rhobin(:,:),2))*6._wp/(pi))**(onethird) ! dry diameter
-		naer05=0._wp
-		! add up the total number > 500 nm
-		do i=1,nbinw
-			if ((dd(i).gt.0.5e-6_wp).and.(rh.ge.1._wp)) naer05=naer05+npart(i)-dn01(i)
-		enddo  
-		! calculate the number of ice crystals according to DeMott et al. 2010
-		nprimary=demott_2010(t,naer05)
-		! ensure the number nucleated is less than the number that can nucleate
-		nprimary=min(naer05,nprimary) 
-		! this is ice moments for total number of monomers (ncomps+2)
-		nprimary=max(nprimary-sum(dn01+moments(nbinw+1:2*nbinw,ncomps+2)),0._wp)
-		!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-		! deplete the aerosols larger than 0.5 microns
-		! (maybe in future will want to deplete the largest first, but at the moment
-		!       it is doing it for all modes - in reverse order)
-		do i=nbinw,1,-1
-			if (nprimary.le.0._wp) exit
-			if ((dd(i).gt.0.5e-6_wp).and.(rh.ge.1._wp)) then
-				! it can nucleate: reduce number of primary ice
-				dprimary=min( nprimary, max(npart(i)-dn01(i),0._wp))
-				dn01(i)=dn01(i)+dprimary
-				nprimary=nprimary-dprimary
-			endif
-		enddo    
-		! limit to number of drops / unfrozen aerosol
-		dn01(:)=min(dn01(:),npart(:))
-		
-		case(1) ! ns param - assumption only valid if full-moving
-			!ns_nuc=exp(-0.517*(t-273.15)+8.934)
-			!ns_nuc=exp(-1.6*(t-273.15)-16.0067)
-			ns_nuc=exp(-0.13*(t-273.15)+2.66)
-! 			print *,shape(npart)
-! 			print *,sum(pi*npart(1:240)*(((sum(mbin2(1:240,:)/rhobin(1:240,:),2))*6._wp/(pi))**(onethird))**2)
-! 			stop
-			do i=1,nbinw
-				dw(i)=((mwat(i)+sum(mbin2(i,:)))*6._wp/(pi*rhoat(i)))**(onethird)
-				dd(i)=((sum(mbin2(i,:)/rhobin(i,:)))*6._wp/(pi))**(onethird) ! dry diameter
+            error stop 'Unknown kappa_flag in noncollisional_iceformation'
+        end select
 
-				!if((abs(kappa(i)-0.004)/0.004<0.001) .and. &
-				!	((dw(i).gt.0.0e-6_wp).and.(rh.ge.1._wp))) then
-					
-					dn01(i)=dn01(i)+(1.0-exp(-pi*dd(i)**2*ns_nuc))* &
-						(npart(i)+npartice(i))*0.1_wp
-				!endif
-			enddo
-			dn01=max(dn01-npartice,0.0)
-! 			print *,sum(dn01(1:240))/1000.0,sum((1.0-exp(-pi*dd(1:240)**2*ns_nuc))* &
-! 				(npart(1:240)+npartice(1:240)))/1000.0
-		case(2) ! nothing at the moment
-			
-        case default
-            print *,'error ice_nucleation_flag'
-            stop
-    end select
-    
-    
-    if(t.gt.ttr) dn01=0._wp
-    ! we now have the total number of ice crystals to 'nucleate'
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! (3) third calculate fragmentation of these freezing drops              !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        jw=koopnucrate(aw,t,p,nbinw)
+        dn_koop=abs(nremain*(1._wp-exp(-jw*mwat/rhow*dt)))
+        dn_koop=min(dn_koop,nremain)
+
+        if(n_inp_classes.gt.0) then
+            do i=1,nbinw
+                if(nremain(i).le.qsmall2 .or. dn_koop(i).le.qsmall2) cycle
+                frac=min(max(dn_koop(i)/nremain(i),0._wp),1._wp)
+                do kk=1,n_inp_classes
+                    im=ncomps+5+kk
+                    dcin=frac*moments(i,im)
+                    moments(i,im)=max(moments(i,im)-dcin,0._wp)
+                    nin_freeze(i,kk)=nin_freeze(i,kk)+dcin
+                enddo
+            enddo
+        endif
+    endif
+
+    dn01=min(dn_inas+dn_daily+dn_demott+dn_koop,npart)
+
+    ! -------------------------------------------------------------------------
+    ! (5) Freezing fragmentation and transfer to the ice grid.
+    ! -------------------------------------------------------------------------
     do i=1,nmodes
         do j=1,nbins1
-            ! reference to nbinw
-            k=j+(i-1)*(nbins1)
-            
-            ! if these are freezing then calculate mode-1
-            ! total number, number of tiny, number of big
-            !   and corresponding masses for this freezing event
-            mall = mwat(k)*dn01(k)
-            mnew = mwat(k)
-            nleft = dn01(k)
+            k=j+(i-1)*nbins1
+            if(dn01(k).le.qsmall2) cycle
+
+            mall=mwat(k)*dn01(k)
+            mnew=mwat(k)
+            nleft=dn01(k)
             n=0._wp
             nt=0._wp
             nb=0._wp
             mt=0._wp
             mb=0._wp
-            if (dn01(k) > 0._wp) then
-                if(mode1_flag) &
-                    call calculate_mode1(mwat(k),0._wp,t,n,nt,nb,mb,mt)
-                ! adjust the mass and numbers of the freezing drops in 
-                ! the three modes so mass is conserved
-                mnew = mnew-nt*mt-nb*mb
-                n=n*dn01(k) ! the number concentration of these fragments
-                nt=nt*dn01(k)
-                nb=nb*dn01(k)
-                !nleft=nleft-n ! ice mass left over to go in new bin
-            endif     
-            ! total mass going into ice bins
-            mttot=mt*nt
-            mbtot=mb*nb 
-            mleft=nleft*mnew
-                        
-            ! number conc. of liquid bins:
-            npart(k) = npart(k) - dn01(k)
-            ! fraction of liquid left
-            fracinliq = npart(k) / max(npart(k)+dn01(k),1.e-30_wp)
-            ! aerosol moments to go into ice
-            momtemp(1:ncomps) = (1._wp-fracinliq)*moments(k,1:ncomps)
-            ! scale aerosol moments according to this fraction
-            moments(k,1:ncomps)=moments(k,1:ncomps)*fracinliq
-            ! reduce ncomps+1 and ncomps+2
-            moments(k,ncomps+1) = moments(k,ncomps+1)*fracinliq
-            moments(k,ncomps+2) = moments(k,ncomps+2)*fracinliq
-			! --------------------------------------------------------------
-			! Keep liquid water-related moments consistent with the
-			! remaining liquid population.
-			!
-			! +4 is the liquid-water/rime-mass carrier used by SCE.
-			! +5 is the unfrozen-water mass.
-			! --------------------------------------------------------------
-			moments(k,ncomps+4) = npart(k)*mwat(k)
-			moments(k,ncomps+5) = npart(k)*mwat(k)
-            
-            
-            
-            
-            ! find the bins where mnew, mt, and mb need to go.
-            inew    = find_medge(medges,mnew,nbins1,nmodes,i)
-            it      = max(find_medge(medges,mt,nbins1,nmodes,i),1)
-            ib      = max(find_medge(medges,mb,nbins1,nmodes,i),1)
-            
-            ! for this ice bin we need to create three new ice bins in
-            ! inew, it, and ib
-            if(mall>0._wp) then
-                ! aerosol moments going into these bins (by mass)
-                moments(inew+nbinw,1:ncomps)=moments(inew+nbinw,1:ncomps)+ &
-                                            momtemp(1:ncomps)*mleft/mall
-                moments(it+nbinw,1:ncomps)=moments(it+nbinw,1:ncomps)+ &
-                                            momtemp(1:ncomps)*mttot/mall
-                moments(ib+nbinw,1:ncomps)=moments(ib+nbinw,1:ncomps)+ &
-                                            momtemp(1:ncomps)*mbtot/mall
-            endif            
-            ! the ice mass in these bins
-            m01(inew)=m01(inew) + mleft
-            m01(it)=m01(it) + mttot
-            m01(ib)=m01(ib) + mbtot
 
-            ! number in these bins
-            npartice(inew) = npartice(inew) + nleft
-            npartice(it) = npartice(it) + nt
-            npartice(ib) = npartice(ib) + nb
-            
-            
-            ! now the ice moments: phi, nmon, vol, rim, unfro
-            ! phi
-            moments(inew+nbinw,ncomps+1)   =moments(inew+nbinw,ncomps+1)+nleft
-            moments(it+nbinw,ncomps+1)     =moments(it+nbinw,ncomps+1)+nt
-            moments(ib+nbinw,ncomps+1)     =moments(ib+nbinw,ncomps+1)+nb
-            ! nmon
-            moments(inew+nbinw,ncomps+2)   =moments(inew+nbinw,ncomps+2)+nleft
-            moments(it+nbinw,ncomps+2)     =moments(it+nbinw,ncomps+2)+nt
-            moments(ib+nbinw,ncomps+2)     =moments(ib+nbinw,ncomps+2)+nb
-            ! vol
-            moments(inew+nbinw,ncomps+3) =moments(inew+nbinw,ncomps+3)+mleft/rhoice
-            moments(it+nbinw,ncomps+3)   =moments(it+nbinw,ncomps+3)+mttot/rhoice
-            moments(ib+nbinw,ncomps+3)   =moments(ib+nbinw,ncomps+3)+mbtot/rhoice
-            
-            
-            ! mass of aerosol going to ice - needs to be shared over the bins 
-            ! where the ice goes
-            !dmaer01a(:)=mbin2(k,:)*dn01(k)
-            
-            ! ice moments
-            ! mass of ice 
-            
+            if(mode1_flag) call calculate_mode1(mwat(k),0._wp,t,n,nt,nb,mb,mt)
+
+            mnew=mnew-nt*mt-nb*mb
+            n=n*dn01(k)
+            nt=nt*dn01(k)
+            nb=nb*dn01(k)
+            mttot=mt*nt
+            mbtot=mb*nb
+            mleft=nleft*mnew
+
+            ! Number concentration remaining in the liquid bin.
+            npart(k)=npart(k)-dn01(k)
+            fracinliq=npart(k)/max(npart(k)+dn01(k),1.e-30_wp)
+
+            ! Aerosol component moments are sampled in proportion to particle
+            ! number for freezing.  IN moments were already removed selectively
+            ! above and are therefore not included in this scaling.
+            momtemp=0._wp
+            momtemp(1:ncomps)=(1._wp-fracinliq)*moments(k,1:ncomps)
+            moments(k,1:ncomps)=moments(k,1:ncomps)*fracinliq
+            moments(k,ncomps+1)=moments(k,ncomps+1)*fracinliq
+            moments(k,ncomps+2)=moments(k,ncomps+2)*fracinliq
+            moments(k,ncomps+4)=npart(k)*mwat(k)
+            moments(k,ncomps+5)=npart(k)*mwat(k)
+
+            inew=find_medge(medges,mnew,nbins1,nmodes,i)
+            it=max(find_medge(medges,mt,nbins1,nmodes,i),1)
+            ib=max(find_medge(medges,mb,nbins1,nmodes,i),1)
+
+            if(mall.gt.0._wp) then
+                moments(inew+nbinw,1:ncomps)=moments(inew+nbinw,1:ncomps)+ &
+                    momtemp(1:ncomps)*mleft/mall
+                moments(it+nbinw,1:ncomps)=moments(it+nbinw,1:ncomps)+ &
+                    momtemp(1:ncomps)*mttot/mall
+                moments(ib+nbinw,1:ncomps)=moments(ib+nbinw,1:ncomps)+ &
+                    momtemp(1:ncomps)*mbtot/mall
+
+                ! The aerosol residual/IN identity is not cloned into every
+                ! freezing fragment.  Its ensemble concentration is partitioned
+                ! over fragment categories by the same mass fractions.
+                if(n_inp_classes.gt.0) then
+                    do kk=1,n_inp_classes
+                        im=ncomps+5+kk
+                        moments(inew+nbinw,im)=moments(inew+nbinw,im)+ &
+                            nin_freeze(k,kk)*mleft/mall
+                        moments(it+nbinw,im)=moments(it+nbinw,im)+ &
+                            nin_freeze(k,kk)*mttot/mall
+                        moments(ib+nbinw,im)=moments(ib+nbinw,im)+ &
+                            nin_freeze(k,kk)*mbtot/mall
+                    enddo
+                endif
+            endif
+
+            m01(inew)=m01(inew)+mleft
+            m01(it)=m01(it)+mttot
+            m01(ib)=m01(ib)+mbtot
+
+            npartice(inew)=npartice(inew)+nleft
+            npartice(it)=npartice(it)+nt
+            npartice(ib)=npartice(ib)+nb
+
+            ! Ice moments: phi, nmon and volume.
+            moments(inew+nbinw,ncomps+1)=moments(inew+nbinw,ncomps+1)+nleft
+            moments(it+nbinw,ncomps+1)=moments(it+nbinw,ncomps+1)+nt
+            moments(ib+nbinw,ncomps+1)=moments(ib+nbinw,ncomps+1)+nb
+
+            moments(inew+nbinw,ncomps+2)=moments(inew+nbinw,ncomps+2)+nleft
+            moments(it+nbinw,ncomps+2)=moments(it+nbinw,ncomps+2)+nt
+            moments(ib+nbinw,ncomps+2)=moments(ib+nbinw,ncomps+2)+nb
+
+            moments(inew+nbinw,ncomps+3)=moments(inew+nbinw,ncomps+3)+mleft/rhoice
+            moments(it+nbinw,ncomps+3)=moments(it+nbinw,ncomps+3)+mttot/rhoice
+            moments(ib+nbinw,ncomps+3)=moments(ib+nbinw,ncomps+3)+mbtot/rhoice
         enddo
     enddo
-    
+
     where((m01.gt.0._wp).and.(npartice.gt.0._wp))
         yice=m01/npartice
     end where
-    ! aerosol mass in ice bins
-!     mbin2_ice(:,1:ncomps)=dmaer01(:,:)/(1.e-50_wp+spread(npartice,2,ncomps))
-    mbin2_ice(:,1:ncomps)=moments(nbinw+1:2*nbinw,1:ncomps)/(1.e-50_wp+spread(npartice,2,ncomps))
-    !moments(1+nbinw:2*nbinw,1:ncomps)=dmaer01(:,:)
+
+    mbin2_ice(:,1:ncomps)=moments(nbinw+1:2*nbinw,1:ncomps) / &
+        (1.e-50_wp+spread(npartice,2,ncomps))
     mbin2_ice(:,ncomps+1)=yice
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
+    ! Freezing releases latent heat.  Vapour mass is unchanged, so recompute RH
+    ! at the updated temperature.
+    if(.not.chamber_override) then
+        call adjust_t_rh(sum(mwat(:)*dn01(:)),t,rh,p)
+    endif
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	! Freezing releases latent heat.  Vapour mass is unchanged, so
-	! recompute RH at the updated temperature.
-	if (.not.chamber_override) then
-		call adjust_t_rh(sum(mwat(:)*dn01(:)),t,rh,p)
-	endif
-	
     end subroutine noncollisional_iceformation
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
@@ -6015,13 +6435,14 @@
 	!>@param[in] dt: timestep
 	!>@param[in] sce_flag: SCE switch
 	!>@param[in] mode1_flag: switch for mode-1 secondary-ice treatment
-	!>@param[in] ice_nucleation_flag: selector for the non-collisional ice-nucleation treatment
+	!>@param[in] ice_nucleation_mech: logical switches for Koop, INAS, DeMott and Daily/DCMEX
     interface
         subroutine func4(npart, npartice, mwat,mbin2,mbin2_ice, &
                          rhobin,nubin,kappabin,molwbin,moments,medges, &
                          t,p,nbins1,ncomps,nbinw,nmoms,nmodes,yice,rh,dt,sce_flag, &
-                         mode1_flag, ice_nucleation_flag) 
+                         mode1_flag, ice_nucleation_mech_in) 
             use numerics_type
+            import :: N_INUC_MECH
             implicit none
             real(wp), intent(inout) :: t
             real(wp), intent(in) :: p,dt
@@ -6034,8 +6455,9 @@
             real(wp), dimension(nbinw,ncomps+1), intent(inout) :: mbin2_ice
             real(wp), intent(inout), dimension(nbinw) :: yice
             real(wp), intent(in), dimension(nbins1+1,nmodes) :: medges
-            integer(i4b), intent(in) :: sce_flag, ice_nucleation_flag
+            integer(i4b), intent(in) :: sce_flag
             logical, intent(in) :: mode1_flag
+            logical, dimension(N_INUC_MECH), intent(in) :: ice_nucleation_mech_in
             real(wp), intent(inout) :: rh
         end subroutine func4
     end interface
@@ -6198,7 +6620,7 @@
                 n_comps,parcel1%n_bin_modew,parcel1%imoms+n_comps,parcel1%n_modes, &
                 parcel1%yice(1:parcel1%n_bin_modew), &
                 parcel1%y(parcel1%irh), parcel1%dt,sce_flag, &
-                mode1_flag, ice_nucleation_flag) 
+                mode1_flag, ice_nucleation_mech) 
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
         
@@ -7329,21 +7751,13 @@
 					start = (/io1%icur/)))
 	endif
 	
-	! calculate actually activated drops
+	! calculate actually activated drops using the same Koehler/FHH
+	! critical-point criterion used by immersion freezing
 	nact=0._wp	
 	do i=1,parcel1%n_bin_modew	
 		if (parcel1%npart(i) <= 0._wp) cycle
-		n_sel=i
-		rh_act=0._wp
-		mult=-1._wp
-		select case(kappa_flag)
-		case(0)
-			test=fmin(1.e-50_wp,1.e1_wp, koehler02,1.e-30_wp)
-		case(1)
-			test=fmin(1.e-50_wp,1.e1_wp, kkoehler02,1.e-30_wp)
-		end select
-		mcrit=test*molw_water
-		if (parcel1%y(i) > mcrit) then
+		if (particle_is_activated(i,parcel1%y(i), &
+			parcel1%y(parcel1%ite))) then
 			nact=nact+parcel1%npart(i)
 		endif
 	enddo
