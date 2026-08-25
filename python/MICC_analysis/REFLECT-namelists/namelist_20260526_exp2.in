@@ -54,8 +54,10 @@
  	entrain_aerosol=.true.,
     !> Entrain vertically when .true.; use lateral entrainment when .false.
  	vert_ent=.false.,
-    !> Cloud-top height used by vertical entrainment/profile calculations [m].
-    z_ctop=1100.,
+	!> Prescribed cloud-top height [m].
+	!> The parcel simulation stops when its height reaches or exceeds z_ctop.
+	!> Set <= 0 to disable the cloud-top stopping criterion.    
+	z_ctop=-1.,
     !> Specified entrainment rate [model convention, normally m-1 for vertical entrainment].
  	ent_rate=1.e-3,
     !> Number of sounding levels supplied in sounding_spec.

@@ -93,10 +93,10 @@
             ! liquid water
             real(wp), dimension(:), allocatable :: d, maer, npart, rho_core, &
                             rh_eq, rhoat, dw, da_dt, ndrop, npartall, npart_ent, &
-                            npart_temp, npart_temp2
+                            npart_ent0, npart_temp, npart_temp2
             real(wp), dimension(:,:), allocatable :: mbin, mbinall, rhobin, &
                                         nubin,molwbin,kappabin, &
-                                        mbin_ent, &
+                                        mbin_ent, mbin_ent0, &
                                         mbin_temp, mbin_temp2 ! all bins x all comps                                
             ! variables for ODE:                    
             integer(i4b) :: neq, itol, ipr, ite, iz, iw, irh, ira, &
@@ -120,6 +120,7 @@
             integer(i4b) :: imoms
             real(wp), allocatable, dimension(:,:) :: moments, mbinedges,ecoll,ecoal, &
                                                     moments_ent, mbinedges_ent, &
+                                                    moments_ent0, mbinedges_ent0, &
                                                     moments_temp, mbinedges_temp, &
                                                     mbinedges_temp2 
             real(wp), allocatable, dimension(:) :: momtemp, vel, cd, nre
@@ -177,7 +178,7 @@
 		real(wp) :: optics_wavelength=0.55e-6_wp		
 		real(wp) :: residence_depth=100._wp        
         real(wp) :: zinit,tpert,winit,winit2, amplitude2, tau2, &
-                    tinit,pinit,rhinit,radinit,z_ctop, alpha_therm, alpha_cond, &
+                    tinit,pinit,rhinit,radinit,z_ctop=-1._wp, alpha_therm, alpha_cond, &
                     alpha_therm_ice, alpha_dep, thresh_to_start_hom_mix, &
                     chamber_inhom=0.0_wp
         integer(i4b) :: microphysics_flag=0, kappa_flag,updraft_type, vent_flag, &
@@ -419,6 +420,8 @@
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         open(8,file=nmlfile,status='old', recl=80, delim='apostrophe')
         read(8,nml=run_vars)
+        if (vert_ent) error stop &
+            'vert_ent/Sanchez cloud-top entrainment has been removed; use lateral entrainment'
         if (n_levels_c.lt.0) error stop 'n_levels_c must be non-negative'
         if (chamber_override .and. n_levels_c.lt.2) error stop &
             'chamber_override requires n_levels_c >= 2'
@@ -1173,61 +1176,6 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! get cloud-base conditions (for entrainment process)                          !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	if (vert_ent) then
-	    ! find cloud-base pressure:
-	    ! cloud base qv
-	    parcel1%q_cbase=parcel1%qinit
-		! calculate the dry adiabat:
-		theta_init=parcel1%t*(1.e5_wp/parcel1%p)**(ra/cp)
-		! calculate p required so that qs(t,p) = q init
-		parcel1%p_cbase=zeroin(parcel1%p, 100._wp,cloud_base, 1.e-30_wp)
-		rm=ra+parcel1%qinit*rv
-		cpm=cp+parcel1%qinit*cpv
-		parcel1%t_cbase=theta_init*(parcel1%p_cbase/1.e5_wp)**(rm/cpm)
-		parcel1%theta_q_cbase= &
-		    calc_theta_q3(parcel1%t_cbase,parcel1%p_cbase,parcel1%q_cbase)
-		print *,'Cloud-base t, p: ',parcel1%t_cbase,parcel1%p_cbase
-		
-		
-		
-		! now, find the height of cloud-base along dry adiabat:
-		theta_surf=tsurf*(1.e5_wp/psurf)**(ra/cp)
-		p11=parcel1%p
-		z11(1)=parcel1%z
-		p22=parcel1%p_cbase
-		htry=p22-p11
-		eps2=1.e-5_wp
-		call vode_integrate(z11,p11,p22,eps2,htry,hmin,hydrostatic1)
-		parcel1%z_cbase=z11(1)
-        ! cloud-top properties from sounding:
-        parcel1%z_ctop=z_ctop
-        ! interpolate to find t
-        iloc=find_pos(parcel1%z_sound(1:n_levels_s),parcel1%z_ctop)
-        iloc=min(n_levels_s-1,iloc)
-        iloc=max(1,iloc)
-        ! linear interp t
-        call poly_int(parcel1%z_sound(iloc:iloc+1), parcel1%t_sound(iloc:iloc+1), &
-                    min(parcel1%z_ctop,parcel1%z_sound(n_levels_s)), var,dummy)        
-        parcel1%t_ctop=var
-        ! linear interp p
-        call poly_int(parcel1%z_sound(iloc:iloc+1), parcel1%p_sound(iloc:iloc+1), &
-                    min(parcel1%z_ctop,parcel1%z_sound(n_levels_s)), var,dummy)        
-        parcel1%p_ctop=var
-        ! linear interp q
-        call poly_int(parcel1%z_sound(iloc:iloc+1), parcel1%rh_sound(iloc:iloc+1), &
-                    min(parcel1%z_ctop,parcel1%z_sound(n_levels_s)), var,dummy)        
-        parcel1%q_ctop=var*eps1*svp_liq(parcel1%t_ctop) / &
-            (parcel1%p_ctop-svp_liq(parcel1%t_ctop))
-		parcel1%theta_q_ctop= &
-		    calc_theta_q3(parcel1%t_ctop,parcel1%p_ctop,parcel1%q_ctop)
-		print *,'Cloud-top t, p: ',parcel1%t_ctop,parcel1%p_ctop
-	endif
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-    
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! put water on bin, using koehler equation                                     !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     select case(kappa_flag)
@@ -1358,14 +1306,25 @@
         allocate( parcel1%mbinedges_ent(1:parcel1%n_bins1+1,1:parcel1%n_modes), &
             STAT = AllocateStatus)
         if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+        allocate( parcel1%mbinedges_ent0(1:parcel1%n_bins1+1,1:parcel1%n_modes), &
+            STAT = AllocateStatus)
+        if (AllocateStatus /= 0) STOP "*** Not enough memory ***"
         allocate( parcel1%npart_ent(1:parcel1%n_bin_modew), STAT = AllocateStatus)
         if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+        allocate( parcel1%npart_ent0(1:parcel1%n_bin_modew), STAT = AllocateStatus)
+        if (AllocateStatus /= 0) STOP "*** Not enough memory ***"
         allocate( parcel1%mbin_ent(1:parcel1%n_bin_modew,1:n_comps+1), &
             STAT = AllocateStatus)
         if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+        allocate( parcel1%mbin_ent0(1:parcel1%n_bin_modew,1:n_comps+1), &
+            STAT = AllocateStatus)
+        if (AllocateStatus /= 0) STOP "*** Not enough memory ***"
 		allocate( parcel1%moments_ent(1:parcel1%n_bin_mode,1:n_comps+parcel1%imoms), &
 			STAT = AllocateStatus)
 		if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+		allocate( parcel1%moments_ent0(1:parcel1%n_bin_mode,1:n_comps+parcel1%imoms), &
+			STAT = AllocateStatus)
+		if (AllocateStatus /= 0) STOP "*** Not enough memory ***"
         ! note, this allocates some space for the aerosol from evaporated drops
         allocate( parcel1%mbinedges_temp(1:parcel1%n_bins1+1,1:parcel1%n_modes), &
             STAT = AllocateStatus)
@@ -1762,10 +1721,12 @@
 				parcel1%moments_ent(i,j)=parcel1%npart_ent(i)*parcel1%mbin_ent(i,j)
 			enddo
 		enddo
-		parcel1%moments_ent(1:parcel1%n_bin_modew,parcel1%n_comps+1)= parcel1%npart_ent
-		parcel1%moments_ent(1:parcel1%n_bin_modew,parcel1%n_comps+2)= parcel1%npart_ent
-		! these are liquid moments
+		! Ice auxiliary moments only exist when ice microphysics is enabled.
 		if (parcel1%ice_flag.eq.1) then
+            parcel1%moments_ent(1:parcel1%n_bin_modew,parcel1%n_comps+1)= &
+                parcel1%npart_ent
+            parcel1%moments_ent(1:parcel1%n_bin_modew,parcel1%n_comps+2)= &
+                parcel1%npart_ent
 			do i=1,parcel1%n_bin_modew
 				! other moments: phi, nmon, vol, rim, unf
 				! rim: mass
@@ -1782,6 +1743,16 @@
                     parcel1%iinp_start)
             endif
 		endif
+
+        ! Keep an immutable copy of the environmental aerosol distribution.
+        ! npart_ent/mbin_ent/moments_ent are working arrays which may be
+        ! equilibrated and remapped each timestep before they are mixed into
+        ! the parcel.  The *_ent0 arrays always retain the t=0 aerosol PSD and
+        ! composition so every entrainment event samples the same environment.
+        parcel1%npart_ent0=parcel1%npart_ent
+        parcel1%mbin_ent0=parcel1%mbin_ent
+        parcel1%moments_ent0=parcel1%moments_ent
+        parcel1%mbinedges_ent0=parcel1%mbinedges_ent
     endif
     
     
@@ -2699,7 +2670,7 @@
       rhoat=(massw+maer1)/rhoat
       dw=((massw+maer1)*6._wp/(pi*rhoat))**onethird
 
-      sigma=surface_tension(parcel1%t)
+      sigma=surface_tension(tenv_send)
       nsolute=sum(parcel1%mbin_ent(n_sel,1:n_comps)/ &
           parcel1%molwbin(n_sel,1:n_comps)*parcel1%nubin(n_sel,1:n_comps))
       if (nsolute.le.tiny(1._wp)) then
@@ -2710,7 +2681,7 @@
       fads=fhh_adsorption_factor(massw,dw, &
           parcel1%mbin_ent(n_sel,1:n_comps),parcel1%rhobin(n_sel,1:n_comps))
 
-      koehler02_ent=mult*(exp(4._wp*molw_water*sigma/r_gas/parcel1%t/rhoat/dw)* &
+      koehler02_ent=mult*(exp(4._wp*molw_water*sigma/r_gas/tenv_send/rhoat/dw)* &
            aw*fads)-rh_act
 
     end function koehler02_ent
@@ -2745,7 +2716,7 @@
       rhoat=(massw+maer1)/rhoat
       dw=((massw+maer1)*6._wp/(pi*rhoat))**onethird
 
-      sigma=surface_tension(parcel1%t)
+      sigma=surface_tension(tenv_send)
 
       vdry=sum(parcel1%mbin_ent(n_sel,1:n_comps)/parcel1%rhobin(n_sel,1:n_comps))
       vwat=max(massw,0._wp)/rhow
@@ -2764,7 +2735,7 @@
       fads=fhh_adsorption_factor(massw,dw, &
           parcel1%mbin_ent(n_sel,1:n_comps),parcel1%rhobin(n_sel,1:n_comps))
 
-      kkoehler02_ent=mult*(exp(4._wp*molw_water*sigma/r_gas/parcel1%t/rhoat/dw)* &
+      kkoehler02_ent=mult*(exp(4._wp*molw_water*sigma/r_gas/tenv_send/rhoat/dw)* &
            aw*fads)-rh_act
     end function kkoehler02_ent
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -3662,8 +3633,8 @@
         integer(i4b), intent(inout) :: ipar
 
         ! local variables
-        real(wp) :: wv=0._wp, wl=0._wp, wi=0._wp, rm, cpm, &
-                  drv=0._wp, dri=0._wp,dri2=0._wp, &
+        real(wp) :: wv=0._wp, wl=0._wp, wi=0._wp, rm, rme, cpm, &
+                  drv=0._wp, dri=0._wp,dri2=0._wp, dwl_micro=0._wp, &
                   rh,t,p,err,sl, w, &
                   te, qve, pe, var, dummy, rhoe, rhop, b, mu, w_e,dlnrho, wv_old, &
                   rm_old, ratio=1.0_wp, flux_old, flux_new, svp1, svp2
@@ -3706,7 +3677,7 @@
 		!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 		! lateral entrainment reducing drop number conc.                       !
 		!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-		if((.not. adiabatic_prof) .and. (entrain_period==0)) then
+		if((.not. adiabatic_prof) .and. (.not.l_inhom)) then
 			svp2=svp_liq(parcel1%yold(parcel1%ite))
 			wv_old=eps1*parcel1%yold(parcel1%irh)* &
 				svp2 / (parcel1%yold(parcel1%ipr)- svp2) ! wv mixing ratio
@@ -3784,8 +3755,12 @@
         
         ! mass growth rate
         ydot(1:ipart)=pi*parcel1%rhoat*parcel1%dw**2 * parcel1%da_dt
-        ! change in vapour content
-        drv = -sum(ydot(1:ipart)*parcel1%npart)*ratio
+        ! Microphysical change of liquid-water mixing ratio.  The ratio
+        ! accounts for the homogeneous increase in parcel mass/flux during the
+        ! current ODE step; the stored particle concentrations are diluted after
+        ! the accepted ODE step.
+        dwl_micro=sum(ydot(1:ipart)*parcel1%npart)*ratio
+        drv=-dwl_micro
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         ! change in temperature of parcel                                        !
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -3806,7 +3781,7 @@
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         
         
-        if((.not. adiabatic_prof) .and. (.not. vert_ent)) then ! entraining?
+        if(.not.adiabatic_prof) then ! homogeneous lateral entrainment
 			! parcel density:
 			rhop=p/(rm*t)
 			w_e=y(iw)
@@ -3839,7 +3814,8 @@
 						max(y(ipr),parcel1%p_sound(n_levels_s)), var,dummy)        
 			te=var
 			! env density:
-			rhoe=pe/(rm*te)
+			rme=ra+qve*rv
+			rhoe=pe/(rme*te)
 			!buoyancy
 			if((parcel1%z_sound(n_levels_s) .lt. y(iz)) .or. &
 				(parcel1%z_sound(1) .gt. y(iz))) then
@@ -3855,15 +3831,29 @@
 					ydot(iw)=(0.001_wp-y(iw))/10._wp
 				endif
 			endif        
-			! forcing - eq. 12-29
-			drv=drv-w_e*mu*(wv+wl-qve) ! vapour reduction => condensation?
-			! add the temp change due to 
-			ydot(ite)=ydot(ite)+lv/cpm*w_e*mu*(wv+wl-qve) ! temp change: condensation
+            ! Pruppacher and Klett (1997), Eqs. 12-29 and 12-26.
+            !
+            ! Eq. 12-29 is written in terms of the TOTAL derivative of liquid
+            ! water mixing ratio:
+            !
+            !   d wv/dt = -d wl/dt - mu*W*(wv-wv_env+wl).
+            !
+            ! In this bin implementation the homogeneous dilution part of wl
+            ! is already represented by ratio=old_mass/new_mass, i.e.
+            !
+            !   d wl/dt = d wl_micro/dt - mu*W*wl.
+            !
+            ! Substitution cancels the explicit +wl term.  Therefore only the
+            ! microphysical liquid tendency and vapour-vapour mixing belong in
+            ! drv here.  This avoids applying condensate dilution twice.
+            drv=drv-w_e*mu*(wv-qve)
 
-			! equation 12-26
-			ydot(ite)=ydot(ite)-w_e*mu*(y(ite)-te + lv/cpm*(wv-qve))
+            ! With the same substitution Eq. 12-26 reduces to the existing
+            ! expansion/latent-heating terms above plus direct sensible mixing
+            ! of parcel and environmental temperature.
+            ydot(ite)=ydot(ite)-w_e*mu*(t-te)
 
-            ! Equation 12-32 or 12-33 P+K
+            ! Equation 12-32 or 12-34 P+K
             dlnrho=1._wp/rhop*(1._wp/(ra*t))*(ydot(ipr)- p/(t)*ydot(ite))
             if(bubble_flag) then
                 ydot(ira) = y(ira)*onethird*(mu*w_e-dlnrho)
@@ -6080,126 +6070,6 @@
        
  
 	! ============================================================================
-	! cloud_top_entrainment
-	! ============================================================================
-	!>@author
-	!>Paul J. Connolly, The University of Manchester
-	!>@brief
-	!>Applies the cloud-top entrainment thermodynamic mixing treatment, diagnoses the entrained
-	!>fraction from moist potential temperature and updates parcel temperature and relative humidity.
-    !> Cloud-top entrainment according to sanchez et al 2017                        
-	!>@param[in] n_levels_s: number of sounding levels used in the interpolation
-	!>@param[in] n_sound: length of the supplied sounding arrays
-	!>@param[in] neq: length of the parcel state vector
-	!>@param[in] n_bin_modew: number of liquid bins
-	!>@param[inout] rh: parcel relative humidity
-	!>@param[inout] t: parcel temperature
-	!>@param[in] p: parcel pressure
-	!>@param[in] z: parcel height
-	!>@param[in] z_cbase: diagnosed cloud-base height
-	!>@param[in] theta_q_ctop,q_ctop: cloud-top moist potential temperature and total-water mixing ratio
-	!>@param[inout] theta_q_cbase,q_cbase: cloud-base moist potential temperature and total-water
-	!>mixing ratio
-	!>@param[inout] theta_q: current parcel moist potential temperature
-	!>@param[inout] x_ent: diagnosed cloud-top entrained-air fraction
-	!>@param[in] y: parcel state vector
-	!>@param[in] npart: liquid-particle number concentration
-	!>@param[in] z_sound,theta_q_sound: sounding height and moist-potential-temperature profiles
-	!>@param[inout] set_theta_q_cb_flag: flag controlling initial cloud-base reference setup
-    subroutine cloud_top_entrainment(n_levels_s, n_sound, neq, n_bin_modew, &
-            rh, t, p, z, z_cbase, theta_q_ctop, q_ctop, theta_q_cbase, q_cbase, theta_q, &
-            x_ent, y, npart, z_sound, theta_q_sound, set_theta_q_cb_flag)   
-        use numerics, only : zeroin, dvode
-        implicit none
-        integer(i4b), intent(in) :: n_levels_s, n_sound, neq, n_bin_modew
-        real(wp), intent(in) :: p,z, z_cbase, theta_q_ctop, q_ctop
-        real(wp), intent(inout) :: theta_q_cbase, q_cbase, theta_q, x_ent, rh, t
-        real(wp), dimension(neq), intent(in) :: y
-        real(wp), dimension(n_bin_modew), intent(in) :: npart
-        real(wp), dimension(n_sound), intent(in) :: z_sound, theta_q_sound
-        logical, intent(inout) :: set_theta_q_cb_flag
-        
-        real(wp) :: vapour_mass, liquid_mass, mass2, var, dummy, cpm, x1, x2, x2old
-        integer(i4b) :: iloc
-        
-        ! vapour mass in the parcel:
-        vapour_mass=rh*eps1* svp_liq(t) / (p-svp_liq(t))
-
-        ! liquid mass in the parcel:
-        liquid_mass=sum(npart*y(1:n_bin_modew))
-        ! total water in the parcel:
-        mass2=liquid_mass+ vapour_mass
-
-        ! this is the theta q at cloud base, given the total water content
-        if (set_theta_q_cb_flag) then
-            theta_q_cbase=calc_theta_q3(t, p, mass2)
-                                    
-            ! locate position
-            iloc=find_pos(z_sound(1:n_levels_s),z)
-            iloc=min(n_levels_s-1,iloc)
-            iloc=max(1,iloc)
-            ! linear interp theta_q
-            call poly_int(z_sound(iloc:iloc+1), theta_q_sound(iloc:iloc+1), &
-                    min(z,z_sound(n_levels_s)), var,dummy)        
-            theta_q_cbase=var
-
-                                    
-            q_cbase=mass2 ! total water is all vapour at cloud base
-            if(z .gt. z_cbase) then
-                set_theta_q_cb_flag=.false.
-            endif
-        endif
-        
-        ! do the entrainment only above cloud-base
-        if(.not. set_theta_q_cb_flag) then
-            cpm=cp+vapour_mass*cpv+liquid_mass*cpw
-        
-            ! the new value of theta_q
-            theta_q=calc_theta_q3(t,  p, mass2)
-            ! locate position
-            iloc=find_pos(z_sound(1:n_levels_s),z)
-            iloc=min(n_levels_s-1,iloc)
-            iloc=max(1,iloc)
-            ! linear interp theta_q
-            call poly_int(z_sound(iloc:iloc+1), theta_q_sound(iloc:iloc+1), &
-                    min(z,z_sound(n_levels_s)), var,dummy)        
-            theta_q=var
-                                        
-            ! equation 5 (Sanchez et al, 2017, acp)
-            x_ent=(theta_q-theta_q_cbase) / &
-                    (theta_q_ctop-theta_q_cbase)
-            x1=min(max(x_ent,0._wp),1._wp)
-            x2=1._wp-x1
-            
-            !print *,parcel1%theta_q,parcel1%theta_q_cbase,parcel1%theta_q_ctop
-            ! entrainment of vapour:
-            vapour_mass= &!vapour_mass+&
-                x1*(q_ctop)+&
-                x2*(q_cbase)-liquid_mass
-            ! entrainment of liquid:
-            !parcel1%npart=parcel1%npart*x2/x2old
-
-            ! entrainment of theta_q (equation 4, Sanchez et al, 2017, ACP):
-            theta_q=x1*theta_q_ctop + &
-                x2*theta_q_cbase
-            
-            p111=p
-            theta_q_sat=theta_q
-            t=zeroin(150._wp, theta_q_sat, calc_theta_q,1.e-30_wp)
-
-            ! rh
-            rh=vapour_mass / &
-                 ( eps1*svp_liq(t) / &
-                 (p-svp_liq(t)) )
-            x2old=max(x2,1.e-20_wp)
-            print *,x1,x2
-        endif
-    end subroutine cloud_top_entrainment        
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                   
-           
-                
-	! ============================================================================
 	! update_volume_and_shape
 	! ============================================================================
 	!>@author
@@ -6614,44 +6484,53 @@
 ! 	parcel1%npart=parcel1%npart*exp(-loss_rate*parcel1%dt)
 
 
-	if ((sce_flag.gt.0).or. (parcel1%bin_scheme_flag.ne.BIN_FULL_MOVING)) then        				
-        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        if(.not.adiabatic_prof) then 
-        	! only do it when larger than 0
-			where ((parcel1%npart + (1._wp-dilute_send)*parcel1%npart_ent) > 0._wp)
-				parcel1%y(1:parcel1%n_bin_modew)= &
-					parcel1%y(1:parcel1%n_bin_modew)*parcel1%npart + &
-					(1._wp-dilute_send)* &
-					parcel1%mbin_ent(1:parcel1%n_bin_modew,parcel1%n_comps+1) * &
-					parcel1%npart_ent
-				parcel1%y(1:parcel1%n_bin_modew) = parcel1%y(1:parcel1%n_bin_modew)/ &
-					(parcel1%npart + (1._wp-dilute_send)*parcel1%npart_ent)
-			end where
-			parcel1%moments = parcel1%moments + (1._wp-dilute_send)*parcel1%moments_ent
-			parcel1%npart = parcel1%npart + (1._wp-dilute_send)*parcel1%npart_ent
+    if(.not.adiabatic_prof) then
+        ! Add aerosol carried by the newly entrained environmental-air
+        ! fraction.  Existing parcel particles have already been diluted by
+        ! dilute_send inside entrainment(); the environmental contribution is
+        ! therefore (1-dilute_send) times the fixed t=0 environmental PSD.
+        if (entrain_aerosol) then
+            where ((parcel1%npart + (1._wp-dilute_send)*parcel1%npart_ent) > 0._wp)
+                parcel1%y(1:parcel1%n_bin_modew)= &
+                    parcel1%y(1:parcel1%n_bin_modew)*parcel1%npart + &
+                    (1._wp-dilute_send)* &
+                    parcel1%mbin_ent(1:parcel1%n_bin_modew,parcel1%n_comps+1) * &
+                    parcel1%npart_ent
+                parcel1%y(1:parcel1%n_bin_modew)= &
+                    parcel1%y(1:parcel1%n_bin_modew)/ &
+                    (parcel1%npart + (1._wp-dilute_send)*parcel1%npart_ent)
+            end where
+            parcel1%moments=parcel1%moments + &
+                (1._wp-dilute_send)*parcel1%moments_ent
+            parcel1%npart=parcel1%npart + &
+                (1._wp-dilute_send)*parcel1%npart_ent
+        endif
 
-			if (l_inhom) then
-				where ((parcel1%npart + parcel1%npart_temp) .gt. 0._wp)
-					parcel1%y(1:parcel1%n_bin_modew)= &
-						parcel1%y(1:parcel1%n_bin_modew)*parcel1%npart + &
-						parcel1%mbin_temp(1:parcel1%n_bin_modew,parcel1%n_comps+1) * &
-						parcel1%npart_temp
-					parcel1%y(1:parcel1%n_bin_modew) = parcel1%y(1:parcel1%n_bin_modew)/ &
-						max(parcel1%npart + parcel1%npart_temp,1.e-30_wp)
-				end where
-! 				parcel1%y(1:parcel1%n_bin_modew)=max(parcel1%y(1:parcel1%n_bin_modew), &
-! 					parcel1%mbin_temp(1:parcel1%n_bin_modew,parcel1%n_comps+1))
-				parcel1%moments = parcel1%moments + parcel1%moments_temp
-				parcel1%npart = parcel1%npart + parcel1%npart_temp
-			
-			endif
-			
-			call moving_centre(parcel1%n_bin_mode,parcel1%n_bin_modew,&
-					parcel1%n_bins1,parcel1%n_modes, parcel1%n_comps, &
-					parcel1%imoms+parcel1%n_comps, parcel1%npart, &
-					parcel1%y(1:parcel1%n_bin_modew), &
-					parcel1%moments(1:parcel1%n_bin_modew,:), &
-					parcel1%mbin,parcel1%mbinedges)
+        ! Keep the existing inhomogeneous-mixing bookkeeping unchanged for
+        ! now.  It will be reviewed separately after the homogeneous pathway.
+        if (l_inhom) then
+            where ((parcel1%npart + parcel1%npart_temp) .gt. 0._wp)
+                parcel1%y(1:parcel1%n_bin_modew)= &
+                    parcel1%y(1:parcel1%n_bin_modew)*parcel1%npart + &
+                    parcel1%mbin_temp(1:parcel1%n_bin_modew,parcel1%n_comps+1) * &
+                    parcel1%npart_temp
+                parcel1%y(1:parcel1%n_bin_modew)= &
+                    parcel1%y(1:parcel1%n_bin_modew)/ &
+                    max(parcel1%npart + parcel1%npart_temp,1.e-30_wp)
+            end where
+            parcel1%moments=parcel1%moments + parcel1%moments_temp
+            parcel1%npart=parcel1%npart + parcel1%npart_temp
+        endif
+
+        ! Remap only when the selected numerical treatment requires it.
+        if ((sce_flag.gt.0).or. &
+            (parcel1%bin_scheme_flag.ne.BIN_FULL_MOVING)) then
+            call moving_centre(parcel1%n_bin_mode,parcel1%n_bin_modew,&
+                    parcel1%n_bins1,parcel1%n_modes, parcel1%n_comps, &
+                    parcel1%imoms+parcel1%n_comps, parcel1%npart, &
+                    parcel1%y(1:parcel1%n_bin_modew), &
+                    parcel1%moments(1:parcel1%n_bin_modew,:), &
+                    parcel1%mbin,parcel1%mbinedges)
         endif
     endif
 
@@ -6758,40 +6637,6 @@
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
     endif
-
-
-
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! stop the simulation if parcel is above cloud-top                     !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    if((parcel1%y(parcel1%iz) .gt. parcel1%z_ctop)  .and. &
-        vert_ent) parcel1%break_flag=.true.
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-
-
-
-
-
-    
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! vertical entrainment outside of solver (see Sanchez et al, 2017, ACP)!
-    ! (lateral entrainment is inside solver)                               !
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    if(vert_ent .and. (.not. adiabatic_prof) .and. &
-        (parcel1%y(parcel1%iz) .gt. parcel1%z_cbase) ) then
-        call cloud_top_entrainment(n_levels_s, parcel1%n_sound, parcel1%neq, &
-            parcel1%n_bin_modew, &
-            parcel1%y(parcel1%irh), parcel1%y(parcel1%ite), &
-            parcel1%y(parcel1%ipr), parcel1%y(parcel1%iz), parcel1%z_cbase, &
-            parcel1%theta_q_ctop, parcel1%q_ctop, parcel1%theta_q_cbase, &
-            parcel1%q_cbase, parcel1%theta_q, &
-            parcel1%x_ent, parcel1%y, parcel1%npart, &
-            parcel1%z_sound, parcel1%theta_q_sound, set_theta_q_cb_flag)   
-        
-    endif
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
 
 
 
@@ -6955,6 +6800,15 @@
 		
 		dilute_send=1._wp
 		ratio_send=1._wp
+
+        ! Start every entrainment event from the original environmental aerosol
+        ! distribution defined at model initialisation.  The working arrays may
+        ! be hydrated and remapped below, but the *_ent0 template is immutable.
+        parcel1%npart_ent=parcel1%npart_ent0
+        parcel1%mbin_ent=parcel1%mbin_ent0
+        parcel1%moments_ent=parcel1%moments_ent0
+        parcel1%mbinedges_ent=parcel1%mbinedges_ent0
+
 		! locate position
 		pe=0.5*(parcel1%yold(parcel1%ipr)+parcel1%y(parcel1%ipr))
 		iloc=find_pos(parcel1%p_sound(1:n_levels_s),pe)
@@ -6972,7 +6826,7 @@
 		! env density:
 		rhoe=pe/((ra+rv*qve)*te)
 		! rhenv
-		rhenv=qve/(eps1*svp_liq(te)/(parcel1%y(parcel1%ipr)-svp_liq(te))	)
+		rhenv=qve/(eps1*svp_liq(te)/(pe-svp_liq(te)))
 	
     	entrain_count = min(entrain_count + 1, max(entrain_period,1))
     	l_inhom=(.not. adiabatic_prof) .and. ((entrain_period == entrain_count) &
@@ -7034,7 +6888,7 @@
 		! lateral entrainment reducing drop number conc.                       !
 		!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 ! 		if((.not. adiabatic_prof).and.(entrain_period==0)) then 
-        if((.not. adiabatic_prof).and.((entrain_period==0).or.(.not.l_inhom))) then
+        if(.not.l_inhom) then
 			svp1=svp_liq(parcel1%yold(parcel1%ite))
 			wv=eps1*parcel1%yold(parcel1%irh)* &
 				svp1 / (parcel1%yold(parcel1%ipr)- svp1) ! wv mixing ratio
@@ -7058,7 +6912,11 @@
 					parcel1%y(parcel1%ipr)/(parcel1%y(parcel1%ite)*rm_new) * &
 					parcel1%y(parcel1%iw)
 			endif
-			dilute_send = min(flux_old / flux_new,1.0_wp)
+            if (flux_new.gt.tiny(1._wp)) then
+                dilute_send=min(max(flux_old/flux_new,0._wp),1._wp)
+            else
+                dilute_send=1._wp
+            endif
 			! drops / aerosol
 			parcel1%npart(1:parcel1%n_bin_modew)= &
 				parcel1%npart(1:parcel1%n_bin_modew)*dilute_send
@@ -7074,6 +6932,7 @@
    		endif
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
+        if (entrain_aerosol) then
 		!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 		! put water on bins being entrained, using koehler equation        !
 		!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -7088,7 +6947,7 @@
 					dummy=fmin(1.e-50_wp,1.e1_wp, koehler02_ent,1.e-30_wp)
 					mult=1._wp
 					rh_act=koehler02_ent(dummy)
-					rh_act=min(parcel1%y(parcel1%irh),rhenv,rh_act)
+					rh_act=min(rhenv,rh_act)
 					d_dummy=zeroin(1.e-30_wp, dummy, koehler02_ent,1.e-30_wp)* &
 						molw_water 
 					parcel1%mbin_ent(i,n_comps+1)= d_dummy
@@ -7103,7 +6962,7 @@
 					dummy=fmin(1.e-50_wp,1.e1_wp, kkoehler02_ent,1.e-30_wp)
 					mult=1._wp
 					rh_act=kkoehler02_ent(dummy)
-					rh_act=min(parcel1%y(parcel1%irh),rhenv,rh_act)
+					rh_act=min(rhenv,rh_act)
 					d_dummy=zeroin(1.e-30_wp, dummy, kkoehler02_ent,1.e-30_wp)* &
 						molw_water 
 					parcel1%mbin_ent(i,n_comps+1)= d_dummy
@@ -7142,6 +7001,8 @@
 			!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 		endif 
     
+        endif
+
     	! now for evaporated liquid / ice
     	if (l_inhom) then
 			!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -7217,7 +7078,6 @@
 
 			! really need to do for ice as well
 		endif    
-    	if (.not.entrain_aerosol) dilute_send=1._wp
     	if (.not. release_aerosol) ratio_send=1._wp
 	end subroutine entrainment
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -8387,7 +8247,21 @@
         endif
 
 
-        ! break-out if flag has been set 
+        ! --------------------------------------------------------------
+        ! Prescribed cloud-top stopping criterion.  z_ctop is a generic
+        ! parcel run-control limit and is independent of the removed
+        ! Sanchez cloud-top entrainment pathway.  Check it only after
+        ! completing the accepted timestep so condensation/deposition,
+        ! SCE and fallout remain operator-consistent.  The final output
+        ! call below writes this last accepted state.
+        ! --------------------------------------------------------------
+        if ((.not.chamber_override) .and. (z_ctop.gt.0._wp)) then
+            if (parcel1%y(parcel1%iz).ge.z_ctop) then
+                parcel1%break_flag=.true.
+            endif
+        endif
+
+        ! break-out if flag has been set
         if(parcel1%break_flag) exit
     enddo
     ! output to file
