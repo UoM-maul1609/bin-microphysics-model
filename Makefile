@@ -7,7 +7,7 @@ OPTICS_LIB = $(OPTICS_DIR)/optics.a
 OPTICS_OBJS = $(OPTICS_DIR)/refractive_indices_mod.$(OBJ) \
               $(OPTICS_DIR)/adt_scattering_mod.$(OBJ)
 
-.PHONY: osnf_code sce_code cleanall
+.PHONY: osnf_code sce_code cleanall debug
 CLEANDIRS = $(OSNF_DIR) $(SCE_DIR)  $(SCE_OSNF_DIR) ./
 
 
@@ -48,7 +48,7 @@ main.exe	:  b_micro_lib.a  sce_code \
 		${NETCDFLIB} -I ${NETCDFMOD} ${NETCDF_LIB} $(DEBUG)
 b_micro_lib.a	:  osnf_code 
 	cp $(OSNF_DIR)/osnf_lib.a b_micro_lib.a 
-bin_microphysics_module.$(OBJ)	: bin_microphysics_module.f90
+bin_microphysics_module.$(OBJ)	: bin_microphysics_module.f90 | osnf_code sce_code $(OPTICS_LIB)
 	$(FOR) bin_microphysics_module.f90 -I ${NETCDFMOD} -I${OSNF_DIR} -I${SCE_DIR}\
 	     -I${OPTICS_DIR} $(FFLAGS)bin_microphysics_module.$(OBJ)
 $(OPTICS_DIR)/refractive_indices_mod.$(OBJ): \
@@ -73,6 +73,16 @@ osnf_code:
 	$(MAKE) -C $(OSNF_DIR)
 sce_code:
 	$(MAKE) -C $(SCE_DIR)
+# Runtime-check build for development/debugging.
+CHECK_FFLAGS = -O0 -g -Wall -Wextra -fcheck=all -fbacktrace \
+               -ffpe-trap=invalid,zero,overflow -finit-real=snan -o
+CHECK_FFLAGS2 = -O0 -g -Wall -Wextra -fcheck=all -fbacktrace \
+                -ffpe-trap=invalid,zero,overflow -o
+
+debug:
+	$(MAKE) cleanall
+	$(MAKE) FFLAGS="$(CHECK_FFLAGS) " FFLAGS2="$(CHECK_FFLAGS2) " main.exe
+
 clean:
 	rm -f *.exe *.o *.mod *~ *.a
 	rm -f $(OPTICS_DIR)/*.o $(OPTICS_DIR)/*.mod $(OPTICS_LIB)

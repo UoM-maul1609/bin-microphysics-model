@@ -108,7 +108,7 @@ def plot_model_run(fileName='/tmp/output1.nc'):
     
     host.set_ylabel("Height (m)")
     host.set_xlabel("Pressure (hPa)")
-    par2.set_xlabel("T ($^\circ$C)")
+    par2.set_xlabel("T ($^\\circ$C)")
     
     p1, = host.plot( p/100.,z, label="pressure")
     p3, = par2.plot( t-273.15,z, label="temperature")

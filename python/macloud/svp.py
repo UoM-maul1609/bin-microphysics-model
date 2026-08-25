@@ -47,7 +47,7 @@ def svp(T,flag,flag2):
           return [611.73*exp(2.501e6/461.5*(1./273.16-1./x)) for x in T]
 
        else :
-          print('Error no method by ' % flag)
+          print('Error: no method called %s' % flag)
 
 
    # liquid svps
@@ -75,8 +75,8 @@ def svp(T,flag,flag2):
        elif flag.lower()=='wmo':
           return [100.*10.**( 10.79574 *(1.-273.16/x)                              
                     - 5.02800 *log10(x/273.16) 
-                    + 1.50475e-4 *(1 - 10.*(-8.2969*(x/273.16-1.))) 
-                    + 0.42873e-3 *(10.*(+4.76955*(1.-273.16/x)) - 1.) 
+                    + 1.50475e-4 *(1 - 10.**(-8.2969*(x/273.16-1.))) 
+                    + 0.42873e-3 *(10.**(+4.76955*(1.-273.16/x)) - 1.) 
                     + 0.78614 ) for x in T]
 
        elif flag.lower()=='hyland':
@@ -104,10 +104,10 @@ def svp(T,flag,flag2):
           return [610.7*exp((17.38*x-4.7473e3)/(x-34.15)) for x in T]
 
        else :
-          print ('Error no method by '%flag)
+          print('Error: no method called %s' % flag)
 
    else :
-      print('Error no phase called ' %flag2)
+      print('Error: no phase called %s' % flag2)
 
 ###########################################################
 if __name__ == "__main__":
@@ -119,7 +119,7 @@ if __name__ == "__main__":
    rc('text',usetex = True)
 
 
-   T=[273.15-(273.15-243.15)/100.*x for x in xrange(0,99,1)]
+   T=[273.15-(273.15-243.15)/100.*x for x in range(0,99,1)]
 
    plt.ion()
    fig=plt.figure()
@@ -139,8 +139,8 @@ if __name__ == "__main__":
    ax1.legend(('goff','bolton','roger',
                'buck2','buck1','wmo',
                'hyland','sonntag','teten',
-               'clausius','magnus'),2)
-   ax1.set_xlabel(r'T ($^\circ$ C)')   
+               'clausius','magnus'), loc=2)
+   ax1.set_xlabel(r'T ($^\\circ$ C)')   
    ax1.set_ylabel(r'e$_{s}$ (Pa)')   
    ax1.set_title(r'Liq. svps')
 
@@ -158,7 +158,7 @@ if __name__ == "__main__":
    ax2.legend(('buck2','buck','goff',
                'marti','teten','hyland',
                'murphy','magnus','clausius'),2)
-   ax2.set_xlabel(r'T ($^\circ$ C)')
+   ax2.set_xlabel(r'T ($^\\circ$ C)')
    ax2.set_ylabel(r'e$_{s}$ (Pa)')   
    ax2.set_title(r'Ice svps')
 

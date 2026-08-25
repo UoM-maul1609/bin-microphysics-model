@@ -21,10 +21,12 @@ if __name__=="__main__":
 	#NINP1[:] = 0.0
 	ax=plt.plot(Tc,NINP1/1000.)
 	plt.ylabel('N$_{INP}$ (L$^{-1}$)')
-	plt.xlabel('T ($\circ$C)')
+	plt.xlabel('T ($\\circ$C)')
 	#ax[0].axes.invert_xaxis()
 	
-	NINP2=1000.*np.exp(-50.0+45.25*(-4.-Tc)**0.046)
+	NINP2=np.zeros_like(Tc)
+	mask=Tc < -4.0
+	NINP2[mask]=1000.*np.exp(-50.0+45.25*(-4.-Tc[mask])**0.046)
 	plt.plot(Tc,NINP2/1000.)
 	
 	# temperatures less than -23 degC

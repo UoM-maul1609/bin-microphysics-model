@@ -13,7 +13,7 @@ datyl=data1[1::2]
 data1=[-20.666666666666668, 0.2673228346456693,-14.476190476190482, 0.4133858267716536, \
 	-12.285714285714288, 0.6503937007874017,-8.666666666666671, 0.41062992125984255, \
 	-3.80952380952381, 0.33070866141732286]
-daty=data1[1::2]
+datyu=data1[1::2]
 yerr=np.append(np.expand_dims(np.array(datyl),axis=1),np.expand_dims(np.array(datyu),axis=1),axis=1).transpose()
 def CalcFrag(D,t):
 
@@ -68,14 +68,14 @@ plt.plot(N,t)
 plt.plot(NB,t)
 plt.xscale('log')
 plt.xlabel('Number of fragments')
-plt.ylabel('T ($^\circ$C)')
+plt.ylabel('T ($^\\circ$C)')
 ax=fig.gca()
 ax.invert_yaxis()
 plt.errorbar(daty,datx,np.zeros((2,len(datx))),yerr)
 mB=1./2.5*m
 mT=rhoi*np.pi*DT**3/6.
 
-plt.legend(['Small splinters , D$_S$=' + str(round(1e6*(6.*mT/(np.pi*1000))**(1./3.),0)) + ' $\mu$m', \
-    'Large splinters, D$_L$=' + str(round(1e6*(6.*mB/(np.pi*1000))**(1./3.),0)) + ' $\mu$m','Keinert et al. (2020)'])
+plt.legend(['Small splinters , D$_S$=' + str(round(1e6*(6.*mT/(np.pi*1000))**(1./3.),0)) + ' $\\mu$m', \
+    'Large splinters, D$_L$=' + str(round(1e6*(6.*mB/(np.pi*1000))**(1./3.),0)) + ' $\\mu$m','Keinert et al. (2020)'])
 
 plt.title('Number of fragments from a D=' +str(round(1000*D,3)) + 'mm freezing drop')

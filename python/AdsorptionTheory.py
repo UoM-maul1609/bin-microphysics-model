@@ -52,12 +52,17 @@ if __name__=="__main__":
 	Dve=Dve*Ddry
 	Dse=(3.0*X*Dve-Ddry)*0.5
 	
-	plt.plot(d, \
-		np.exp(4.0*sigma*Mw/(R_gas*T*rhow*d) - \
-		AFHH*((d-Ddry)/(2.*Dh2o))**-BFHH) )
-	plt.plot(d, \
-		np.exp(4.0*sigma*Mw/(R_gas*T*rhow*d) - \
-		AFHH*((d-Dse)/(2.*Dh2o))**-BFHH) )
+	rh_fhh_dry=np.full_like(d,np.nan)
+	mask=d>Ddry
+	rh_fhh_dry[mask]=np.exp(4.0*sigma*Mw/(R_gas*T*rhow*d[mask]) - \
+		AFHH*((d[mask]-Ddry)/(2.*Dh2o))**-BFHH)
+	plt.plot(d,rh_fhh_dry)
+
+	rh_fhh_se=np.full_like(d,np.nan)
+	mask=d>Dse
+	rh_fhh_se[mask]=np.exp(4.0*sigma*Mw/(R_gas*T*rhow*d[mask]) - \
+		AFHH*((d[mask]-Dse)/(2.*Dh2o))**-BFHH)
+	plt.plot(d,rh_fhh_se)
 		
 	kappa=1.28	
 	Ddry=100.e-9

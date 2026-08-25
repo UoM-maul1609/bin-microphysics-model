@@ -176,7 +176,8 @@ def runModel(n):
 	changeFile(dumpFile,tmpFile,'n_aer1(1:3,1:1)        = 1.08e8, 3.90e9, 4.67e8,',nStr)
 	changeFile(tmpFile,tmpFile,'d_aer1(1:3,1:1)        = 73e-9   , 106e-9, 240e-9, ',dStr)
 	changeFile(tmpFile,tmpFile,'sig_aer1(1:3,1:1)      = 0.12   , 0.451, 0.398, ',sigStr)
-	changeFile(tmpFile,tmpFile,'n_levels_c = 340,','n_levels_c = ' +str(len(tp['chamber']['temp_chamber'])))
+	changeFile(tmpFile,tmpFile,'n_levels_c = 0,','n_levels_c = ' +str(len(tp['chamber']['temp_chamber'])))
+	changeFile(tmpFile,tmpFile,'chamber_override=.false.,','chamber_override=.true.,')
 	
 	# build replace string
 	nStr='n_aer1(1:3,2:2)        = '
@@ -195,7 +196,7 @@ def runModel(n):
 	changeFile(tmpFile,tmpFile,'kappa_core1(1:4)      = 1.28,1.28,0.3,0.3, ','kappa_core1(1:4)      = 0.61,1.28,0.3,0.3, ')
 	changeFile(tmpFile,tmpFile,'density_core1(1:4) = 2165.,2165.,1770.,1770.,','density_core1(1:4) = 1770.,2165.,1770.,1770.,')
 
-	changeFile(tmpFile,tmpFile,'blah',tp['str1'])
+	changeFile(tmpFile,tmpFile,'! CHAMBER_DATA_PLACEHOLDER',tp['str1'])
 	
 	str1='./main.exe ' + tmpFile
 	

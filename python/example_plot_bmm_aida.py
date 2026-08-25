@@ -105,7 +105,7 @@ def plot_model_run(fileName='/tmp/output1.nc'):
     
     host.set_xlabel("Time (s)")
     host.set_ylabel("Pressure (hPa)")
-    par2.set_ylabel("T ($^\circ$C)")
+    par2.set_ylabel("T ($^\\circ$C)")
     
     p1, = host.plot(time, p/100., label="pressure")
     p3, = par2.plot(time, t-273.15, label="temperature")

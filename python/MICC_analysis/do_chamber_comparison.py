@@ -133,9 +133,10 @@ def runModel():
 	changeFile(dumpFile,tmpFile,'n_aer1(1:3,1:1)        = 1.08e8, 3.90e9, 4.67e8,',nStr)
 	changeFile(tmpFile,tmpFile,'d_aer1(1:3,1:1)        = 73e-9   , 106e-9, 240e-9, ',dStr)
 	changeFile(tmpFile,tmpFile,'sig_aer1(1:3,1:1)      = 0.12   , 0.451, 0.398, ',sigStr)
-	changeFile(tmpFile,tmpFile,'n_levels_c = 340,','n_levels_c = ' +str(len(tp['chamber']['temp_chamber'])))
+	changeFile(tmpFile,tmpFile,'n_levels_c = 0,','n_levels_c = ' +str(len(tp['chamber']['temp_chamber'])))
+	changeFile(tmpFile,tmpFile,'chamber_override=.false.,','chamber_override=.true.,')
 	
-	changeFile(tmpFile,tmpFile,'blah',tp['str1'])
+	changeFile(tmpFile,tmpFile,'! CHAMBER_DATA_PLACEHOLDER',tp['str1'])
 	
 	str1='./main.exe ' + tmpFile
 	

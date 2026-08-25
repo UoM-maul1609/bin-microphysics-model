@@ -63,7 +63,7 @@
             ! variables for bin model
             integer(i4b) :: n_bins1,n_modes,n_comps, n_bin_mode, n_bin_modew, n_bin_mode1, &
                             n_sound, n_chamber, ice_flag, sce_flag,bin_scheme_flag, &
-                            n_inp_classes, iinp_start
+                            n_inp_classes, iinp_start, idemott
             real(wp) :: dt
 			! Cumulative hydrometeor mass removed by fallout
 			! kg hydrometeor / kg dry air
@@ -193,7 +193,7 @@
         real(wp) :: psurf, tsurf
         integer(i4b), parameter :: nlevels_r=1000
         integer(i4b), parameter :: nq=3
-        integer(i4b) :: n_levels_s, n_levels_c, idum, n_sel
+        integer(i4b) :: n_levels_s, n_levels_c=0_i4b, idum, n_sel
         real(wp) :: mult, rh_act
         real(wp), allocatable, dimension(:,:) :: q_read !nq x nlevels_r
         real(wp), allocatable, dimension(:) :: theta_read,rh_read,  z_read
@@ -201,7 +201,7 @@
         	qtot_chamber
         ! aerosol setup
         integer(i4b) :: n_intern, n_mode,n_sv,sv_flag,n_bins,n_comps, &
-                        n_inp_classes=5_i4b
+                        n_inp_classes=0_i4b
         ! aerosol_spec
         real(wp), allocatable, dimension(:,:) :: n_aer1,d_aer1,sig_aer1, mass_frac_aer1
         real(wp), allocatable, dimension(:) ::  molw_core1,density_core1,nu_core1, &
@@ -376,8 +376,8 @@
 	!>@param[in] nmlfile: path to the BMM namelist file
 	subroutine read_in_bmm_namelist(nmlfile)
 		implicit none
-        character (len=200), intent(in) :: nmlfile
-        integer(i4b) :: k
+        character(len=*), intent(in) :: nmlfile
+        integer(i4b) :: i,j,k
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         ! namelists                                                            !
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -419,6 +419,9 @@
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         open(8,file=nmlfile,status='old', recl=80, delim='apostrophe')
         read(8,nml=run_vars)
+        if (n_levels_c.lt.0) error stop 'n_levels_c must be non-negative'
+        if (chamber_override .and. n_levels_c.lt.2) error stop &
+            'chamber_override requires n_levels_c >= 2'
         read(8,nml=aerosol_setup)
         ! allocate memory / init
 		call allocate_arrays(n_intern,n_mode,n_sv,n_bins,n_comps,nq,n_levels_s, &
@@ -432,6 +435,29 @@
         
         read(8,nml=sounding_spec)
         read(8,nml=aerosol_spec)
+
+        ! Basic configuration checks.  Zero-number lognormal submodes may use
+        ! zero placeholder diameters/widths for backward compatibility.
+        if (n_intern.lt.1 .or. n_mode.lt.1 .or. n_bins.lt.1 .or. &
+            n_comps.lt.1) error stop 'Aerosol dimensions must be positive'
+        if (dmina.le.0._wp .or. dmaxa.le.dmina) error stop &
+            'Require 0 < dmina < dmaxa'
+        if (any(n_aer1.lt.0._wp)) error stop &
+            'Aerosol number concentrations must be non-negative'
+        do j=1,n_mode
+            do i=1,n_intern
+                if (n_aer1(i,j).gt.0._wp) then
+                    if (d_aer1(i,j).le.0._wp) error stop &
+                        'Populated aerosol submode requires positive median diameter'
+                    if (sig_aer1(i,j).le.0._wp) error stop &
+                        'Populated aerosol submode requires positive ln-sigma'
+                endif
+            enddo
+            if (any(mass_frac_aer1(j,:).lt.0._wp)) error stop &
+                'Aerosol component mass fractions must be non-negative'
+            if (abs(sum(mass_frac_aer1(j,:))-1._wp).gt.1.e-6_wp) error stop &
+                'Aerosol component mass fractions must sum to one in each mode'
+        enddo
 
         ! A_FHH=0 means that a component has no adsorption contribution.
         ! If A_FHH>0, B_FHH must also be positive.  Components are otherwise
@@ -476,6 +502,11 @@
                 if (inp_temp(k).ge.inp_temp(k-1)) error stop &
                     'inp_temp must be ordered from warm to cold'
             enddo
+            if (.not.any(inp_kind.eq.INP_NIEMAND12 .or. &
+                         inp_kind.eq.INP_KAOLINITE_M11 .or. &
+                         inp_kind.eq.INP_KFELDSPAR_A13)) then
+                print *,'Warning: INAS enabled but no component has an INAS category'
+            endif
         endif
 
         if(chamber_override) then 
@@ -606,9 +637,8 @@
     ! get_inp_control
     ! ============================================================================
     ! Diagnose heterogeneous-nucleation control from the aerosol composition
-    ! carried by a representative particle.  Explicit INAS has highest
-    ! precedence after internal mixing/coagulation; the DCMEX Daily/Daly
-    ! concentration spectrum then takes precedence over DeMott.
+    ! carried by a representative particle.  The runtime precedence among
+    ! enabled heterogeneous mechanisms is INAS > DeMott > Daily/DCMEX.
     subroutine get_inp_control(mcomp,has_inas,has_demott,has_daily)
         implicit none
         real(wp), dimension(:), intent(in) :: mcomp
@@ -780,6 +810,7 @@
     parcel1%n_comps=n_comps
     parcel1%n_inp_classes=n_inp_classes
     parcel1%iinp_start=n_comps+6
+    parcel1%idemott=parcel1%iinp_start+n_inp_classes
     parcel1%n_bin_modew=n_bins*n_mode
     parcel1%n_bin_mode1=(n_bins+1)*n_mode
     parcel1%z=zinit
@@ -804,7 +835,7 @@
     parcel1%ice_flag=ice_flag
     parcel1%n_bin_mode=&
         parcel1%n_bins1*n_mode*(1+parcel1%ice_flag)     ! for all the liquid and ice    
-    parcel1%imoms=ice_flag*(5+n_inp_classes)            ! phi, nmon, vol, rim, unf, cumulative Nin
+    parcel1%imoms=ice_flag*(6+n_inp_classes)            ! phi, nmon, vol, rim, unf, cumulative Nin, n_demott
     
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! validate bin_scheme_flag					                                   !
@@ -1556,6 +1587,10 @@
                 parcel1%mbin(:,1:n_comps),parcel1%rhobin,parcel1%moments, &
                 parcel1%n_bin_modew,n_comps,parcel1%iinp_start)
         endif
+        ! Number of currently frozen DeMott-origin primary monomers.
+        ! This is extensive through aggregation and is zero in fresh liquid.
+        parcel1%momenttype(parcel1%idemott)=MOMENT_EXTENSIVE
+        parcel1%moments(:,parcel1%idemott)=0._wp
     endif
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
@@ -3524,16 +3559,17 @@
       a=( 3._wp*vol/(4._wp*pi*phi) )**(onethird)
       c=a*phi
   
-      where(phi.lt.1._wp)
-        ecc=sqrt(1._wp-phi**2._wp)
+      ! Handle nearly spherical particles before evaluating either
+      ! spheroidal expression; both analytic forms are 0/0 at phi=1.
+      where(abs(phi-1._wp).lt.1.e-4_wp)
+        ecc=0._wp
+        capacitance01=a
+      elsewhere(phi.lt.1._wp)
+        ecc=sqrt(max(1._wp-phi**2._wp,0._wp))
         capacitance01=a*ecc/asin(ecc)
       elsewhere
-        ecc=sqrt(1._wp-phi**(-2._wp))
+        ecc=sqrt(max(1._wp-phi**(-2._wp),0._wp))
         capacitance01=c*ecc/log((1._wp+ecc)*phi)
-      end where
-    
-      where(abs(phi-1._wp).lt.1.e-4_wp)
-        capacitance01=a
       end where
       ! westbrook et al. (2008, jas): capacitance of aggregates is 0.25 times the 
       ! maximum dimension of the ice particle
@@ -4145,6 +4181,8 @@
                 n,nt,nb,mt,mb,mnew,nleft,mttot,mbtot,mleft,mall, &
                 dprimary,dn,frac,dcin,tc
     logical :: has_inas,has_demott,has_daily
+    logical, dimension(nbinw) :: activated_mask
+    integer(i4b) :: idemott
 
     ! Non-collisional freezing is only relevant below the melting point.
     if(t.gt.ttr) return
@@ -4157,6 +4195,19 @@
     dn_koop=0._wp
     dn01=0._wp
     nin_freeze=0._wp
+    idemott=ncomps+6+n_inp_classes
+
+    ! Evaluate the expensive Koehler/FHH activation test once per warm bin and
+    ! reuse it for all heterogeneous immersion-nucleation mechanisms.
+    activated_mask=.false.
+    if (ice_nucleation_mech_in(INUC_INAS) .or. &
+        ice_nucleation_mech_in(INUC_DEMOTT) .or. &
+        ice_nucleation_mech_in(INUC_DAILY)) then
+        do i=1,nbinw
+            if (npart(i).le.qsmall2 .or. mwat(i).le.tiny(1._wp)) cycle
+            activated_mask(i)=particle_is_activated(i,mwat(i),t)
+        enddo
+    endif
 
     ! -------------------------------------------------------------------------
     ! (1) Immersion freezing by the prognostic discrete INAS spectrum.
@@ -4174,7 +4225,7 @@
         do i=1,nbinw
             if(npart(i).le.qsmall2) cycle
             if(mwat(i).le.tiny(1._wp)) cycle
-            if(.not.particle_is_activated(i,mwat(i),t)) cycle
+            if(.not.activated_mask(i)) cycle
 
             call get_inp_control(mbin2(i,:),has_inas,has_demott,has_daily)
             if(.not.has_inas) cycle
@@ -4202,7 +4253,51 @@
     endif
 
     ! -------------------------------------------------------------------------
-    ! (2) Daily/Daly et al. DCMEX concentration spectrum.
+    ! (2) DeMott et al. (2010) for particles assigned to the DeMott category.
+    ! Explicit INAS components take precedence after internal mixing.
+    ! Existing DeMott primary ice is tracked by the extensive n_demott moment,
+    ! so aggregation with other ice types does not erase DeMott provenance.
+    ! -------------------------------------------------------------------------
+    if(ice_nucleation_mech_in(INUC_DEMOTT)) then
+        dd(:)=((sum(mbin2(:,:)/rhobin(:,:),2))*6._wp/pi)**onethird
+        naer05=0._wp
+
+        do i=1,nbinw
+            if(mwat(i).le.tiny(1._wp)) cycle
+            if(.not.activated_mask(i)) cycle
+            call get_inp_control(mbin2(i,:),has_inas,has_demott,has_daily)
+            if((has_inas .and. ice_nucleation_mech_in(INUC_INAS)) .or. .not.has_demott) cycle
+            if(dd(i).gt.0.5e-6_wp) then
+                naer05=naer05+max(npart(i)-dn_inas(i),0._wp)
+            endif
+        enddo
+
+        nprimary=min(naer05,demott_2010(t,naer05))
+
+        ! Existing DeMott primary monomers are tracked explicitly.
+        nprimary_existing=sum(max(moments(nbinw+1:2*nbinw,idemott),0._wp))
+        nprimary=max(nprimary-nprimary_existing,0._wp)
+
+        ! Deplete eligible aerosol from the large end, retaining the existing
+        ! BMM ordering used by the DeMott implementation.
+        do i=nbinw,1,-1
+            if(nprimary.le.qsmall2) exit
+            if(mwat(i).le.tiny(1._wp)) cycle
+            if(.not.activated_mask(i)) cycle
+
+            call get_inp_control(mbin2(i,:),has_inas,has_demott,has_daily)
+            if((has_inas .and. ice_nucleation_mech_in(INUC_INAS)) .or. .not.has_demott) cycle
+            if(dd(i).le.0.5e-6_wp) cycle
+
+            avail=max(npart(i)-dn_inas(i)-dn_demott(i),0._wp)
+            dprimary=min(nprimary,avail)
+            dn_demott(i)=dn_demott(i)+dprimary
+            nprimary=nprimary-dprimary
+        enddo
+    endif
+
+    ! -------------------------------------------------------------------------
+    ! (3) Daily/Daly et al. DCMEX concentration spectrum.
     !
     ! This is a temperature-only target number concentration: there is no dry
     ! diameter criterion.  It is therefore applied proportionally across every
@@ -4210,8 +4305,8 @@
     ! min(max(N_target-N_existing,0),N_available), which explicitly limits the
     ! parameterisation by the available aerosol reservoir.
     !
-    ! Explicit INAS components take precedence.  Daily/DCMEX in turn takes
-    ! precedence over DeMott if internal mixing produces both categories.
+    ! Runtime precedence among enabled mechanisms is INAS > DeMott > Daily.
+    ! Hence Daily is used only when no enabled higher-priority treatment applies.
     ! -------------------------------------------------------------------------
     if(ice_nucleation_mech_in(INUC_DAILY)) then
         naer_daily=0._wp
@@ -4219,21 +4314,26 @@
         do i=1,nbinw
             if(npart(i).le.qsmall2) cycle
             if(mwat(i).le.tiny(1._wp)) cycle
-            if(.not.particle_is_activated(i,mwat(i),t)) cycle
+            if(.not.activated_mask(i)) cycle
             call get_inp_control(mbin2(i,:),has_inas,has_demott,has_daily)
-            if(has_inas .or. .not.has_daily) cycle
-            naer_daily=naer_daily+max(npart(i)-dn_inas(i),0._wp)
+            if((has_inas .and. ice_nucleation_mech_in(INUC_INAS)) .or. &
+               (has_demott .and. ice_nucleation_mech_in(INUC_DEMOTT)) .or. &
+               .not.has_daily) cycle
+            naer_daily=naer_daily+max(npart(i)-dn_inas(i)-dn_demott(i),0._wp)
         enddo
 
-        ! As with the no-extra-moment DeMott treatment, use carried aerosol
+        ! Daily has no dedicated provenance moment.  Use carried aerosol
         ! composition plus ice monomer number to diagnose already nucleated
-        ! Daily/DCMEX primary ice.
+        ! Daily/DCMEX primary ice.  After mixed-mechanism aggregation this is
+        ! an intentional approximation; n_demott does not have this ambiguity.
         ndaily_existing=0._wp
         do i=1,nbinw
             if(moments(nbinw+i,ncomps+2).le.qsmall2) cycle
             call get_inp_control(mbin2_ice(i,1:ncomps), &
                                  has_inas,has_demott,has_daily)
-            if(has_inas .or. .not.has_daily) cycle
+            if((has_inas .and. ice_nucleation_mech_in(INUC_INAS)) .or. &
+               (has_demott .and. ice_nucleation_mech_in(INUC_DEMOTT)) .or. &
+               .not.has_daily) cycle
             ndaily_existing=ndaily_existing+moments(nbinw+i,ncomps+2)
         enddo
 
@@ -4245,67 +4345,17 @@
         if(ndaily_target.gt.qsmall2 .and. naer_daily.gt.qsmall2) then
             do i=1,nbinw
                 if(mwat(i).le.tiny(1._wp)) cycle
-                if(.not.particle_is_activated(i,mwat(i),t)) cycle
+                if(.not.activated_mask(i)) cycle
                 call get_inp_control(mbin2(i,:), &
                                      has_inas,has_demott,has_daily)
-                if(has_inas .or. .not.has_daily) cycle
+                if((has_inas .and. ice_nucleation_mech_in(INUC_INAS)) .or. &
+                   (has_demott .and. ice_nucleation_mech_in(INUC_DEMOTT)) .or. &
+                   .not.has_daily) cycle
 
-                avail=max(npart(i)-dn_inas(i),0._wp)
+                avail=max(npart(i)-dn_inas(i)-dn_demott(i),0._wp)
                 dn_daily(i)=min(avail,ndaily_target*avail/naer_daily)
             enddo
         endif
-    endif
-
-    ! -------------------------------------------------------------------------
-    ! (3) DeMott et al. (2010) for particles assigned to the DeMott category.
-    ! Explicit INAS components take precedence after internal mixing.
-    ! No additional DeMott provenance moment is introduced: existing primary
-    ! ice is diagnosed from the aerosol composition carried by ice bins and the
-    ! existing monomer-number moment.
-    ! -------------------------------------------------------------------------
-    if(ice_nucleation_mech_in(INUC_DEMOTT)) then
-        dd(:)=((sum(mbin2(:,:)/rhobin(:,:),2))*6._wp/pi)**onethird
-        naer05=0._wp
-
-        do i=1,nbinw
-            if(mwat(i).le.tiny(1._wp)) cycle
-            if(.not.particle_is_activated(i,mwat(i),t)) cycle
-            call get_inp_control(mbin2(i,:),has_inas,has_demott,has_daily)
-            if(has_inas .or. has_daily .or. .not.has_demott) cycle
-            if(dd(i).gt.0.5e-6_wp) then
-                naer05=naer05+max(npart(i)-dn_inas(i),0._wp)
-            endif
-        enddo
-
-        nprimary=min(naer05,demott_2010(t,naer05))
-
-        ! Track already-existing DeMott-eligible primary monomers without an
-        ! extra state variable.  Aggregation does not erase monomer number.
-        nprimary_existing=0._wp
-        do i=1,nbinw
-            if(moments(nbinw+i,ncomps+2).le.qsmall2) cycle
-            call get_inp_control(mbin2_ice(i,1:ncomps),has_inas,has_demott,has_daily)
-            if(has_inas .or. has_daily .or. .not.has_demott) cycle
-            nprimary_existing=nprimary_existing+moments(nbinw+i,ncomps+2)
-        enddo
-        nprimary=max(nprimary-nprimary_existing,0._wp)
-
-        ! Deplete eligible aerosol from the large end, retaining the existing
-        ! BMM ordering used by the DeMott implementation.
-        do i=nbinw,1,-1
-            if(nprimary.le.qsmall2) exit
-            if(mwat(i).le.tiny(1._wp)) cycle
-            if(.not.particle_is_activated(i,mwat(i),t)) cycle
-
-            call get_inp_control(mbin2(i,:),has_inas,has_demott,has_daily)
-            if(has_inas .or. has_daily .or. .not.has_demott) cycle
-            if(dd(i).le.0.5e-6_wp) cycle
-
-            avail=max(npart(i)-dn_inas(i)-dn_daily(i)-dn_demott(i),0._wp)
-            dprimary=min(nprimary,avail)
-            dn_demott(i)=dn_demott(i)+dprimary
-            nprimary=nprimary-dprimary
-        enddo
     endif
 
     ! -------------------------------------------------------------------------
@@ -4424,6 +4474,16 @@
                             nin_freeze(k,kk)*mbtot/mall
                     enddo
                 endif
+
+                ! DeMott provenance follows the original primary residual but
+                ! is not cloned into every freezing fragment.  Partition its
+                ! ensemble concentration with the same fragment mass fractions.
+                moments(inew+nbinw,idemott)=moments(inew+nbinw,idemott)+ &
+                    dn_demott(k)*mleft/mall
+                moments(it+nbinw,idemott)=moments(it+nbinw,idemott)+ &
+                    dn_demott(k)*mttot/mall
+                moments(ib+nbinw,idemott)=moments(ib+nbinw,idemott)+ &
+                    dn_demott(k)*mbtot/mall
             endif
 
             m01(inew)=m01(inew)+mleft

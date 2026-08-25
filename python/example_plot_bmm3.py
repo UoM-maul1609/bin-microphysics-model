@@ -114,7 +114,7 @@ def plot_model_run(fileName='/tmp/output1.nc'):
     
     host.set_ylabel("Height (m)")
     host.set_xlabel("Pressure (hPa)")
-    par2.set_xlabel("T ($^\circ$C)")
+    par2.set_xlabel("T ($^\\circ$C)")
     
     p1, = host.plot( p/100.,z, label="pressure")
     p3, = par2.plot( t-273.15,z, label="temperature")
@@ -168,11 +168,11 @@ def plot_model_run(fileName='/tmp/output1.nc'):
     
     host.set_ylabel("Height (m)")
     #host.set_xlabel("Drop mass (kg)")
-    host.set_xlabel("Drop effective radius ($\mu$m)")
+    host.set_xlabel("Drop effective radius ($\\mu$m)")
     
     #p1=host.plot( mwat.reshape((mwat.shape[0],-1)),z, label="Drop masses")
     #p1=host.plot( mwat.reshape((mwat.shape[0],-1)),z, label="Drop masses")
-    p1=host.plot( deff*0.5e6,z, label="Drop effective radius ($\mu$m)")
+    p1=host.plot( deff*0.5e6,z, label="Drop effective radius ($\\mu$m)")
     
     for i in range(len(p1)):
         if i == 0:

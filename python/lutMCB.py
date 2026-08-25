@@ -50,7 +50,7 @@ if __name__=="__main__":
         #plt.yscale('log')
         plt.grid('on')
 		
-#         plt.ylabel('$D_{eff}$ ($\mu$m)')
+#         plt.ylabel('$D_{eff}$ ($\\mu$m)')
 #         plt.subplot(212)
 #         plt.plot(NaClMR[ind],lut1[ind],'x-')
         plt.ylabel('CDNC (cm$^{-3}$)')
