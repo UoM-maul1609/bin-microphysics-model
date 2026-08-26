@@ -50,8 +50,9 @@
 	t_thresh=2000.,
     !> Use an adiabatic environmental profile when .true.; false permits entrainment treatments.
  	adiabatic_prof=.false.,
-    !> Discrete entrainment cadence: 0=inside solver; positive integer=every N model timesteps.
- 	entrain_period=1,
+    !> Discrete entrainment cadence: 0=homogeneous; positive integer=every N model timesteps.
+    !> With dt=10 s, entrain_period=1 gives a finite inhomogeneous event every 10 s.
+ 	entrain_period=0,
     !> Time at which inhomogeneous mixing switches to homogeneous mixing [s].
  	thresh_to_start_hom_mix=100000.,
     !> Re-expose aerosol associated with evaporated liquid during inhomogeneous-mixing treatment when true.
@@ -64,7 +65,8 @@
 	!> The parcel simulation stops when its height reaches or exceeds z_ctop.
 	!> Set <= 0 to disable the cloud-top stopping criterion.    
 	z_ctop=-1.,
-    !> Specified entrainment rate [model convention, normally m-1 for vertical entrainment].
+    !> Dimensionless jet/bubble entrainment coefficient C_J.
+    !> The fractional entrainment rate is mu=C_J/R [m-1].
  	ent_rate=0.2,
     !> Number of sounding levels supplied in sounding_spec.
  	n_levels_s = 98,
