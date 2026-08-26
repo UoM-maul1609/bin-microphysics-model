@@ -2,7 +2,7 @@
     !> NetCDF output file written by the model.
 	outputfile = '/tmp/output1.nc',
     !> Standalone-SCE namelist path used when SCE configuration is read separately.
-	scefile = 'python/namelist-sce-sip.in',
+	scefile = 'sce/namelist.in',
     !> Total model integration time [s].
 	runtime=5000.,
     !> Nominal model/microphysics timestep [s].
@@ -37,7 +37,7 @@
     !> Ice microphysics switch: 0=liquid only; 1=enable ice bins/processes.
 	ice_flag=1,
     !> Bin-remapping scheme: 0=full moving, 1=moving-centre, 2=Chen-Lamb mass-conserving remap.
-	bin_scheme_flag=0,
+	bin_scheme_flag=1,
     !> Collision/SCE switch: 0=off, 1=SCE collection, 2=SCE plus secondary-ice processes.
 	sce_flag = 2,
     !> Ventilation treatment selector used in diffusional growth calculations.
@@ -53,7 +53,7 @@
     !> Discrete entrainment cadence: 0=inside solver; positive integer=every N model timesteps.
  	entrain_period=1,
     !> Time at which inhomogeneous mixing switches to homogeneous mixing [s].
- 	thresh_to_start_hom_mix=30.,
+ 	thresh_to_start_hom_mix=100000.,
     !> Re-expose aerosol associated with evaporated liquid during inhomogeneous-mixing treatment when true.
  	release_aerosol=.true.,
     !> Entrains environmental aerosol with entrained air when .true.

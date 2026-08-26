@@ -57,7 +57,10 @@
         integer(i4b), parameter :: INP_KFELDSPAR_A13 = 4_i4b
         integer(i4b), parameter :: INP_DAILY25       = 5_i4b
         						
-        logical :: l_inhom		
+        ! l_inhom describes the mixing MODE used by the warm ODE on the
+        ! current timestep.  l_inhom_event is true only when a discrete
+        ! inhomogeneous entrainment event has actually been applied.
+        logical :: l_inhom=.false., l_inhom_event=.false.
 
         type parcel
             ! variables for bin model
@@ -93,11 +96,11 @@
             ! liquid water
             real(wp), dimension(:), allocatable :: d, maer, npart, rho_core, &
                             rh_eq, rhoat, dw, da_dt, ndrop, npartall, npart_ent, &
-                            npart_ent0, npart_temp, npart_temp2
+                            npart_ent0, npart_temp
             real(wp), dimension(:,:), allocatable :: mbin, mbinall, rhobin, &
                                         nubin,molwbin,kappabin, &
                                         mbin_ent, mbin_ent0, &
-                                        mbin_temp, mbin_temp2 ! all bins x all comps                                
+                                        mbin_temp ! all bins x all comps
             ! variables for ODE:                    
             integer(i4b) :: neq, itol, ipr, ite, iz, iw, irh, ira, &
                             itask, istate, iopt, mf, lrw, liw
@@ -121,8 +124,7 @@
             real(wp), allocatable, dimension(:,:) :: moments, mbinedges,ecoll,ecoal, &
                                                     moments_ent, mbinedges_ent, &
                                                     moments_ent0, mbinedges_ent0, &
-                                                    moments_temp, mbinedges_temp, &
-                                                    mbinedges_temp2 
+                                                    moments_temp, mbinedges_temp
             real(wp), allocatable, dimension(:) :: momtemp, vel, cd, nre
             integer(i4b), allocatable, dimension(:) :: momenttype
             integer(i4b), dimension(:,:), allocatable :: indexc                            
@@ -217,8 +219,7 @@
         ! variables for model
         real(wp) :: theta_surf,theta_init, &
             theta_q_sat,t1old, p111, w_cb, n_dummy, d_dummy, x2old=1.0_wp, &
-            wvenv_send, tenv_send, ratio_send, mu_send=0.0_wp, radius_send, w_send, &
-            dilute_send, wv_send
+            wvenv_send, tenv_send, dilute_send=1._wp
         logical :: set_theta_q_cb_flag=.true.
 		integer(i4b) :: entrain_count=0
 
@@ -1230,13 +1231,16 @@
         parcel1%neq=parcel1%n_bin_modew+5 ! p,t,rh,z,w
     else
         parcel1%neq=parcel1%n_bin_modew+6 ! p,t,rh,z,w,ra
-        if (entrain_period == 0) then
-	        l_inhom =.false.
-	    else
-	    	l_inhom = .true.
-	    endif
     endif
     parcel1%tt=0._wp
+
+    ! A positive entrain_period selects the discrete extreme-inhomogeneous
+    ! pathway before thresh_to_start_hom_mix.  At and after the threshold the
+    ! model switches permanently to continuous homogeneous P&K entrainment.
+    ! entrain_period=0 therefore means homogeneous mixing from t=0.
+    l_inhom=(.not.adiabatic_prof) .and. (entrain_period.gt.0) .and. &
+        (parcel1%tt.lt.thresh_to_start_hom_mix)
+    l_inhom_event=.false.
     parcel1%tout=parcel1%tt+parcel1%dt
     parcel1%itol=2
     parcel1%rtol=1.e-4_wp
@@ -1325,30 +1329,20 @@
 		allocate( parcel1%moments_ent0(1:parcel1%n_bin_mode,1:n_comps+parcel1%imoms), &
 			STAT = AllocateStatus)
 		if (AllocateStatus /= 0) STOP "*** Not enough memory ***"
-        ! note, this allocates some space for the aerosol from evaporated drops
+        ! Temporary warm population used for aerosol residuals released by
+        ! completely evaporated drops and, when required, sublimated ice during
+        ! a discrete inhomogeneous event.
         allocate( parcel1%mbinedges_temp(1:parcel1%n_bins1+1,1:parcel1%n_modes), &
             STAT = AllocateStatus)
-        if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+        if (AllocateStatus /= 0) STOP "*** Not enough memory ***"
         allocate( parcel1%npart_temp(1:parcel1%n_bin_modew), STAT = AllocateStatus)
-        if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+        if (AllocateStatus /= 0) STOP "*** Not enough memory ***"
         allocate( parcel1%mbin_temp(1:parcel1%n_bin_modew,1:n_comps+1), &
             STAT = AllocateStatus)
-        if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
-		allocate( parcel1%moments_temp(1:parcel1%n_bin_mode,1:n_comps+parcel1%imoms), &
-			STAT = AllocateStatus)
-		if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
-		if(ice_flag == 1) then
-			! note, this allocates some space for the aerosol from evaporated ice
-			allocate( parcel1%mbinedges_temp2(1:parcel1%n_bins1+1,1:parcel1%n_modes), &
-				STAT = AllocateStatus)
-			if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
-			allocate( parcel1%npart_temp2(1:parcel1%n_bin_modew), STAT = AllocateStatus)
-			if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
-			allocate( parcel1%mbin_temp2(1:parcel1%n_bin_modew,1:n_comps+1), &
-				STAT = AllocateStatus)
-			if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
-			! don't need moments_temp2 as that is already allocated in moments_temp
-		endif
+        if (AllocateStatus /= 0) STOP "*** Not enough memory ***"
+        allocate( parcel1%moments_temp(1:parcel1%n_bin_mode,1:n_comps+parcel1%imoms), &
+            STAT = AllocateStatus)
+        if (AllocateStatus /= 0) STOP "*** Not enough memory ***"
     endif
     ! do not print messages
     call xsetf(0)
@@ -3637,7 +3631,8 @@
                   drv=0._wp, dri=0._wp,dri2=0._wp, dwl_micro=0._wp, &
                   rh,t,p,err,sl, w, &
                   te, qve, pe, var, dummy, rhoe, rhop, b, mu, w_e,dlnrho, wv_old, &
-                  rm_old, ratio=1.0_wp, flux_old, flux_new, svp1, svp2
+                  rm_old, ratio=1.0_wp, flux_old, flux_new, svp1, svp2, winv, &
+                  mu_old, mu_now, dz_ent
 
         integer(i4b) :: i, j,iloc, ipart, ipr, ite, irh, iz,iw, ira
 
@@ -3696,7 +3691,12 @@
 				flux_new = pi*y(parcel1%ira)**2 * &
 					y(parcel1%ipr)/(y(parcel1%ite)*rm) * y(parcel1%iw)
 			endif
-			ratio = min(flux_old / flux_new,1.0_wp)
+			mu_old=ent_rate/max(parcel1%yold(ira),tiny(1._wp))
+			mu_now=ent_rate/max(y(ira),tiny(1._wp))
+			
+			dz_ent=max(y(iz)-parcel1%yold(iz),0._wp)
+			
+			ratio=exp(-0.5_wp*(mu_old+mu_now)*dz_ent)
 		endif
 		!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
@@ -3858,8 +3858,9 @@
             if(bubble_flag) then
                 ydot(ira) = y(ira)*onethird*(mu*w_e-dlnrho)
             else
+            	winv = w_e/(w_e**2 + 1.e-3_wp**2)
                 ydot(ira) = y(ira)*0.5_wp*(mu*w_e- dlnrho - &
-                    1._wp/(sign(max(abs(w_e),1.e-3),w_e))*ydot(iw))
+                    winv*ydot(iw))
             endif
 
         endif
@@ -6506,9 +6507,10 @@
                 (1._wp-dilute_send)*parcel1%npart_ent
         endif
 
-        ! Keep the existing inhomogeneous-mixing bookkeeping unchanged for
-        ! now.  It will be reviewed separately after the homogeneous pathway.
-        if (l_inhom) then
+        ! Add aerosol residuals produced by the discrete inhomogeneous event.
+        ! This is independent of whether the next timestep has already switched
+        ! to homogeneous mixing.
+        if (l_inhom_event) then
             where ((parcel1%npart + parcel1%npart_temp) .gt. 0._wp)
                 parcel1%y(1:parcel1%n_bin_modew)= &
                     parcel1%y(1:parcel1%n_bin_modew)*parcel1%npart + &
@@ -6521,6 +6523,17 @@
             parcel1%moments=parcel1%moments + parcel1%moments_temp
             parcel1%npart=parcel1%npart + parcel1%npart_temp
         endif
+
+        ! Keep the per-particle component masses consistent even when the
+        ! full-moving scheme does not call moving_centre below.  Entrainment
+        ! changes number and extensive component masses independently.
+        do i=1,parcel1%n_bin_modew
+            if (parcel1%npart(i).gt.tiny(1._wp)) then
+                parcel1%mbin(i,1:parcel1%n_comps)= &
+                    parcel1%moments(i,1:parcel1%n_comps)/parcel1%npart(i)
+                parcel1%mbin(i,parcel1%n_comps+1)=parcel1%y(i)
+            endif
+        enddo
 
         ! Remap only when the selected numerical treatment requires it.
         if ((sce_flag.gt.0).or. &
@@ -6663,423 +6676,673 @@
     
     
 	! ============================================================================
-	! inhomog_mix
+	! inhomogeneous_liquid_reservoir
 	! ============================================================================
-	!>@author
-	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>Returns the temperature-balance residual for an inhomogeneous entrainment/mixing event while
-	!>diagnosing dilution, evaporation and parcel-radius/velocity changes.
-	!>@param[in] dt_guess: trial parcel temperature change used by the root finder
-	!>@return inhomog_mix: calculated latent-plus-mixing temperature change minus dt_guess
-    function inhomog_mix(dt_guess)
-    use numerics_type
-    implicit none
-    real(wp), intent(in) :: dt_guess
-    real(wp) :: told, tnew, svp1, svp2, wv_old, wv_new, rm_old, rm_new, rho_old, &
-    	rho_new, radfinal, fo, fn, wnew, df, dt_mix, rl, ri=0._wp, &
-    	rl_dil, ri_dil, cfactor, drl, dri, dte, drl_dil, dri_dil
-    real(wp) :: inhomog_mix
-    
-    ! 1. calculate density of air
-    told = parcel1%y(parcel1%ite)
-    tnew = told + dt_guess	! this is the new temperature with mixing and evap
-    svp1 = svp_liq(told)
-    svp2 = svp_liq(tnew)
-    wv_old = parcel1%y(parcel1%irh) * eps1*svp1/(parcel1%y(parcel1%ipr)-svp1)
-    wv_new = parcel1%y(parcel1%irh) * eps1*svp2/(parcel1%y(parcel1%ipr)-svp2)
-    rm_old = ra + rv*wv_old
-    rm_new = ra + rv*wv_new
-    rho_old = parcel1%y(parcel1%ipr) / (rm_old*told)
-    rho_new = parcel1%y(parcel1%ipr) / (rm_new*tnew)
-    
-    ! 2. calculate the masses / fluxes
-    if(bubble_flag) then
-    	! mass in kg
-    	! radius: 12.22 Pruppacher and Klett (note mistake, 2 should be 3)
-    	radfinal = parcel1%y(parcel1%ira)+onethird*(parcel1%y(parcel1%iz)-parcel1%zlast) * &
-    		ent_rate - onethird*parcel1%y(parcel1%ira)/rho_old*(rho_new-rho_old)
-    	wnew = parcel1%y(parcel1%iw)*(1._wp+(1._wp-radfinal**3*rho_new / &
-    		(parcel1%y(parcel1%ira)**3*rho_old ))/gam_fac_ent2 )
-    	! initial mass of bubble
-    	fo = fourthirds*pi*parcel1%y(parcel1%ira)**3*rho_old
-    	! final mass of bubble
-    	fn = fourthirds*pi*radfinal**3*rho_new
-    else
-    	! flux in kg / s
-    	! radius: 12.23 Pruppacher and Klett
-    	! new vertical velocity just taking acceleration of mass into account
-    	radfinal = parcel1%y(parcel1%ira)+0.5_wp*(parcel1%y(parcel1%iz)-parcel1%zlast)* &
-    		(ent_rate*(1._wp+gam_fac_ent2)/gam_fac_ent2 ) - &
-    		0.5_wp*parcel1%y(parcel1%ira)/rho_old*(rho_new-rho_old)
-    	wnew = parcel1%y(parcel1%iw)*(1._wp+gam_fac_ent2) / (gam_fac_ent2 + &
-    		radfinal*radfinal*rho_new / &
-    		(parcel1%y(parcel1%ira)*parcel1%y(parcel1%ira)*rho_old ))
-    	! initial mass flux 
-    	fo = pi*parcel1%y(parcel1%ira)**2*rho_old*parcel1%y(parcel1%iw)
-    	! final mass flux
-    	fn = pi*radfinal**2*rho_new*wnew
-    endif
-    w_send=wnew
-    radius_send=radfinal
-    ! change in flux / mass
-    df = fn-fo
-    dilute_send = fo/fn !min(fo / fn, 1._wp)
-    ! change in temperature of air after mixing with environmental air (no evaporation)
-	dt_mix=0._wp
-    if(fn > 0._wp) dt_mix = (df*tenv_send+fo*told) / fn - told
+	!>Returns the total liquid-water mixing ratio carried by the complete warm
+	!>particle population before the finite entrainment dilution is applied.
+	!>All populated warm bins participate in the extreme-inhomogeneous parcel
+	!>fraction: cloud drops, haze particles and aerosol carrying adsorbed/solution
+	!>water.  If a fraction evaporates completely, that same fraction of warm
+	!>particle number is removed from its wet bin.  release_aerosol then decides
+	!>whether the corresponding nonvolatile aerosol residual is returned to the
+	!>warm bin grid or deliberately discarded.
+    subroutine inhomogeneous_liquid_reservoir(ql_reservoir)
+        implicit none
+        real(wp), intent(out) :: ql_reservoir
+        integer(i4b) :: i,n
 
-    ! conserve total water
-    rl = max(sum(parcel1%npart(1:parcel1%n_bin_modew)* &
-    	parcel1%y(1:parcel1%n_bin_modew)), 1.e-9_wp)
-    if (ice_flag == 1) &
-	    ri = max(sum(parcel1%npartice(1:parcel1%n_bin_modew)* &
-	    	parcel1%yice(1:parcel1%n_bin_modew)), 1.e-9_wp)
+        n=parcel1%n_bin_modew
+        ql_reservoir=0._wp
 
-	! these are the mixing ratios due to pure dilution (i.e. drops moving further apart)
-	rl_dil = rl * dilute_send
-	ri_dil = ri * dilute_send
+        do i=1,n
+            if (parcel1%npart(i).le.tiny(1._wp)) cycle
+            ql_reservoir=ql_reservoir + parcel1%npart(i)*parcel1%y(i)
+        enddo
+    end subroutine inhomogeneous_liquid_reservoir
 
-	! ratio_send * rl_dil is the mixing ratio required to conserve water
-    ratio_send = (fo*(wv_old+rl+ri)+df*wvenv_send-fn*wv_new) / (fn*(rl+ri))
- !    ratio_send = rl+ri-rl_dil-ri_dil+(wvenv_send-wv_old-rl_dil-ri_dil)*df/fo-(wv_new-wv_old)
-!     ratio_send = ratio_send/max(rl+ri,1.e-9_wp)
-! 
-! 	! change due to dilution
-! 	drl_dil=rl_dil-rl
-! 	dri_dil=ri_dil-ri
-! 	! total change
-!     drl = rl*ratio_send
-!     dri = ri*ratio_send
-!     
-!     ! change due to evaporation
-!     drl = drl-drl_dil
-!     dri = dri-dri_dil
-!     
-!     ratio_send=(rl_dil+ri_dil+drl+dri)/max(rl_dil+ri_dil,1.e-9_wp)
-    
-	!ratio_send = min(max(0._wp, ratio_send), 1._wp)
-! 	wv_send=(fo*(wv_old+rl+ri)+df*wvenv_send-(fn*(rl_dil+ri_dil)))/fn
-! 	print *,'hi',rl, ri, ratio_send, dt_guess, dt_mix, radfinal, tenv_send, wnew
-    ! ratio_send is what we multiply diluted conc by
-    drl = (ratio_send*rl-1.0_wp*rl_dil) ! negative as it is evaporation
-    dri = (ratio_send*ri-1.0_wp*ri_dil) ! negative
-    
-!     print *,fo*(wv_old+rl+ri)+wvenv_send*df, fn*(wv_new+ratio_send*rl+ratio_send*ri)
-! 	drl=0._wp
-! 	dri=0._wp
-	wv_send=wv_new
-    ! change in temperature, dt_guess, due to latent cooling and mixing
-    dte = lv / cp * drl + ls / cp * dri + dt_mix
-    inhomog_mix=dte - dt_guess
-    end function inhomog_mix
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    
+
+	! ============================================================================
+	! diagnose_inhomogeneous_fraction_state
+	! ============================================================================
+	!>@brief
+	!>Diagnoses the thermodynamic/finite-entrainment state for prescribed
+	!>fractions of the DILUTED liquid and ice reservoirs removed completely.
+	!>The routine has no side effects and is therefore safe to call repeatedly
+	!>from the one-dimensional root solves.
+	!>
+	!>fliq=1 means all selected liquid remaining after ordinary dilution is
+	!>evaporated.  fice=1 means all diluted ice is sublimated.  Sensible mixing,
+	!>latent cooling and the finite P&K bubble/plume geometry are iterated to a
+	!>consistent dilution factor D.
+    subroutine diagnose_inhomogeneous_fraction_state(fliq,fice,ql0,qi0, &
+        dilution,tnew,qv_new,radius_new,w_new,rhw_new,rhi_new)
+        implicit none
+        real(wp), intent(in) :: fliq,fice,ql0,qi0
+        real(wp), intent(out) :: dilution,tnew,qv_new,radius_new,w_new, &
+            rhw_new,rhi_new
+
+        integer(i4b) :: iter
+        real(wp) :: told,p,qv_old,svp0,rm_old,rho_old,rho_new, &
+            dnew,cpm,ql_rem,qi_rem,fo,fn,denom,wold,r_old,dz_event, &
+            qsw,qsi
+        real(wp), parameter :: fp_tol=1.e-11_wp
+
+        told=parcel1%y(parcel1%ite)
+        p=parcel1%y(parcel1%ipr)
+        wold=parcel1%y(parcel1%iw)
+        r_old=parcel1%y(parcel1%ira)
+        dz_event=max(parcel1%y(parcel1%iz)-parcel1%zlast,0._wp)
+
+        svp0=svp_liq(told)
+        qv_old=parcel1%y(parcel1%irh)*eps1*svp0/(p-svp0)
+        rm_old=ra+rv*qv_old
+        rho_old=p/(rm_old*told)
+
+        ! D=1 is a robust initial iterate.  The finite geometry below then
+        ! adjusts D using the final moist-air density and event displacement.
+        dilution=1._wp
+        tnew=told
+        qv_new=qv_old
+        radius_new=r_old
+        w_new=wold
+
+        do iter=1,60
+            qv_new=dilution*qv_old + (1._wp-dilution)*wvenv_send + &
+                dilution*(fliq*ql0+fice*qi0)
+            qv_new=max(qv_new,0._wp)
+
+            ql_rem=dilution*(1._wp-fliq)*ql0
+            qi_rem=dilution*(1._wp-fice)*qi0
+            cpm=cp+qv_new*cpv+ql_rem*cpw+qi_rem*cpi
+            cpm=max(cpm,0.5_wp*cp)
+
+            ! Environmental sensible mixing plus latent cooling from the
+            ! condensate removed in this instantaneous inhomogeneous event.
+            tnew=told+(1._wp-dilution)*(tenv_send-told) - &
+                dilution*(lv*fliq*ql0+ls*fice*qi0)/cpm
+            if (tnew.le.100._wp) error stop &
+                'Unphysical temperature in inhomogeneous mixing state'
+
+            rho_new=p/((ra+rv*qv_new)*tnew)
+
+            if (bubble_flag) then
+                radius_new=r_old+onethird*dz_event*ent_rate - &
+                    onethird*r_old/rho_old*(rho_new-rho_old)
+                radius_new=max(radius_new,1.e-12_wp)
+                w_new=wold*(1._wp+(1._wp-radius_new**3*rho_new/ &
+                    max(r_old**3*rho_old,tiny(1._wp)))/gam_fac_ent2)
+                fo=fourthirds*pi*r_old**3*rho_old
+                fn=fourthirds*pi*radius_new**3*rho_new
+            else
+                radius_new=r_old+0.5_wp*dz_event* &
+                    (ent_rate*(1._wp+gam_fac_ent2)/gam_fac_ent2) - &
+                    0.5_wp*r_old/rho_old*(rho_new-rho_old)
+                radius_new=max(radius_new,1.e-12_wp)
+                denom=gam_fac_ent2+radius_new**2*rho_new/ &
+                    max(r_old**2*rho_old,tiny(1._wp))
+                w_new=wold*(1._wp+gam_fac_ent2)/denom
+                fo=pi*r_old**2*rho_old*wold
+                fn=pi*radius_new**2*rho_new*w_new
+            endif
+
+            if (fn.gt.tiny(1._wp) .and. fo.ge.0._wp) then
+                dnew=min(max(fo/fn,0._wp),1._wp)
+            else
+                dnew=1._wp
+            endif
+
+            if (abs(dnew-dilution).le.fp_tol*max(1._wp,abs(dnew))) then
+                dilution=dnew
+                exit
+            endif
+            dilution=0.5_wp*(dilution+dnew)
+        enddo
+
+        ! One final evaluation with the converged dilution factor.
+        qv_new=dilution*qv_old+(1._wp-dilution)*wvenv_send + &
+            dilution*(fliq*ql0+fice*qi0)
+        qv_new=max(qv_new,0._wp)
+        ql_rem=dilution*(1._wp-fliq)*ql0
+        qi_rem=dilution*(1._wp-fice)*qi0
+        cpm=max(cp+qv_new*cpv+ql_rem*cpw+qi_rem*cpi,0.5_wp*cp)
+        tnew=told+(1._wp-dilution)*(tenv_send-told) - &
+            dilution*(lv*fliq*ql0+ls*fice*qi0)/cpm
+        rho_new=p/((ra+rv*qv_new)*tnew)
+
+        if (bubble_flag) then
+            radius_new=r_old+onethird*dz_event*ent_rate - &
+                onethird*r_old/rho_old*(rho_new-rho_old)
+            radius_new=max(radius_new,1.e-12_wp)
+            w_new=wold*(1._wp+(1._wp-radius_new**3*rho_new/ &
+                max(r_old**3*rho_old,tiny(1._wp)))/gam_fac_ent2)
+        else
+            radius_new=r_old+0.5_wp*dz_event* &
+                (ent_rate*(1._wp+gam_fac_ent2)/gam_fac_ent2) - &
+                0.5_wp*r_old/rho_old*(rho_new-rho_old)
+            radius_new=max(radius_new,1.e-12_wp)
+            denom=gam_fac_ent2+radius_new**2*rho_new/ &
+                max(r_old**2*rho_old,tiny(1._wp))
+            w_new=wold*(1._wp+gam_fac_ent2)/denom
+        endif
+
+        qsw=eps1*svp_liq(tnew)/(p-svp_liq(tnew))
+        rhw_new=qv_new/max(qsw,tiny(1._wp))
+        if (tnew.lt.ttr .and. parcel1%ice_flag.eq.1) then
+            qsi=eps1*svp_ice(tnew)/(p-svp_ice(tnew))
+            rhi_new=qv_new/max(qsi,tiny(1._wp))
+        else
+            ! Above freezing there is no distinct ice-saturation branch.
+            rhi_new=huge(1._wp)
+        endif
+    end subroutine diagnose_inhomogeneous_fraction_state
+
+
+	! ============================================================================
+	! solve_inhomogeneous_liquid_fraction
+	! ============================================================================
+	!>@brief
+	!>Bisection solve for the fraction of the diluted warm-bin liquid reservoir
+	!>that must evaporate to recover the PRE-EVENT parcel RH with respect to
+	!>water.  If all
+	!>available liquid is insufficient the returned fraction is one and the final
+	!>RH is left below the target according to the available water/energy budget.
+    subroutine solve_inhomogeneous_liquid_fraction(ql0,qi0,rh_target,fliq, &
+        dilution,tnew,qv_new,radius_new,w_new,rhw_new,rhi_new)
+        implicit none
+        real(wp), intent(in) :: ql0,qi0,rh_target
+        real(wp), intent(out) :: fliq,dilution,tnew,qv_new,radius_new,w_new, &
+            rhw_new,rhi_new
+        integer(i4b) :: iter
+        real(wp) :: lo,hi,mid,rlo,dum_d,dum_t,dum_qv,dum_r,dum_w, &
+            dum_rhw,dum_rhi
+
+        call diagnose_inhomogeneous_fraction_state(0._wp,0._wp,ql0,qi0, &
+            dilution,tnew,qv_new,radius_new,w_new,rhw_new,rhi_new)
+        if (ql0.le.tiny(1._wp) .or. rhw_new.ge.rh_target) then
+            fliq=0._wp
+            return
+        endif
+
+        call diagnose_inhomogeneous_fraction_state(1._wp,0._wp,ql0,qi0, &
+            dum_d,dum_t,dum_qv,dum_r,dum_w,dum_rhw,dum_rhi)
+        if (dum_rhw.lt.rh_target) then
+            fliq=1._wp
+            dilution=dum_d; tnew=dum_t; qv_new=dum_qv
+            radius_new=dum_r; w_new=dum_w
+            rhw_new=dum_rhw; rhi_new=dum_rhi
+            return
+        endif
+
+        lo=0._wp
+        hi=1._wp
+        rlo=rhw_new-rh_target
+        do iter=1,60
+            mid=0.5_wp*(lo+hi)
+            call diagnose_inhomogeneous_fraction_state(mid,0._wp,ql0,qi0, &
+                dum_d,dum_t,dum_qv,dum_r,dum_w,dum_rhw,dum_rhi)
+            if (abs(dum_rhw-rh_target).le.1.e-8_wp) exit
+            if ((dum_rhw-rh_target)*rlo.le.0._wp) then
+                hi=mid
+            else
+                lo=mid
+                rlo=dum_rhw-rh_target
+            endif
+        enddo
+        fliq=mid
+        dilution=dum_d; tnew=dum_t; qv_new=dum_qv
+        radius_new=dum_r; w_new=dum_w
+        rhw_new=dum_rhw; rhi_new=dum_rhi
+    end subroutine solve_inhomogeneous_liquid_fraction
+
+
+	! ============================================================================
+	! solve_inhomogeneous_ice_fraction
+	! ============================================================================
+	!>@brief
+	!>After ALL warm-bin liquid has evaporated, solves for the fraction of diluted
+	!>ice that must sublimate to reach ice saturation (RHi=1).  If all ice is
+	!>insufficient, fice=1 and the final RH follows from the total budget.
+    subroutine solve_inhomogeneous_ice_fraction(ql0,qi0,fice,dilution,tnew, &
+        qv_new,radius_new,w_new,rhw_new,rhi_new)
+        implicit none
+        real(wp), intent(in) :: ql0,qi0
+        real(wp), intent(out) :: fice,dilution,tnew,qv_new,radius_new,w_new, &
+            rhw_new,rhi_new
+        integer(i4b) :: iter
+        real(wp) :: lo,hi,mid,rlo,dum_d,dum_t,dum_qv,dum_r,dum_w, &
+            dum_rhw,dum_rhi
+
+        call diagnose_inhomogeneous_fraction_state(1._wp,0._wp,ql0,qi0, &
+            dilution,tnew,qv_new,radius_new,w_new,rhw_new,rhi_new)
+        if (qi0.le.tiny(1._wp) .or. rhi_new.ge.1._wp) then
+            fice=0._wp
+            return
+        endif
+
+        call diagnose_inhomogeneous_fraction_state(1._wp,1._wp,ql0,qi0, &
+            dum_d,dum_t,dum_qv,dum_r,dum_w,dum_rhw,dum_rhi)
+        if (dum_rhi.lt.1._wp) then
+            fice=1._wp
+            dilution=dum_d; tnew=dum_t; qv_new=dum_qv
+            radius_new=dum_r; w_new=dum_w
+            rhw_new=dum_rhw; rhi_new=dum_rhi
+            return
+        endif
+
+        lo=0._wp
+        hi=1._wp
+        rlo=rhi_new-1._wp
+        do iter=1,60
+            mid=0.5_wp*(lo+hi)
+            call diagnose_inhomogeneous_fraction_state(1._wp,mid,ql0,qi0, &
+                dum_d,dum_t,dum_qv,dum_r,dum_w,dum_rhw,dum_rhi)
+            if (abs(dum_rhi-1._wp).le.1.e-8_wp) exit
+            if ((dum_rhi-1._wp)*rlo.le.0._wp) then
+                hi=mid
+            else
+                lo=mid
+                rlo=dum_rhi-1._wp
+            endif
+        enddo
+        fice=mid
+        dilution=dum_d; tnew=dum_t; qv_new=dum_qv
+        radius_new=dum_r; w_new=dum_w
+        rhw_new=dum_rhw; rhi_new=dum_rhi
+    end subroutine solve_inhomogeneous_ice_fraction
+
+
+	! ============================================================================
+	! prepare_released_hydrometeor_aerosol
+	! ============================================================================
+	!>@brief
+	!>Builds one warm-bin aerosol-residual population from the fractions of
+	!>warm particles whose liquid water evaporates completely and ice particles
+	!>that sublimate completely.  Nonvolatile component masses and cumulative Nin
+	!>are retained;
+	!>ice-only/current-ice state, including n_demott, is reset.  If
+	!>release_aerosol=.false. the residual population is intentionally discarded.
+    subroutine prepare_released_hydrometeor_aerosol(liq_factor,ice_factor)
+        implicit none
+        real(wp), intent(in) :: liq_factor,ice_factor
+        integer(i4b) :: i,j,ii,n
+        real(wp), parameter :: residual_water=1.e-22_wp
+
+        n=parcel1%n_bin_modew
+        parcel1%npart_temp=0._wp
+        parcel1%moments_temp=0._wp
+        parcel1%mbin_temp=0._wp
+        parcel1%mbinedges_temp=parcel1%mbinedges
+
+        if (.not.release_aerosol) return
+
+        ! A fraction of every old warm-bin population belongs to the part of
+        ! the parcel whose liquid water evaporates completely.  Returning this
+        ! population when release_aerosol is true conserves aerosol number and
+        ! nonvolatile component mass; when false it is intentionally discarded.
+        if (liq_factor.gt.tiny(1._wp)) then
+            do i=1,n
+                if (parcel1%npart(i).le.tiny(1._wp)) cycle
+                parcel1%npart_temp(i)=parcel1%npart_temp(i)+ &
+                    liq_factor*parcel1%npart(i)
+                parcel1%moments_temp(i,1:parcel1%n_comps)= &
+                    parcel1%moments_temp(i,1:parcel1%n_comps)+ &
+                    liq_factor*parcel1%moments(i,1:parcel1%n_comps)
+                if (parcel1%ice_flag.eq.1 .and. parcel1%n_inp_classes.gt.0) then
+                    parcel1%moments_temp(i,parcel1%iinp_start: &
+                        parcel1%iinp_start+parcel1%n_inp_classes-1)= &
+                        parcel1%moments_temp(i,parcel1%iinp_start: &
+                        parcel1%iinp_start+parcel1%n_inp_classes-1)+ &
+                        liq_factor*parcel1%moments(i,parcel1%iinp_start: &
+                        parcel1%iinp_start+parcel1%n_inp_classes-1)
+                endif
+            enddo
+        endif
+
+        ! Ice residuals are returned to the warm aerosol grid.  Aggregated
+        ! aerosol remains coagulated because component masses are transferred
+        ! ensemble-wise rather than splitting an aggregate into old monomers.
+        if (parcel1%ice_flag.eq.1 .and. ice_factor.gt.tiny(1._wp)) then
+            do i=1,n
+                if (parcel1%npartice(i).le.tiny(1._wp)) cycle
+                ii=i+n
+                parcel1%npart_temp(i)=parcel1%npart_temp(i)+ &
+                    ice_factor*parcel1%npartice(i)
+                parcel1%moments_temp(i,1:parcel1%n_comps)= &
+                    parcel1%moments_temp(i,1:parcel1%n_comps)+ &
+                    ice_factor*parcel1%moments(ii,1:parcel1%n_comps)
+                if (parcel1%n_inp_classes.gt.0) then
+                    parcel1%moments_temp(i,parcel1%iinp_start: &
+                        parcel1%iinp_start+parcel1%n_inp_classes-1)= &
+                        parcel1%moments_temp(i,parcel1%iinp_start: &
+                        parcel1%iinp_start+parcel1%n_inp_classes-1)+ &
+                        ice_factor*parcel1%moments(ii,parcel1%iinp_start: &
+                        parcel1%iinp_start+parcel1%n_inp_classes-1)
+                endif
+            enddo
+        endif
+
+        do i=1,n
+            if (parcel1%npart_temp(i).le.tiny(1._wp)) cycle
+            do j=1,parcel1%n_comps
+                parcel1%mbin_temp(i,j)= &
+                    parcel1%moments_temp(i,j)/parcel1%npart_temp(i)
+            enddo
+            parcel1%mbin_temp(i,parcel1%n_comps+1)=residual_water
+
+            if (parcel1%ice_flag.eq.1) then
+                ! Warm residual convention: phi and nmon default to one per
+                ! residual particle; ice volume/rime state and n_demott vanish.
+                parcel1%moments_temp(i,parcel1%n_comps+1)=parcel1%npart_temp(i)
+                parcel1%moments_temp(i,parcel1%n_comps+2)=parcel1%npart_temp(i)
+                parcel1%moments_temp(i,parcel1%n_comps+3)=0._wp
+                parcel1%moments_temp(i,parcel1%n_comps+4)= &
+                    parcel1%npart_temp(i)*residual_water
+                parcel1%moments_temp(i,parcel1%n_comps+5)= &
+                    parcel1%npart_temp(i)*residual_water
+                parcel1%moments_temp(i,parcel1%idemott)=0._wp
+            endif
+        enddo
+
+        if (sum(parcel1%npart_temp).gt.tiny(1._wp)) then
+            call moving_centre(parcel1%n_bin_mode,parcel1%n_bin_modew, &
+                parcel1%n_bins1,parcel1%n_modes,parcel1%n_comps, &
+                parcel1%imoms+parcel1%n_comps,parcel1%npart_temp, &
+                parcel1%mbin_temp(:,parcel1%n_comps+1), &
+                parcel1%moments_temp(1:n,:),parcel1%mbin_temp, &
+                parcel1%mbinedges_temp)
+        endif
+    end subroutine prepare_released_hydrometeor_aerosol
+
+
+	! ============================================================================
+	! apply_inhomogeneous_event
+	! ============================================================================
+	!>@brief
+	!>Applies one discrete extreme-inhomogeneous event using the agreed closure:
+	!>all existing particles first dilute by D.  If mixed RHw is below water
+	!>saturation but at/above ice saturation, warm-bin liquid alone evaporates
+	!>towards the PRE-EVENT RH.  If the mixed state is below ice saturation,
+	!>liquid is still tried first; only if all warm-bin liquid is exhausted and
+	!>the state remains below ice saturation is ice sublimated to RHi=1.  If a
+	!>phase budget is insufficient, the resulting subsaturated RH is retained.
+    subroutine apply_inhomogeneous_event()
+        implicit none
+        integer(i4b) :: i,n
+        real(wp) :: ql0,qi0,rh0,fliq,fice,dilution,tnew,qv_new, &
+            radius_new,w_new,rhw_new,rhi_new,liq_res_factor,ice_res_factor, &
+            factor,svp_new
+
+        n=parcel1%n_bin_modew
+        rh0=parcel1%y(parcel1%irh)
+        call inhomogeneous_liquid_reservoir(ql0)
+        qi0=0._wp
+        if (parcel1%ice_flag.eq.1) qi0=sum(parcel1%npartice*parcel1%yice)
+
+        ! First diagnose pure air mixing/dilution with no instantaneous phase
+        ! loss.  This mixed RH decides which condensate reservoirs are allowed
+        ! to participate in the extreme-inhomogeneous adjustment.
+        call diagnose_inhomogeneous_fraction_state(0._wp,0._wp,ql0,qi0, &
+            dilution,tnew,qv_new,radius_new,w_new,rhw_new,rhi_new)
+        fliq=0._wp
+        fice=0._wp
+
+        if (rhw_new.lt.1._wp) then
+            if (rhi_new.ge.1._wp) then
+                ! Water-subsaturated but ice-saturated/supersaturated: liquid
+                ! alone can evaporate.  Try to recover the pre-event parcel RH;
+                ! if the complete warm-bin liquid budget is insufficient, keep
+                ! the lower RH set by the available water and energy.
+                call solve_inhomogeneous_liquid_fraction(ql0,qi0,rh0,fliq, &
+                    dilution,tnew,qv_new,radius_new,w_new,rhw_new,rhi_new)
+            else
+                ! Below ice saturation: still use the full warm-bin liquid
+                ! reservoir first.  If liquid alone can restore the pre-event
+                ! RH, no ice is touched.
+                call solve_inhomogeneous_liquid_fraction(ql0,qi0,rh0,fliq, &
+                    dilution,tnew,qv_new,radius_new,w_new,rhw_new,rhi_new)
+
+                if (fliq.ge.1._wp-1.e-10_wp .and. rhi_new.lt.1._wp .and. &
+                    parcel1%ice_flag.eq.1 .and. qi0.gt.tiny(1._wp)) then
+                    ! All warm-bin liquid has gone and the parcel remains below
+                    ! ice saturation.  Sublimate ice only until RHi=1, or all
+                    ! ice is exhausted if that target cannot be reached.
+                    call solve_inhomogeneous_ice_fraction(ql0,qi0,fice, &
+                        dilution,tnew,qv_new,radius_new,w_new,rhw_new,rhi_new)
+                endif
+            endif
+        endif
+
+        dilute_send=dilution
+        liq_res_factor=dilution*fliq
+        ice_res_factor=dilution*fice
+
+        ! Build residual aerosol BEFORE changing the prognostic populations so
+        ! component masses/Nin are taken from the complete pre-event particles.
+        call prepare_released_hydrometeor_aerosol(liq_res_factor, &
+            ice_res_factor)
+
+        ! Ordinary dilution applies first.  Extreme inhomogeneous evaporation
+        ! then removes the same fraction fliq of every warm-bin population in
+        ! NUMBER, leaving individual survivor masses unchanged.  If
+        ! release_aerosol is true the removed number is returned below as dry
+        ! residual aerosol; otherwise it is deliberately lost from the model.
+        factor=dilution*(1._wp-fliq)
+        do i=1,n
+            parcel1%npart(i)=parcel1%npart(i)*factor
+            parcel1%moments(i,:)=parcel1%moments(i,:)*factor
+        enddo
+
+        ! Ice always dilutes; when the mixed state remains below ice saturation
+        ! after exhausting liquid, the same all-or-nothing convention is used
+        ! for the diagnosed sublimated fraction fice.
+        if (parcel1%ice_flag.eq.1) then
+            factor=dilution*(1._wp-fice)
+            parcel1%npartice=parcel1%npartice*factor
+            parcel1%moments(n+1:2*n,:)=parcel1%moments(n+1:2*n,:)*factor
+        endif
+
+        parcel1%y(parcel1%ite)=tnew
+        parcel1%y(parcel1%ira)=radius_new
+        parcel1%y(parcel1%iw)=w_new
+
+        svp_new=svp_liq(tnew)
+        parcel1%y(parcel1%irh)=qv_new*parcel1%y(parcel1%ipr)/ &
+            max((eps1+qv_new)*svp_new,tiny(1._wp))
+        parcel1%y(parcel1%irh)=max(parcel1%y(parcel1%irh),0._wp)
+
+        l_inhom_event=.true.
+    end subroutine apply_inhomogeneous_event
+
+
 	! ============================================================================
 	! entrainment
 	! ============================================================================
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>Applies environmental entrainment/dilution, optional inhomogeneous mixing and aerosol
-	!>release/entrainment, then equilibrates entraining/temporary aerosol water with Kohler or
-	!>kappa-Kohler plus FHH theory.
-	!>@param[in] tth: model-time threshold used when deciding whether an inhomogeneous entrainment
-	!>event is allowed
-	subroutine entrainment(tth)
-		use numerics_type
-		use numerics, only : zeroin, fmin
-		implicit none
-		real(wp), intent(in) :: tth
-		
-		real(wp) :: pe, qve, te, dummy, dz, delta_t, flux_new, flux_old, &
-			ratio, rhoe, rm_new, rm_old, svp1, wv, rhenv, factor1
-		integer(i4b) :: iloc, i
+	!>Coordinates environmental entrainment.  Before tth, positive
+	!>entrain_period selects discrete extreme-inhomogeneous liquid-mixing events;
+	!>at and after tth the model switches permanently to continuous homogeneous
+	!>P&K mixing.  Environmental aerosol and evaporated-drop residual aerosol are
+	!>controlled independently by entrain_aerosol and release_aerosol.
+	!>@param[in] tth: time [s] at which homogeneous mixing starts
+    subroutine entrainment(tth)
+        use numerics_type
+        use numerics, only : zeroin, fmin
+        implicit none
+        real(wp), intent(in) :: tth
 
-		if (adiabatic_prof) return
-		
-		dilute_send=1._wp
-		ratio_send=1._wp
+        real(wp) :: pe,qve,te,dummy,flux_new,flux_old,rm_new,rm_old, &
+            svp1,wv,rhenv,d_dummy, mu_old, mu_new, dz_ent
+        integer(i4b) :: iloc,i
+        logical :: inhom_step,event_due,crossing_threshold
 
-        ! Start every entrainment event from the original environmental aerosol
-        ! distribution defined at model initialisation.  The working arrays may
-        ! be hydrated and remapped below, but the *_ent0 template is immutable.
+        if (adiabatic_prof) return
+
+        dilute_send=1._wp
+        l_inhom_event=.false.
+        parcel1%npart_temp=0._wp
+        parcel1%moments_temp=0._wp
+        parcel1%mbin_temp=0._wp
+
+        ! Start every environmental-aerosol source from the immutable t=0
+        ! distribution.  Working arrays may be hydrated/remapped below without
+        ! allowing the environmental source spectrum to drift with time.
         parcel1%npart_ent=parcel1%npart_ent0
         parcel1%mbin_ent=parcel1%mbin_ent0
         parcel1%moments_ent=parcel1%moments_ent0
         parcel1%mbinedges_ent=parcel1%mbinedges_ent0
 
-		! locate position
-		pe=0.5*(parcel1%yold(parcel1%ipr)+parcel1%y(parcel1%ipr))
-		iloc=find_pos(parcel1%p_sound(1:n_levels_s),pe)
-		iloc=min(n_levels_s-1,iloc)
-		iloc=max(1,iloc)
+        ! Environmental state at the midpoint parcel pressure.  Parcel and
+        ! environment are assumed to share pressure at a given height.
+        pe=0.5_wp*(parcel1%yold(parcel1%ipr)+parcel1%y(parcel1%ipr))
+        iloc=find_pos(parcel1%p_sound(1:n_levels_s),pe)
+        iloc=min(n_levels_s-1,iloc)
+        iloc=max(1,iloc)
+        call poly_int(parcel1%p_sound(iloc:iloc+1), &
+            parcel1%q_sound(1,iloc:iloc+1), &
+            max(pe,parcel1%p_sound(n_levels_s)),qve,dummy)
+        wvenv_send=qve
+        call poly_int(parcel1%p_sound(iloc:iloc+1), &
+            parcel1%t_sound(iloc:iloc+1), &
+            max(pe,parcel1%p_sound(n_levels_s)),te,dummy)
+        tenv_send=te
+        rhenv=qve/(eps1*svp_liq(te)/(pe-svp_liq(te)))
 
-		! linear interp qv
-		call poly_int(parcel1%p_sound(iloc:iloc+1), parcel1%q_sound(1,iloc:iloc+1), &
-				max(pe,parcel1%p_sound(n_levels_s)), qve,dummy)
-		wvenv_send=qve
-		! linear interp te
-		call poly_int(parcel1%p_sound(iloc:iloc+1), parcel1%t_sound(iloc:iloc+1), &
-				max(pe,parcel1%p_sound(n_levels_s)), te,dummy)   
-		tenv_send=te     
-		! env density:
-		rhoe=pe/((ra+rv*qve)*te)
-		! rhenv
-		rhenv=qve/(eps1*svp_liq(te)/(pe-svp_liq(te)))
-	
-    	entrain_count = min(entrain_count + 1, max(entrain_period,1))
-    	l_inhom=(.not. adiabatic_prof) .and. ((entrain_period == entrain_count) &
-	    	.and.(parcel1%TT<=tth) )
-	    if(l_inhom) then
-! 	    if((.not. adiabatic_prof) .and. (entrain_period == entrain_count)) then
-			! do inhomogeneous mixing here
-			! find change in radius due to mixing
-			dz=parcel1%y(parcel1%iz)-parcel1%zlast
-			
-			! find the change in temperature due to mixing with the env air, 
-			! then evaporating
-			! water so that the RH is maintained during evaporation
-			delta_t=zeroin(-10._wp, 10._wp, inhomog_mix,1.e-30_wp)
-			dummy=inhomog_mix(delta_t)
+        ! l_inhom records which pathway was active DURING the just-completed
+        ! warm ODE step.  In inhomogeneous mode mu=0 throughout every ODE step;
+        ! entrainment is accumulated and applied only at discrete events.
+        inhom_step=l_inhom
 
-			! set all psd moments to temporary PSD
-			! will equilibriate at env conditions later
-			! then will add to parcel PSD
-			
-			parcel1%npart_temp=0._wp
-			parcel1%moments_temp=0._wp
-			factor1=0.0_wp
-			if ((ratio_send > 0._wp) .and. (ratio_send<1._wp) ) then
-				if (release_aerosol) then
-					factor1 = (1._wp-ratio_send)*max(1._wp-dilute_send,0._wp)
-				endif
-					
-				parcel1%npart_temp(1:parcel1%n_bin_modew) = &
-					parcel1%npart(1:parcel1%n_bin_modew)* factor1
-				parcel1%moments_temp = parcel1%moments* factor1
-				
-				parcel1%mbin_temp = parcel1%mbin
-				if(ice_flag == 1) then
-					parcel1%npart_temp2(1:parcel1%n_bin_modew) = &
-						parcel1%npartice(1:parcel1%n_bin_modew)
-					parcel1%mbin_temp2 = parcel1%mbinice
-				endif
-				
-				parcel1%y(parcel1%ite)=parcel1%y(parcel1%ite)+delta_t
-				parcel1%y(parcel1%ira)=radius_send
-				parcel1%y(parcel1%iw)=w_send
-				
-				parcel1%npart(1:parcel1%n_bin_modew) = &
-					parcel1%npart(1:parcel1%n_bin_modew) * ratio_send*dilute_send
-				parcel1%moments = parcel1%moments * ratio_send*dilute_send
-				if(ice_flag == 1) parcel1%npartice(1:parcel1%n_bin_modew) = &
-					parcel1%npartice(1:parcel1%n_bin_modew) * ratio_send*dilute_send
-	
-	
-				entrain_count=0
-				! store last entrainment height
-				parcel1%zlast = parcel1%y(parcel1%iz)
-			endif
-   		endif
-    	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        if (inhom_step) then
+            entrain_count=entrain_count+1
 
-		!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-		! lateral entrainment reducing drop number conc.                       !
-		!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-! 		if((.not. adiabatic_prof).and.(entrain_period==0)) then 
-        if(.not.l_inhom) then
-			svp1=svp_liq(parcel1%yold(parcel1%ite))
-			wv=eps1*parcel1%yold(parcel1%irh)* &
-				svp1 / (parcel1%yold(parcel1%ipr)- svp1) ! wv mixing ratio
-			rm_old = ra+wv*rv
-			svp1=svp_liq(parcel1%y(parcel1%ite))
-			wv=eps1*parcel1%y(parcel1%irh)* &
-				svp1 / (parcel1%y(parcel1%ipr)- svp1) ! wv mixing ratio
-			rm_new = ra+wv*rv
-			if(bubble_flag) then
-				! actually the mass of a bubble
-				flux_old = fourthirds*pi*parcel1%yold(parcel1%ira)**3 * &
-					parcel1%yold(parcel1%ipr)/(parcel1%yold(parcel1%ite)*rm_old)
-				flux_new = fourthirds*pi*parcel1%y(parcel1%ira)**3 * &
-					parcel1%y(parcel1%ipr)/(parcel1%y(parcel1%ite)*rm_new)
-			else
-				! actually the mass flux for a jet (conserve number flux)
-				flux_old = pi*parcel1%yold(parcel1%ira)**2 * &
-					parcel1%yold(parcel1%ipr)/(parcel1%yold(parcel1%ite)*rm_old) * &
-					parcel1%yold(parcel1%iw)
-				flux_new = pi*parcel1%y(parcel1%ira)**2 * &
-					parcel1%y(parcel1%ipr)/(parcel1%y(parcel1%ite)*rm_new) * &
-					parcel1%y(parcel1%iw)
-			endif
-            if (flux_new.gt.tiny(1._wp)) then
-                dilute_send=min(max(flux_old/flux_new,0._wp),1._wp)
-            else
-                dilute_send=1._wp
+            ! When the threshold is crossed, apply one final discrete event so
+            ! entrainment accumulated since zlast is not lost, then use
+            ! homogeneous P&K mixing from the next timestep onward.
+            crossing_threshold=parcel1%tt.ge.tth
+            event_due=(entrain_count.ge.max(entrain_period,1)) .or. &
+                crossing_threshold
+
+            if (event_due) then
+                call apply_inhomogeneous_event()
+                entrain_count=0
+                parcel1%zlast=parcel1%y(parcel1%iz)
             endif
-			! drops / aerosol
-			parcel1%npart(1:parcel1%n_bin_modew)= &
-				parcel1%npart(1:parcel1%n_bin_modew)*dilute_send
-			
-			parcel1%moments(:,:)= &
-				parcel1%moments(:,:)*dilute_send
-			
-			if(ice_flag == 1) then
-				! ice / aerosol
-				parcel1%npartice(1:parcel1%n_bin_modew)= &
-					parcel1%npartice(1:parcel1%n_bin_modew)*dilute_send
-			endif
-   		endif
-        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    
-        if (entrain_aerosol) then
-		!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-		! put water on bins being entrained, using koehler equation        !
-		!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-		select case(kappa_flag)
-			case(0)
-				do i=1,parcel1%n_bin_modew
-					if (parcel1%npart_ent(i) == 0._wp) cycle
-					n_sel=i
-					rh_act=0._wp !min(parcel1%rh,0.999_wp)
-					mult=-1._wp
-					! has to be less than the peak moles of water at activation
-					dummy=fmin(1.e-50_wp,1.e1_wp, koehler02_ent,1.e-30_wp)
-					mult=1._wp
-					rh_act=koehler02_ent(dummy)
-					rh_act=min(rhenv,rh_act)
-					d_dummy=zeroin(1.e-30_wp, dummy, koehler02_ent,1.e-30_wp)* &
-						molw_water 
-					parcel1%mbin_ent(i,n_comps+1)= d_dummy
-				enddo
-			case(1)
-				do i=1,parcel1%n_bin_modew
-					if (parcel1%npart_ent(i) == 0._wp) cycle
-					n_sel=i
-					rh_act=0._wp !min(parcel1%rh,0.999_wp)
-					mult=-1._wp
-					! has to be less than the peak moles of water at activation
-					dummy=fmin(1.e-50_wp,1.e1_wp, kkoehler02_ent,1.e-30_wp)
-					mult=1._wp
-					rh_act=kkoehler02_ent(dummy)
-					rh_act=min(rhenv,rh_act)
-					d_dummy=zeroin(1.e-30_wp, dummy, kkoehler02_ent,1.e-30_wp)* &
-						molw_water 
-					parcel1%mbin_ent(i,n_comps+1)= d_dummy
-				enddo
-			case default
-				print *,'error kappa flag'
-				stop
-		end select
-		!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-		! --------------------------------------------------------------
-		! The equilibrium water mass of the entraining liquid population
-		! has changed.  Update the associated extensive water moments.
-		! --------------------------------------------------------------
-		if (ice_flag.eq.1) then
-			parcel1%moments_ent(1:parcel1%n_bin_modew,n_comps+1)= parcel1%npart_ent
-			parcel1%moments_ent(1:parcel1%n_bin_modew,n_comps+2)= parcel1%npart_ent
-			parcel1%moments_ent(1:parcel1%n_bin_modew,n_comps+4)= &
-				parcel1%npart_ent * parcel1%mbin_ent(:,n_comps+1)
-			parcel1%moments_ent(1:parcel1%n_bin_modew,n_comps+5)= &
-				parcel1%npart_ent * parcel1%mbin_ent(:,n_comps+1)
-		endif
+            if (crossing_threshold) then
+                l_inhom=.false.
+                entrain_count=0
+            else
+                l_inhom=.true.
+            endif
 
+        else
+            ! Continuous homogeneous P&K thermodynamics were already integrated
+            ! inside fparcelwarm.  Commit the corresponding concentration
+            ! dilution to the prognostic particle populations now that the ODE
+            ! step has been accepted.
+            svp1=svp_liq(parcel1%yold(parcel1%ite))
+            wv=eps1*parcel1%yold(parcel1%irh)*svp1/ &
+                (parcel1%yold(parcel1%ipr)-svp1)
+            rm_old=ra+wv*rv
+            svp1=svp_liq(parcel1%y(parcel1%ite))
+            wv=eps1*parcel1%y(parcel1%irh)*svp1/ &
+                (parcel1%y(parcel1%ipr)-svp1)
+            rm_new=ra+wv*rv
 
-		if ((sce_flag.gt.0).or. &
-			(parcel1%bin_scheme_flag.ne.BIN_FULL_MOVING)) then
-			!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-			! Moving Centre binning                                        !
-			!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-			call moving_centre(parcel1%n_bin_mode,parcel1%n_bin_modew,&
-					parcel1%n_bins1,parcel1%n_modes, parcel1%n_comps, &
-					parcel1%imoms+parcel1%n_comps, parcel1%npart_ent, &
-					parcel1%mbin_ent(1:parcel1%n_bin_modew,parcel1%n_comps+1), &
-					parcel1%moments_ent(1:parcel1%n_bin_modew,:), &
-					parcel1%mbin_ent,parcel1%mbinedges_ent)
-			!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-		endif 
-    
+            if (bubble_flag) then
+                flux_old=fourthirds*pi*parcel1%yold(parcel1%ira)**3 * &
+                    parcel1%yold(parcel1%ipr)/ &
+                    (parcel1%yold(parcel1%ite)*rm_old)
+                flux_new=fourthirds*pi*parcel1%y(parcel1%ira)**3 * &
+                    parcel1%y(parcel1%ipr)/(parcel1%y(parcel1%ite)*rm_new)
+            else
+                flux_old=pi*parcel1%yold(parcel1%ira)**2 * &
+                    parcel1%yold(parcel1%ipr)/ &
+                    (parcel1%yold(parcel1%ite)*rm_old) * &
+                    parcel1%yold(parcel1%iw)
+                flux_new=pi*parcel1%y(parcel1%ira)**2 * &
+                    parcel1%y(parcel1%ipr)/(parcel1%y(parcel1%ite)*rm_new) * &
+                    parcel1%y(parcel1%iw)
+            endif
+
+			mu_old=ent_rate/max(parcel1%yold(parcel1%ira),tiny(1._wp))
+			mu_new=ent_rate/max(parcel1%y(parcel1%ira),tiny(1._wp))
+			dz_ent=max(parcel1%y(parcel1%iz)- &
+					   parcel1%yold(parcel1%iz),0._wp)			
+			dilute_send=exp(-0.5_wp*(mu_old+mu_new)*dz_ent)
+
+            parcel1%npart=parcel1%npart*dilute_send
+            parcel1%moments=parcel1%moments*dilute_send
+            if (parcel1%ice_flag.eq.1) &
+                parcel1%npartice=parcel1%npartice*dilute_send
+
+            ! Once homogeneous mixing has begun it remains the selected pathway.
+            l_inhom=.false.
+            entrain_count=0
         endif
 
-    	! now for evaporated liquid / ice
-    	if (l_inhom) then
-			!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-			! put water on bins being entrained, using koehler equation        !
-			!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-			select case(kappa_flag)
-				case(0)
-					do i=1,parcel1%n_bin_modew
-						if (parcel1%npart_temp(i) <= 1.e-30_wp) cycle
-						n_sel=i
-						rh_act=0._wp !min(parcel1%rh,0.999_wp)
-						mult=-1._wp
-						! has to be less than the peak moles of water at activation
-						dummy=fmin(1.e-50_wp,1.e1_wp, koehler02,1.e-30_wp)
-						mult=1._wp
-						!rh_act=koehler02(dummy)
-						rh_act=min(parcel1%y(parcel1%irh),rhenv)
-						d_dummy=zeroin(1.e-30_wp, dummy, koehler02,1.e-30_wp)* &
-							molw_water 
-						parcel1%mbin_temp(i,n_comps+1)= d_dummy
-					enddo
-				case(1)
-					do i=1,parcel1%n_bin_modew
-						if (parcel1%npart_temp(i) <= 1.e-30_wp) cycle
-						n_sel=i
-						rh_act=0._wp !min(parcel1%rh,0.999_wp)
-						mult=-1._wp
-						! has to be less than the peak moles of water at activation
-						dummy=fmin(1.e-50_wp,1.e1_wp, kkoehler02,1.e-30_wp)
-						mult=1._wp
-						!rh_act=kkoehler02_ent(dummy)
-						rh_act=min(parcel1%y(parcel1%irh),rhenv)
-						d_dummy=zeroin(1.e-30_wp, dummy, kkoehler02,1.e-30_wp)* &
-							molw_water 
-						parcel1%mbin_temp(i,n_comps+1)= d_dummy
-					enddo
-				case default
-					print *,'error kappa flag'
-					stop
-			end select
-			!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-			
-			! --------------------------------------------------------------
-			! The equilibrium water mass of the temporary liquid population
-			! has changed.  Update the associated extensive water moments.
-			! --------------------------------------------------------------
-			if (ice_flag.eq.1) then
-				parcel1%moments_temp( &
-					1:parcel1%n_bin_modew,parcel1%n_comps+4) = &
-					parcel1%npart_temp * &
-					parcel1%mbin_temp( &
-						1:parcel1%n_bin_modew,parcel1%n_comps+1)
-				parcel1%moments_temp( &
-					1:parcel1%n_bin_modew,parcel1%n_comps+5) = &
-					parcel1%npart_temp * &
-					parcel1%mbin_temp( &
-						1:parcel1%n_bin_modew,parcel1%n_comps+1)
-			endif
+        ! entrain_aerosol controls ONLY whether environmental aerosol accompanies
+        ! the entrained environmental-air fraction.  It never changes D or the
+        ! thermodynamic entrainment itself.
+        if (entrain_aerosol .and. (1._wp-dilute_send).gt.tiny(1._wp)) then
+            select case(kappa_flag)
+            case(0)
+                do i=1,parcel1%n_bin_modew
+                    if (parcel1%npart_ent(i).le.0._wp) cycle
+                    n_sel=i
+                    rh_act=0._wp
+                    mult=-1._wp
+                    dummy=fmin(1.e-50_wp,1.e1_wp,koehler02_ent,1.e-30_wp)
+                    mult=1._wp
+                    rh_act=koehler02_ent(dummy)
+                    rh_act=min(rhenv,rh_act)
+                    d_dummy=zeroin(1.e-30_wp,dummy,koehler02_ent,1.e-30_wp)* &
+                        molw_water
+                    parcel1%mbin_ent(i,n_comps+1)=d_dummy
+                enddo
+            case(1)
+                do i=1,parcel1%n_bin_modew
+                    if (parcel1%npart_ent(i).le.0._wp) cycle
+                    n_sel=i
+                    rh_act=0._wp
+                    mult=-1._wp
+                    dummy=fmin(1.e-50_wp,1.e1_wp,kkoehler02_ent,1.e-30_wp)
+                    mult=1._wp
+                    rh_act=kkoehler02_ent(dummy)
+                    rh_act=min(rhenv,rh_act)
+                    d_dummy=zeroin(1.e-30_wp,dummy,kkoehler02_ent,1.e-30_wp)* &
+                        molw_water
+                    parcel1%mbin_ent(i,n_comps+1)=d_dummy
+                enddo
+            case default
+                error stop 'Unknown kappa_flag in entrainment'
+            end select
 
-			if ((sce_flag.gt.0).or. &
-				(parcel1%bin_scheme_flag.ne.BIN_FULL_MOVING)) then
-				!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-				! Moving Centre binning                                        !
-				!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-				call moving_centre(parcel1%n_bin_mode,parcel1%n_bin_modew,&
-						parcel1%n_bins1,parcel1%n_modes, parcel1%n_comps, &
-						parcel1%imoms+parcel1%n_comps, parcel1%npart_temp, &
-						parcel1%mbin_temp(1:parcel1%n_bin_modew,parcel1%n_comps+1), &
-						parcel1%moments_temp(1:parcel1%n_bin_modew,:), &
-						parcel1%mbin_temp,parcel1%mbinedges_ent)
-				!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-			endif       
+            if (parcel1%ice_flag.eq.1) then
+                parcel1%moments_ent(1:parcel1%n_bin_modew,n_comps+1)= &
+                    parcel1%npart_ent
+                parcel1%moments_ent(1:parcel1%n_bin_modew,n_comps+2)= &
+                    parcel1%npart_ent
+                parcel1%moments_ent(1:parcel1%n_bin_modew,n_comps+4)= &
+                    parcel1%npart_ent*parcel1%mbin_ent(:,n_comps+1)
+                parcel1%moments_ent(1:parcel1%n_bin_modew,n_comps+5)= &
+                    parcel1%npart_ent*parcel1%mbin_ent(:,n_comps+1)
+            endif
 
-			! really need to do for ice as well
-		endif    
-    	if (.not. release_aerosol) ratio_send=1._wp
-	end subroutine entrainment
+            if ((sce_flag.gt.0).or. &
+                (parcel1%bin_scheme_flag.ne.BIN_FULL_MOVING)) then
+                call moving_centre(parcel1%n_bin_mode,parcel1%n_bin_modew, &
+                    parcel1%n_bins1,parcel1%n_modes,parcel1%n_comps, &
+                    parcel1%imoms+parcel1%n_comps,parcel1%npart_ent, &
+                    parcel1%mbin_ent(:,parcel1%n_comps+1), &
+                    parcel1%moments_ent(1:parcel1%n_bin_modew,:), &
+                    parcel1%mbin_ent,parcel1%mbinedges_ent)
+            endif
+        endif
+    end subroutine entrainment
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 	
 	
