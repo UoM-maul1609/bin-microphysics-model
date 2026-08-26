@@ -2495,7 +2495,7 @@
 	!>concentration convention
 	!>@param[in] dt: timestep
     subroutine sce_self_collection(i,n_binst,n_bin_mode,n_bin_modew, &
-    			n_moments,npart,moments, momtype,ecoll,indexc,xn,rhoa,dt)
+    			n_moments,npart,moments, momtype,ecoll,indexc,xn,rhoa,dt,full_moving)
     use numerics_type
     implicit none
 
@@ -2506,6 +2506,7 @@
     real(wp), dimension(n_bin_mode,n_moments), intent(inout) :: moments
     integer(i4b), dimension(n_moments), intent(in) :: momtype
     real(wp), intent(in) :: dt, rhoa
+    logical, intent(in) :: full_moving
 
     real(wp) :: ncoll,remove,massn,massaddto,frac
     real(wp), dimension(n_moments) :: momtemp,oldprop
@@ -2532,13 +2533,11 @@
     jl=(modeinto-1)*n_binst+1+phase*n_bin_modew
     jh=modeinto*n_binst+phase*n_bin_modew
 
-    do k=jl,jh
-        if (xn(k).gt.massn) exit
-    enddo
-    l=k-1
+    l=sce_receiving_bin(massn,jl,jh,xn,full_moving)
 
-    ! Do not perform the interaction if the product lies off the grid.
-    if (l.eq.jh) return
+    ! Fixed-grid Bott treatment cannot represent products above the grid.
+    ! A fully moving edge bin is allowed to move, so it has no such overflow.
+    if ((.not.full_moving).and.(l.eq.jh)) return
 
     ! Transfer the moments belonging to the two particles removed
     ! in each self-collision event.
@@ -2549,10 +2548,9 @@
     moments(i,:)=moments(i,:)*(1._wp-frac)
     npart(i)=npart(i)-remove
 
-    ! Reuse the existing Bott gain integral to place the collision products.
-    call add_moments_to_new_bin(l,n_moments,n_bin_mode, &
+    call add_moments_to_sce_bin(l,n_moments,n_bin_mode, &
         massaddto,massn,massaddto,remove,0._wp,momtype,xn, &
-        momtemp,oldprop,npart,moments,phase,phase)
+        momtemp,oldprop,npart,moments,phase,phase,full_moving)
 
     end subroutine sce_self_collection
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -2678,7 +2676,7 @@
 	!>@param[out] totaddto: total liquid mass transferred in liquid-ice collisions for subsequent
 	!>phase-change/latent-heat bookkeeping
     subroutine sce_microphysics(n_binst,n_bin_mode,n_bin_modew,n_moments,&
-    	npart,moments,momtype, ecoll,indexc,xn,dt,t,rhoa,totaddto)
+    	npart,moments,momtype, ecoll,indexc,xn,dt,t,rhoa,totaddto,full_moving)
     	
     use numerics_type
     use numerics, only : zeroin, dvode
@@ -2693,11 +2691,16 @@
     real(wp), intent(inout) :: t
     real(wp), intent(in) :: rhoa
     real(wp), intent(out) :: totaddto
+    logical, intent(in) :: full_moving
+    logical :: do_full_moving
     
     real(wp) :: remove1,remove2,massn,massaddto,nnew, &
                 frac1, frac2
     real(wp), dimension(n_moments) :: momtemp, oldprop
     integer(i4b) :: i,j,k,l,il,ih,jl,jh, modeinto, phase, phase1,phase2
+
+    do_full_moving=full_moving
+
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Find the min and max bins to do computations on                                    !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -2721,7 +2724,7 @@
         ! Diagonal (i=i) self collection is handled separately because each
         ! collision event removes two particles from the same source bin.
         call sce_self_collection(i,n_binst,n_bin_mode,n_bin_modew,n_moments,&
-        	npart,moments, momtype,ecoll,indexc,xn,rhoa,dt)
+        	npart,moments, momtype,ecoll,indexc,xn,rhoa,dt,do_full_moving)
         if (npart(i).lt.qsmall2) cycle
 
         do j=i+1,ih
@@ -2752,11 +2755,8 @@
             modeinto=indexc(j,i)
             jl=(modeinto-1)*n_binst+1+  phase*n_bin_modew
             jh=(modeinto)*n_binst+      phase*n_bin_modew
-            do k=jl,jh
-                if (xn(k).gt.massn) exit
-            enddo
-            l=k-1
-            if (l.eq.jh) cycle
+            l=sce_receiving_bin(massn,jl,jh,xn,do_full_moving)
+            if ((.not.do_full_moving).and.(l.eq.jh)) cycle
             !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 !             if(j==1) cycle
             !*****
@@ -2786,12 +2786,12 @@
 			! both SCE implementations.
 			! -------------------------------------------------------------
 			
-			call add_moments_to_new_bin( l, n_moments, n_bin_mode, &
+			call add_moments_to_sce_bin( l, n_moments, n_bin_mode, &
 				massaddto, &       ! total product mass concentration
 				massn, &           ! mass of one physical collision product
 				massaddto, &       ! original total mass for this product class
 				remove1, remove2, momtype, xn, momtemp, oldprop, &
-				npart, moments, phase1, phase2)
+				npart, moments, phase1, phase2, do_full_moving)
 
         enddo
     enddo    
@@ -2838,7 +2838,8 @@
     						n_moments,npart,moments,momtype, &
                             ecoll,indexc,xn,vel,dt,t, rhoa, totaddto, &
                             mass_hm_splinter, mass_coll_splinter, &
-                            mass_mode2_frag, hm_flag, break_flag, mode1_flag, mode2_flag)
+                            mass_mode2_frag, hm_flag, break_flag, mode1_flag, mode2_flag, &
+                            full_moving)
     use numerics_type
     use numerics, only : zeroin, dvode
     implicit none
@@ -2851,6 +2852,8 @@
     real(wp), intent(in) :: dt, mass_hm_splinter, mass_coll_splinter, &
                                 mass_mode2_frag
     logical, intent(in) :: hm_flag, mode1_flag, mode2_flag
+    logical, intent(in) :: full_moving
+    logical :: do_full_moving
     integer(i4b), intent(in) :: break_flag
     real(wp), intent(inout) :: t, totaddto
     real(wp), intent(in) :: rhoa
@@ -2864,6 +2867,8 @@
     real(wp), dimension(n_moments) :: momtemp, oldprop
     integer(i4b) :: i,j,k,l,il,ih,jl,jh,jld,jhd, &
                      modeinto, phase, phase1, phase2, lf1,lf2,lf3,  lf4, lf5
+
+    do_full_moving=full_moving
     
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Find the min and max bins to do computations on                                    !
@@ -2888,7 +2893,7 @@
         ! Diagonal (i=i) self collection is handled separately because each
         ! collision event removes two particles from the same source bin.
         call sce_self_collection(i,n_binst,n_bin_mode,n_bin_modew,n_moments,&
-        		npart,moments, momtype,ecoll,indexc,xn,rhoa,dt)
+        		npart,moments, momtype,ecoll,indexc,xn,rhoa,dt,do_full_moving)
         if (npart(i).lt.qsmall2) cycle
 
         do j=i+1,ih
@@ -2966,10 +2971,7 @@
                 nfrag=mass_s/mass_coll_splinter ! scaled
                 massn=massn-mass_s ! the mass of the new category (after adjustment)
                 
-                do k=jl,jh
-                    if (xn(k).gt.mass_coll_splinter) exit
-                enddo
-                lf1=k-1
+                lf1=sce_receiving_bin(mass_coll_splinter,jl,jh,xn,do_full_moving)
                 ! total mass of splinters
                 mass_stot=nnew*mass_s
                 ! total mass of new category
@@ -3017,15 +3019,9 @@
                     mass_m1btot = mass_m1b*nnew ! drop mass lost to mode 1 big splinters
                     
                     ! ice mode tiny
-                    do k=jl,jh
-                        if (xn(k).gt.mtinym1) exit
-                    enddo
-                    lf4=k-1
+                    lf4=sce_receiving_bin(mtinym1,jl,jh,xn,do_full_moving)
                     ! ice mode big
-                    do k=jl,jh
-                        if (xn(k).gt.mbigm1) exit
-                    enddo
-                    lf5=k-1
+                    lf5=sce_receiving_bin(mbigm1,jl,jh,xn,do_full_moving)
                 endif
                 
                 
@@ -3053,15 +3049,9 @@
 					totaddto = totaddto - mass_mtot
 					
                     ! drop mode
-                    do k=jld,jhd
-                        if (xn(k).gt.mass_mode2_frag) exit
-                    enddo
-                    lf2=k-1
+                    lf2=sce_receiving_bin(mass_mode2_frag,jld,jhd,xn,do_full_moving)
                     ! ice mode
-                    do k=jl,jh
-                        if (xn(k).gt.mass_mode2_frag) exit
-                    enddo
-                    lf3=k-1
+                    lf3=sce_receiving_bin(mass_mode2_frag,jl,jh,xn,do_full_moving)
                 else
                     mass_dm=0._wp
                 endif
@@ -3075,10 +3065,7 @@
                 
                     ! total mass of splinters
                     mass_stot=nnew*mass_s
-                    do k=jl,jh
-                        if (xn(k).gt.mass_hm_splinter) exit
-                    enddo
-                    lf1=k-1
+                    lf1=sce_receiving_bin(mass_hm_splinter,jl,jh,xn,do_full_moving)
                 else
                     nfrag=0._wp
                 endif
@@ -3108,11 +3095,8 @@
             modeinto=indexc(j,i)
             jl=(modeinto-1)*n_binst+1+  phase*n_bin_modew
             jh=(modeinto)*n_binst+      phase*n_bin_modew
-            do k=jl,jh
-                if (xn(k).gt.massn) exit
-            enddo
-            l=k-1
-            if (l.eq.jh) cycle ! this means do not do the interaction (as goes off grid)
+            l=sce_receiving_bin(massn,jl,jh,xn,do_full_moving)
+            if ((.not.do_full_moving).and.(l.eq.jh)) cycle ! fixed-grid overflow
             !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
             ! the loss integral is the same as before
@@ -3146,9 +3130,9 @@
             
 
             ! gain integral bit+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-            call add_moments_to_new_bin(l,n_moments, n_bin_mode, &
+            call add_moments_to_sce_bin(l,n_moments, n_bin_mode, &
                     massaddto, massn, masstot, remove1, remove2, momtype, xn, &
-                    momtemp, oldprop, npart, moments, phase1, phase2)
+                    momtemp, oldprop, npart, moments, phase1, phase2, do_full_moving)
 
             !-----------------------------------------------------------------------------
 
@@ -3161,9 +3145,9 @@
                     n_comps+4,n_comps+5,masstot,mass_coll_splinter)
             
                 ! gain integral bit+++++++++++++++++++++++++++++++++++++++++++++++++++++++
-                call add_moments_to_new_bin(lf1,n_moments, n_bin_mode, &
+                call add_moments_to_sce_bin(lf1,n_moments, n_bin_mode, &
 	                    mass_stot, mass_coll_splinter, masstot, remove1, remove2, momtype, xn, &
-	                    momtemp, oldprop, npart, moments,phase1,phase2)
+	                    momtemp, oldprop, npart, moments,phase1,phase2,do_full_moving)
                 !-------------------------------------------------------------------------
             endif            
             
@@ -3178,9 +3162,9 @@
                     n_comps+4,n_comps+5,masstot,mass_hm_splinter)
                 
                 ! gain integral bit+++++++++++++++++++++++++++++++++++++++++++++++++++++++
-                call add_moments_to_new_bin(lf1,n_moments, n_bin_mode, &
+                call add_moments_to_sce_bin(lf1,n_moments, n_bin_mode, &
 	                    mass_stot, mass_hm_splinter, masstot, remove1, remove2, momtype, xn, &
-	                    momtemp, oldprop, npart, moments, phase1,phase2)
+	                    momtemp, oldprop, npart, moments, phase1,phase2,do_full_moving)
                 !-------------------------------------------------------------------------
             endif
             
@@ -3195,9 +3179,9 @@
                         n_comps+4,n_comps+5,masstot,mtinym1)
                 
                     ! gain integral bit+++++++++++++++++++++++++++++++++++++++++++++++++++
-                    call add_moments_to_new_bin(lf4,n_moments, n_bin_mode, &
+                    call add_moments_to_sce_bin(lf4,n_moments, n_bin_mode, &
                         mass_m1ttot, mtinym1, masstot, remove1, remove2, momtype, xn, &
-                            momtemp, oldprop, npart, moments, phase1,phase2)
+                            momtemp, oldprop, npart, moments, phase1,phase2,do_full_moving)
                     !---------------------------------------------------------------------
                 endif            
                 if((phase1.eq.0).and.(phase2.eq.1).and.(t.lt.ttr).and.&
@@ -3210,9 +3194,9 @@
                         n_comps+4,n_comps+5,masstot,mbigm1)
                 
                     ! gain integral bit+++++++++++++++++++++++++++++++++++++++++++++++++++
-                    call add_moments_to_new_bin(lf5,n_moments, n_bin_mode, &
+                    call add_moments_to_sce_bin(lf5,n_moments, n_bin_mode, &
                         mass_m1btot, mbigm1, masstot, remove1, remove2, momtype, xn, &
-                            momtemp, oldprop, npart, moments, phase1,phase2)
+                            momtemp, oldprop, npart, moments, phase1,phase2,do_full_moving)
                     !---------------------------------------------------------------------
                 endif            
             endif      
@@ -3226,9 +3210,9 @@
                 momtemp(n_comps+1:n_comps+5)=0._wp
                 oldprop(n_comps+1:n_comps+2)=0._wp
                 ! gain integral bit+++++++++++++++++++++++++++++++++++++++++++++++++++++++
-                call add_moments_to_new_bin(lf2,n_moments, n_bin_mode, &
+                call add_moments_to_sce_bin(lf2,n_moments, n_bin_mode, &
 	                    mass_mtot, mass_mode2_frag, masstot, remove1, remove2, momtype, xn, &
-	                    momtemp, oldprop, npart, moments, phase1,phase2)
+	                    momtemp, oldprop, npart, moments, phase1,phase2,do_full_moving)
                 !-------------------------------------------------------------------------
             endif                
             if((phase1.eq.0).and.(phase2.eq.1).and.(t.lt.ttr).and.(mass_smtot>qsmall2) &
@@ -3240,9 +3224,9 @@
                     n_comps+1,n_comps+2,n_comps+3, &
                     n_comps+4,n_comps+5,masstot,mass_mode2_frag)
                 ! gain integral bit+++++++++++++++++++++++++++++++++++++++++++++++++++++++
-                call add_moments_to_new_bin(lf3,n_moments, n_bin_mode, &
+                call add_moments_to_sce_bin(lf3,n_moments, n_bin_mode, &
 	                    mass_smtot, mass_mode2_frag, masstot, remove1, remove2, momtype, xn, &
-	                    momtemp, oldprop, npart, moments, phase1,phase2)
+	                    momtemp, oldprop, npart, moments, phase1,phase2,do_full_moving)
                 !-------------------------------------------------------------------------
                                 
                 
@@ -3328,6 +3312,166 @@
     
     
     
+
+	! ============================================================================
+	! sce_receiving_bin
+	! ============================================================================
+	!>@brief
+	!>Returns the receiving bin for an SCE product.  Fixed-grid calculations retain
+	!>the original lower-pivot lookup.  Fully moving calculations select the current
+	!>pivot closest in log mass, without assuming that the moving pivots remain ordered.
+    integer(i4b) function sce_receiving_bin(mass_s,jl,jh,xn,full_moving) result(l)
+    use numerics_type
+    implicit none
+    real(wp), intent(in) :: mass_s
+    integer(i4b), intent(in) :: jl,jh
+    real(wp), dimension(:), intent(in) :: xn
+    logical, intent(in) :: full_moving
+
+    integer(i4b) :: k
+    real(wp) :: dist,best_dist,logm
+
+    if (.not.full_moving) then
+        do k=jl,jh
+            if (xn(k).gt.mass_s) exit
+        enddo
+        l=k-1
+        return
+    endif
+
+    ! Moving pivots need not remain ordered.  Use the nearest current
+    ! representative mass.  Empty bins retain a reference mass and can
+    ! therefore become newly occupied without any fixed-grid remapping.
+    l=jl
+    best_dist=huge(1._wp)
+    logm=log(max(mass_s,qsmall))
+    do k=jl,jh
+        if (xn(k).le.0._wp) cycle
+        dist=abs(log(max(xn(k),qsmall))-logm)
+        if (dist.lt.best_dist) then
+            best_dist=dist
+            l=k
+        endif
+    enddo
+
+    end function sce_receiving_bin
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+	! ============================================================================
+	! add_moments_to_sce_bin
+	! ============================================================================
+	!>@brief
+	!>Dispatches the SCE gain to either the original fixed-grid Bott treatment or
+	!>the fully moving single-pivot treatment.
+    subroutine add_moments_to_sce_bin(lf1,n_moments,n_bin_mode, &
+        mass_stot,mass_s,masstot,remove1,remove2,momtype,xn, &
+        momtemp,oldprop,npart,moments,phase1,phase2,full_moving)
+    use numerics_type
+    implicit none
+
+    integer(i4b), intent(in) :: lf1,n_moments,n_bin_mode,phase1,phase2
+    real(wp), intent(in) :: mass_stot,mass_s,masstot,remove1,remove2
+    integer(i4b), dimension(n_moments), intent(in) :: momtype
+    real(wp), dimension(n_bin_mode), intent(inout) :: xn,npart
+    real(wp), dimension(n_moments), intent(inout) :: momtemp
+    real(wp), dimension(n_moments), intent(in) :: oldprop
+    real(wp), dimension(n_bin_mode,n_moments), intent(inout) :: moments
+    logical, intent(in) :: full_moving
+
+    if (full_moving) then
+        call add_moments_to_moving_bin(lf1,n_moments,n_bin_mode, &
+            mass_stot,mass_s,masstot,remove1,remove2,momtype,xn, &
+            momtemp,oldprop,npart,moments,phase1,phase2)
+    else
+        call add_moments_to_new_bin(lf1,n_moments,n_bin_mode, &
+            mass_stot,mass_s,masstot,remove1,remove2,momtype,xn, &
+            momtemp,oldprop,npart,moments,phase1,phase2)
+    endif
+
+    end subroutine add_moments_to_sce_bin
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+	! ============================================================================
+	! add_moments_to_moving_bin
+	! ============================================================================
+	!>@brief
+	!>Adds one collision-product category to a fully moving receiving pivot.  Product
+	!>number is represented exactly as mass_stot/mass_s and the receiving representative
+	!>mass moves to the number-weighted mean, conserving hydrometeor mass exactly.
+    subroutine add_moments_to_moving_bin(lf1,n_moments,n_bin_mode, &
+        mass_stot,mass_s,masstot,remove1,remove2,momtype,xn, &
+        momtemp,oldprop,npart,moments,phase1,phase2)
+    use numerics_type
+    implicit none
+
+    integer(i4b), intent(in) :: lf1,n_moments,n_bin_mode,phase1,phase2
+    real(wp), intent(in) :: mass_stot,mass_s,masstot,remove1,remove2
+    integer(i4b), dimension(n_moments), intent(in) :: momtype
+    real(wp), dimension(n_bin_mode), intent(inout) :: xn,npart
+    real(wp), dimension(n_moments), intent(inout) :: momtemp
+    real(wp), dimension(n_moments), intent(in) :: oldprop
+    real(wp), dimension(n_bin_mode,n_moments), intent(inout) :: moments
+
+    integer(i4b) :: k
+    real(wp) :: nadd,nold,massold,category_frac
+    real(wp) :: f1,f2,fnew,ncoll,cin_total
+
+    if (mass_stot.le.qsmall) return
+    if (mass_s.le.qsmall) return
+    if (masstot.le.qsmall) return
+
+    nadd=mass_stot/mass_s
+    if (nadd.le.qsmall2) return
+
+    category_frac=max(0._wp,min(mass_stot/max(masstot,qsmall),1._wp))
+
+    ! State after the source loss but before this gain.  Adding mass_stot
+    ! and nadd moves the pivot to the exact number-weighted mean mass.
+    nold=npart(lf1)
+    massold=nold*xn(lf1)
+
+    do k=1,n_moments
+        if (momtype(k).eq.MOMENT_INHERIT) then
+            if (remove2.gt.qsmall2) then
+                f2=max(0._wp,min(oldprop(k),1._wp))
+                f1=(momtemp(k)-remove2*f2)/max(remove1,qsmall2)
+                f1=max(0._wp,min(f1,1._wp))
+                ncoll=min(remove1,remove2)
+            else
+                ! Self collection: remove1 is twice the collision-event number.
+                f1=momtemp(k)/max(remove1,qsmall2)
+                f1=max(0._wp,min(f1,1._wp))
+                f2=f1
+                ncoll=0.5_wp*remove1
+            endif
+
+            fnew=1._wp-(1._wp-f1)*(1._wp-f2)
+            cin_total=ncoll*fnew*category_frac
+            cin_total=min(cin_total,nadd)
+            moments(lf1,k)=moments(lf1,k)+cin_total
+
+        elseif ((momtype(k).eq.MOMENT_NUMBER).and. &
+                (phase1.eq.0).and.(phase2.eq.1)) then
+            ! Mixed-phase number properties are inherited from the ice parent
+            ! by each represented collision product.
+            moments(lf1,k)=moments(lf1,k)+oldprop(k)*nadd
+
+        else
+            ! Extensive moments are divided between secondary product classes
+            ! with the same mass-fraction rule as the existing Bott routine.
+            moments(lf1,k)=moments(lf1,k)+momtemp(k)*category_frac
+        endif
+    enddo
+
+    npart(lf1)=nold+nadd
+    xn(lf1)=(massold+mass_stot)/npart(lf1)
+
+    end subroutine add_moments_to_moving_bin
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
 	! ============================================================================
 	! add_moments_to_new_bin
 	! ============================================================================
@@ -3516,7 +3660,8 @@
         			parcel1%n_comps+parcel1%imoms,&
                     parcel1%npart,parcel1%moments,parcel1%momenttype, &
                     parcel1%ecoll,parcel1%indexc, &
-                    parcel1%mbin(:,parcel1%n_comps+1),parcel1%dt,parcel1%t,rhoa,totaddto)
+                    parcel1%mbin(:,parcel1%n_comps+1),parcel1%dt,parcel1%t,rhoa,totaddto, &
+                    .false.)
         
         ! redefine the mass of each component of aerosol
         do j=1,parcel1%n_comps
