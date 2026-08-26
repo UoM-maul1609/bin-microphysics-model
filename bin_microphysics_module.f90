@@ -4595,8 +4595,9 @@
 	!>@author
 	!>Paul J. Connolly, The University of Manchester
 	!>@brief
-	!>Converts liquid particles to ice using homogeneous Koop nucleation and DeMott primary
-	!>nucleation, transfers aerosol/ice moments and applies latent heating.
+	!>Legacy no-fragmentation ice-nucleation callback. Uses the same Koop, INAS, DeMott and
+	!>Daily/DCMEX treatment, bin placement, moment transfer and latent heating as
+	!>noncollisional_iceformation, but with Mode-1 freezing fragmentation disabled.
 	!>@param[inout] npart: liquid-particle number concentration
 	!>@param[inout] npartice: ice-particle number concentration
 	!>@param[in] mwat: liquid-water mass per representative particle
@@ -4614,171 +4615,43 @@
 	!>@param[in] dt: timestep
     subroutine icenucleation(npart, npartice, mwat,mbin2,mbin2_ice, &
                          rhobin,nubin,kappabin,molwbin, &
-                         moments,t,p,sz,sz2,sz3,yice,rh,dt) 
-      use numerics_type
-      use sce, only : calculate_mode1
-      implicit none
-      real(wp), intent(inout) :: t
-      real(wp), intent(in) :: p,dt
-      real(wp), dimension(sz2), intent(inout) :: npart,npartice
-      real(wp), dimension(sz2), intent(in) :: mwat
-      real(wp), dimension(sz2,sz), intent(in) :: &
-                                              rhobin,nubin,kappabin,molwbin
-      real(wp), dimension(2*sz2,sz3), intent(inout) :: moments
-      integer(i4b), intent(in) :: sz,sz2, sz3
-      real(wp), dimension(sz2,sz), intent(in) :: mbin2
-      real(wp), dimension(sz2,sz+1), intent(inout) :: mbin2_ice
+                         moments,t,p,sz,sz2,sz3,yice,rh,dt)
+        use numerics_type
+        implicit none
 
-      real(wp), dimension(sz2) :: nw,aw,jw,dn01,m01,ns,dw,dd,kappa,rhoat
-      real(wp), dimension(sz2,sz) :: dmaer01
-      
-      real(wp), intent(inout), dimension(sz2) :: yice
-      real(wp), intent(inout) :: rh
-      
-      integer(i4b) :: i
-      real(wp) :: fracinliq, fracinice, naer05, nprimary, dprimary
-      
-      
-      ! todo: 
-      ! (1) break this into a do loop to make it easier
-      ! (2) for each drop that freezes calculate the mode 1 break-up 
-      ! (3) put the fragments and moments in the new categories
-      !     they go into the same mode as the "mode" of the drop that freezes
-      !     maybe loop backwards from the current size
-      
-      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-      ! first calculate the ice formation over dt using koop et al. 2000       !
-      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-      ! number of moles of water
-      nw(:)=mwat(:)/molw_water
-      ! activity of water
-      select case(kappa_flag)
-        case(0)
-          aw(:)=(nw(:))/(nw(:)+sum(mbin2(:,:)/molwbin(:,:)*nubin(:,:),2) )
-        case(1)
-          rhoat(:)=mwat(:)/rhow+sum(mbin2(:,:)/rhobin(:,:),2)
-          rhoat(:)=(mwat(:)+sum(mbin2(:,:),2))/rhoat(:);
-  
-          dw(:)=((mwat(:)+sum(mbin2(:,:),2))*6._wp/(pi*rhoat(:)))**(onethird)
-  
-          dd(:)=((sum(mbin2(:,:)/rhobin(:,:),2))* &
-                 6._wp/(pi))**(onethird) ! dry diameter
-                              ! needed for eqn 6, petters and kreidenweis (2007)
-          kappa(:)=sum((mbin2(:,:)+1.e-60_wp)/rhobin(:,:)*kappabin(:,:),2) &
-                 / sum((mbin2(:,:)+1.e-60_wp)/rhobin(:,:),2)
-                 ! equation 7, petters and kreidenweis (2007)
-          aw=(dw**3-dd**3)/(dw**3-dd**3*(1._wp-kappa)) ! from eq 6,p+k(acp,2007)
-        case default
-          print *,'error kappa_flag'
-          stop
-      end select
-      ! koop et al. (2000) nucleation rate - due to homogeneous nucleation.
-      jw(:)=koopnucrate(aw,t,p,sz2)
-      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-      dn01=0._wp
-      
-      ! the number of ice crystals nucleated by homogeneous nucleation:
-      dn01(:)=dn01(:)+abs( npart(:)*(1._wp-exp(-jw(:)*mwat(:)/rhow*dt)) )
+        real(wp), intent(inout) :: t
+        real(wp), intent(in) :: p,dt
+        real(wp), dimension(sz2), intent(inout) :: npart,npartice
+        real(wp), dimension(sz2), intent(in) :: mwat
+        real(wp), dimension(sz2,sz), intent(in) :: mbin2, &
+                                                  rhobin,nubin,kappabin,molwbin
+        real(wp), dimension(2*sz2,sz3), intent(inout) :: moments
+        integer(i4b), intent(in) :: sz,sz2,sz3
+        real(wp), dimension(sz2,sz+1), intent(inout) :: mbin2_ice
+        real(wp), dimension(sz2), intent(inout) :: yice
+        real(wp), intent(inout) :: rh
 
+        ! Keep this legacy callback numerically identical to
+        ! noncollisional_iceformation, except that freezing fragmentation
+        ! (Mode 1) is deliberately disabled here.
+        !
+        ! This ensures that both callbacks use the same:
+        !   * Koehler/FHH activated-particle criterion;
+        !   * INAS, DeMott, Daily/DCMEX and Koop mechanisms;
+        !   * flat-within-dry-bin treatment of the DeMott >0.5 um reservoir;
+        !   * IN/provenance-moment depletion and transfer;
+        !   * full-moving versus fixed-grid ice receiving-bin treatment;
+        !   * aerosol, number, ice-mass, morphology and latent-heat updates.
+        !
+        ! Using a wrapper rather than duplicating the implementation also
+        ! prevents the two nucleation paths drifting apart in future.
+        call noncollisional_iceformation( &
+            npart,npartice,mwat,mbin2,mbin2_ice, &
+            rhobin,nubin,kappabin,molwbin, &
+            moments,parcel1%mbinedges, &
+            t,p,parcel1%n_bins1,sz,sz2,sz3,parcel1%n_modes, &
+            yice,rh,dt,parcel1%sce_flag,.false.,ice_nucleation_mech)
 
-      
-      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-      ! calculate the dry size of the aerosol particle                         !
-      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-      dd(:)=((sum(mbin2(:,:)/rhobin(:,:),2))* &
-             6._wp/(pi))**(onethird) ! dry diameter
-      naer05=0._wp
-      do i=1,sz2
-        if ((dd(i).gt.0.5e-6_wp).and.(rh.ge.1._wp)) naer05=naer05+npart(i)-dn01(i)
-      enddo  
-      ! calculate the number of ice crystals
-      nprimary=demott_2010(t,naer05)
-      ! ensure the number nucleated is less than the number that can nucleate
-      nprimary=min(naer05,nprimary) 
-      nprimary=max(nprimary-sum(dn01+moments(sz2+1:2*sz2,sz+2)),0._wp)
-      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-      ! deplete the aerosols larger than 0.5 microns
-      ! maybe in future will want to deplete the largest first
-      do i=sz2,1,-1
-        if (nprimary.le.0._wp) exit
-        if ((dd(i).gt.0.5e-6_wp).and.(rh.ge.1._wp)) then
-            ! it can nucleate
-            ! reduce number of primary ice
-			! it can nucleate: reduce number of primary ice
-			dprimary=min( nprimary, max(npart(i)-dn01(i),0._wp))
-			dn01(i)=dn01(i)+dprimary
-			nprimary=nprimary-dprimary
-        endif
-      enddo
-      
-      
-      
-      dn01(:)=min(dn01(:),npart(:))
-      
-      if(t.gt.ttr) then
-          dn01=0._wp
-      endif
-      !!!!
-      ! total aerosol mass in each bin added together:
-      dmaer01(:,:)=(mbin2_ice(:,1:sz)*(spread(npartice(:),2,sz)+1.e-50_wp)+ &
-                      mbin2(:,:)*spread(dn01(:),2,sz) ) 
-      ! total water mass that will be in the ice bins:
-      m01=(yice*npartice+mwat(:)*dn01(:)) 
-
-      ! number conc. of liquid bins:
-      npart(:)=npart(:)-dn01(:)
-      ! number conc. of ice bins:
-      npartice(:)=npartice(:)+dn01(:)
-      ! new ice mass in bin:
-	  where (npartice > tiny(1._wp))
-			m01=m01/npartice
-	  elsewhere
-			m01=0._wp
-	  end where
-      
-      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-      ! transfer moments to ice                                                !
-      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-      do i=1,sz2
-          ! aerosol
-          fracinliq=npart(i)/max(npart(i)+dn01(i),1.e-30_wp)
-          fracinice=npartice(i)/max(npartice(i)-dn01(i),1.e-30_wp)
-          moments(i,1:sz) = moments(i,1:sz)*fracinliq
-          moments(i+sz2,1:sz) = moments(i+sz2,1:sz)*fracinice
-          ! phi, nmon, vol, rim, unf
-          ! phi is 1 times number concentration
-          moments(i+sz2,sz+1) = moments(i+sz2,sz+1)+dn01(i) 
-          ! nmon is 1 times number concentration
-          moments(i+sz2,sz+2) = moments(i+sz2,sz+2)+dn01(i) 
-          ! volume is number concentration times volume of these crystals
-          if (m01(i) .gt. 0._wp) then
-              moments(i+sz2,sz+3) = moments(i+sz2,sz+3)+dn01(i)*mwat(i)/rhoice
-          else
-              moments(i+sz2,sz+3)=0._wp
-          endif
-		  moments(i,sz+1) = moments(i,sz+1)*fracinliq
-		  moments(i,sz+2) = moments(i,sz+2)*fracinliq
-          moments(i,sz+4)=npart(i)*mwat(i)
-		  moments(i,sz+5)=npart(i)*mwat(i)
-      enddo
-      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-      
-      where((m01.gt.0._wp).and.(npartice.gt.0._wp))
-        yice=m01
-!       elsewhere
-!         yice=yice
-      end where
-      
-      ! aerosol mass in ice bins
-      mbin2_ice(:,1:sz)=dmaer01(:,:)/(1.e-50_wp+spread(npartice,2,sz))
-      moments(1+sz2:2*sz2,1:sz)=dmaer01(:,:)
-      mbin2_ice(:,sz+1)=yice
-      
-	! Freezing releases latent heat.  Vapour mass is unchanged, so
-	! recompute RH at the updated temperature.
-	if (.not.chamber_override) then
-		call adjust_t_rh(sum(mwat(:)*dn01(:)),t,rh,p)
-	endif
     end subroutine icenucleation
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
