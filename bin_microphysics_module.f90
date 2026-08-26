@@ -83,8 +83,9 @@
 			real(wp) :: nfall_liq=0._wp
 			real(wp) :: nfall_ice=0._wp
 
-            ! Chamber-process diagnostics.  BL exchange is a signed external
-            ! total-water source/sink.  Fan and wall diagnostics are cumulative
+            ! Chamber-process diagnostics.  qchamber_bl is the cumulative
+            ! airborne-water transfer to the wall caused by BL supersaturation
+            ! (zero or negative). Fan and wall diagnostics are cumulative
             ! positive airborne hydrometeor/particle losses.
             real(wp) :: qchamber_bl=0._wp, qchamber_bl_step=0._wp
             real(wp) :: qfan_liq=0._wp, qfan_ice=0._wp
@@ -197,14 +198,14 @@
         logical :: chamber_force_pressure=.false., &
                    chamber_force_temperature=.false., &
                    chamber_force_qtot=.false.
-        integer(i4b) :: chamber_bl_mix=0_i4b, &
+        integer(i4b) :: chamber_bl_mix=0_i4b, chamber_bl_temp_mode=0_i4b, &
                         chamber_fan_loss=0_i4b, chamber_wall_loss=0_i4b
-        real(wp) :: chamber_bl_tau=60._wp, chamber_bl_rh=1._wp, &
-                    chamber_bl_temp_offset=0._wp, &
-                    chamber_fan_loss_k0=0._wp, chamber_fan_loss_dref=10.e-6_wp, &
-                    chamber_fan_loss_exp=2._wp, &
-                    chamber_wall_loss_k0=0._wp, chamber_wall_loss_dref=10.e-6_wp, &
-                    chamber_wall_loss_exp=2._wp
+        real(wp) :: chamber_bl_tau=60._wp, chamber_bl_temp_offset=0._wp, &
+                    chamber_fan_loss_kmax=0._wp, chamber_fan_loss_d50_ref=4.e-6_wp, &
+                    chamber_fan_loss_exp=6._wp, chamber_fan_rpm=25000._wp, &
+                    chamber_fan_rpm_ref=25000._wp, &
+                    chamber_wall_ustar=0.02_wp, chamber_diameter=0._wp, &
+                    chamber_height=0._wp
 
         ! Derived compatibility indicator: true whenever measured chamber
         ! P/T/qtot forcing is active.  It is no longer a namelist option and
@@ -228,7 +229,7 @@
         real(wp), allocatable, dimension(:,:) :: q_read !nq x nlevels_r
         real(wp), allocatable, dimension(:) :: theta_read,rh_read,  z_read
         real(wp), allocatable, dimension(:) :: time_chamber, press_chamber, temp_chamber, &
-        	qtot_chamber
+        	wall_temp_chamber, qtot_chamber
         ! aerosol setup
         integer(i4b) :: n_intern, n_mode,n_sv,sv_flag,n_bins,n_comps, &
                         n_inp_classes=0_i4b
@@ -291,7 +292,7 @@
 	!>@param[in] n_levels_s: number of sounding levels
 	!>@param[in] n_levels_c: number of chamber-data levels
 	!>@param[inout] q_read,theta_read,rh_read,z_read: allocatable sounding arrays
-	!>@param[inout] time_chamber,press_chamber,temp_chamber,qtot_chamber: allocatable chamber-forcing
+	!>@param[inout] time_chamber,press_chamber,temp_chamber,wall_temp_chamber,qtot_chamber: allocatable chamber-forcing
 	!>arrays
 	!>@param[inout] n_aer1,d_aer1,sig_aer1: allocatable aerosol lognormal parameters
 	!>@param[inout] mass_frac_aer1: allocatable component mass fractions for each aerosol mode
@@ -304,7 +305,7 @@
 	subroutine allocate_arrays(n_intern,n_mode,n_sv,n_bins,n_comps,nq,n_levels_s, &
 		                    q_read,theta_read,rh_read,z_read, &
 		                    n_levels_c, time_chamber, press_chamber, temp_chamber, &
-		                    qtot_chamber, &
+		                    wall_temp_chamber, qtot_chamber, &
 		                    n_aer1,d_aer1,sig_aer1,mass_frac_aer1, molw_core1, &
 		                    density_core1, nu_core1, kappa_core1, &
 		                    org_content1,molw_org1,kappa_org1,density_org1, &
@@ -316,7 +317,7 @@
 		real(wp), dimension(:), allocatable, intent(inout) :: theta_read,rh_read,z_read, &
 		                        org_content1,molw_org1,kappa_org1, &
 		                        density_org1,delta_h_vap1,nu_org1,log_c_star1, &
-		                        time_chamber, press_chamber, temp_chamber, qtot_chamber
+		                        time_chamber, press_chamber, temp_chamber, wall_temp_chamber, qtot_chamber
 		real(wp), dimension(:,:), allocatable, intent(inout) :: q_read, &
 		                        n_aer1,d_aer1,sig_aer1,mass_frac_aer1
 		real(wp), dimension(:), allocatable, intent(inout) :: molw_core1,density_core1, &
@@ -338,6 +339,9 @@
 		if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
 		allocate( temp_chamber(1:n_levels_c), STAT = AllocateStatus)
 		if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+		allocate( wall_temp_chamber(1:n_levels_c), STAT = AllocateStatus)
+		if (AllocateStatus /= 0) STOP "*** Not enough memory ***"
+        wall_temp_chamber=-huge(1._wp)
 		allocate( qtot_chamber(1:n_levels_c), STAT = AllocateStatus)
 		if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
 		
@@ -413,13 +417,15 @@
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         namelist /sounding_spec/ psurf, tsurf,  &
                     q_read, theta_read, rh_read, z_read
-        namelist /chamber_spec/ time_chamber, press_chamber, temp_chamber, qtot_chamber
+        namelist /chamber_spec/ time_chamber, press_chamber, temp_chamber, wall_temp_chamber, &
+                    qtot_chamber
         namelist /chamber_options/ n_levels_c, &
                     chamber_force_pressure, chamber_force_temperature, chamber_force_qtot, &
-                    chamber_bl_mix, chamber_bl_tau, chamber_bl_rh, chamber_bl_temp_offset, &
-                    chamber_fan_loss, chamber_fan_loss_k0, chamber_fan_loss_dref, &
-                    chamber_fan_loss_exp, chamber_wall_loss, chamber_wall_loss_k0, &
-                    chamber_wall_loss_dref, chamber_wall_loss_exp
+                    chamber_bl_mix, chamber_bl_tau, chamber_bl_temp_mode, &
+                    chamber_bl_temp_offset, &
+                    chamber_fan_loss, chamber_fan_loss_kmax, chamber_fan_loss_d50_ref, &
+                    chamber_fan_loss_exp, chamber_fan_rpm, chamber_fan_rpm_ref, &
+                    chamber_wall_loss, chamber_wall_ustar, chamber_diameter, chamber_height
         ! define namelists for environment
         namelist /run_vars/ outputfile, scefile,runtime, dt, &
                     zinit,tpert,use_prof_for_tprh,winit,winit2,amplitude2, &
@@ -465,16 +471,18 @@
         chamber_force_qtot=.false.
         chamber_bl_mix=0_i4b
         chamber_bl_tau=60._wp
-        chamber_bl_rh=1._wp
+        chamber_bl_temp_mode=0_i4b
         chamber_bl_temp_offset=0._wp
         chamber_fan_loss=0_i4b
-        chamber_fan_loss_k0=0._wp
-        chamber_fan_loss_dref=10.e-6_wp
-        chamber_fan_loss_exp=2._wp
+        chamber_fan_loss_kmax=0._wp
+        chamber_fan_loss_d50_ref=4.e-6_wp
+        chamber_fan_loss_exp=6._wp
+        chamber_fan_rpm=25000._wp
+        chamber_fan_rpm_ref=25000._wp
         chamber_wall_loss=0_i4b
-        chamber_wall_loss_k0=0._wp
-        chamber_wall_loss_dref=10.e-6_wp
-        chamber_wall_loss_exp=2._wp
+        chamber_wall_ustar=0.02_wp
+        chamber_diameter=0._wp
+        chamber_height=0._wp
 
         ! Chamber options are deliberately optional.  With no &chamber_options
         ! group the defaults above leave every chamber-specific process off,
@@ -496,21 +504,33 @@
             'chamber_bl_mix must be 0 (off), 1 (homogeneous), or 2 (inhomogeneous)'
         if (chamber_bl_mix.gt.0 .and. chamber_bl_tau.le.0._wp) error stop &
             'chamber_bl_tau must be > 0 when chamber_bl_mix is enabled'
-        if (chamber_bl_rh.lt.0._wp) error stop 'chamber_bl_rh must be non-negative'
-        if (chamber_fan_loss.lt.0 .or. chamber_fan_loss.gt.2) error stop &
-            'chamber_fan_loss must be 0, 1 (constant), or 2 (power law)'
-        if (chamber_wall_loss.lt.0 .or. chamber_wall_loss.gt.2) error stop &
-            'chamber_wall_loss must be 0, 1 (constant), or 2 (power law)'
-        if (chamber_fan_loss_k0.lt.0._wp .or. chamber_wall_loss_k0.lt.0._wp) error stop &
-            'Chamber particle-loss rate coefficients must be non-negative'
-        if (chamber_fan_loss.eq.2 .and. chamber_fan_loss_dref.le.0._wp) error stop &
-            'chamber_fan_loss_dref must be > 0 for power-law fan loss'
-        if (chamber_wall_loss.eq.2 .and. chamber_wall_loss_dref.le.0._wp) error stop &
-            'chamber_wall_loss_dref must be > 0 for power-law wall loss'
-        if (chamber_fan_loss_exp.lt.0._wp .or. chamber_wall_loss_exp.lt.0._wp) error stop &
-            'Chamber particle-loss exponents must be non-negative'
-        if (chamber_force_qtot .and. (chamber_fan_loss.gt.0 .or. chamber_wall_loss.gt.0)) then
-            print *, 'Warning: measured qtot forcing plus chamber particle loss can double-count water loss'
+        if (chamber_bl_temp_mode.lt.0 .or. chamber_bl_temp_mode.gt.1) error stop &
+            'chamber_bl_temp_mode must be 0 (fixed gas-temperature offset) or 1 (wall time series)'
+        if (chamber_bl_mix.gt.0 .and. chamber_bl_temp_mode.eq.1 .and. n_levels_c.lt.2) error stop &
+            'Wall-temperature BL forcing requires n_levels_c >= 2'
+        if (chamber_fan_loss.lt.0 .or. chamber_fan_loss.gt.1) error stop &
+            'chamber_fan_loss must be 0 (off) or 1 (sigmoid inertial collection)'
+        if (chamber_fan_loss.eq.1) then
+            if (chamber_fan_loss_kmax.lt.0._wp) error stop &
+                'chamber_fan_loss_kmax must be non-negative'
+            if (chamber_fan_loss_d50_ref.le.0._wp) error stop &
+                'chamber_fan_loss_d50_ref must be > 0'
+            if (chamber_fan_loss_exp.le.0._wp) error stop &
+                'chamber_fan_loss_exp must be > 0'
+            if (chamber_fan_rpm.le.0._wp .or. chamber_fan_rpm_ref.le.0._wp) error stop &
+                'chamber_fan_rpm and chamber_fan_rpm_ref must be > 0'
+        endif
+        if (chamber_wall_loss.lt.0 .or. chamber_wall_loss.gt.1) error stop &
+            'chamber_wall_loss must be 0 (off) or 1 (Lai-Nazaroff smooth-wall deposition)'
+        if (chamber_wall_loss.eq.1) then
+            if (chamber_wall_ustar.le.0._wp) error stop &
+                'chamber_wall_ustar must be > 0 when wall deposition is enabled'
+            if (chamber_diameter.le.0._wp .or. chamber_height.le.0._wp) error stop &
+                'Positive chamber_diameter and chamber_height are required for wall deposition'
+        endif
+        if (chamber_force_qtot .and. (chamber_bl_mix.gt.0 .or. chamber_fan_loss.gt.0 .or. &
+            chamber_wall_loss.gt.0)) then
+            print *, 'Warning: measured qtot forcing plus chamber BL/fan/wall sinks can double-count water loss'
         endif
 
         rewind(8)
@@ -519,7 +539,7 @@
 		call allocate_arrays(n_intern,n_mode,n_sv,n_bins,n_comps,nq,n_levels_s, &
 		                    q_read,theta_read,rh_read,z_read, &
 		                    n_levels_c, time_chamber, press_chamber, temp_chamber, &
-		                    qtot_chamber, &
+		                    wall_temp_chamber, qtot_chamber, &
 		                    n_aer1,d_aer1,sig_aer1,mass_frac_aer1, molw_core1, &
 		                    density_core1, nu_core1, kappa_core1, &
 		                    org_content1,molw_org1,kappa_org1,density_org1, &
@@ -606,6 +626,10 @@
         if(n_levels_c.gt.0) then
             rewind(8)
             read(8,nml=chamber_spec)
+            if (chamber_bl_mix.gt.0 .and. chamber_bl_temp_mode.eq.1) then
+                if (any(wall_temp_chamber.lt.150._wp) .or. any(wall_temp_chamber.gt.400._wp)) &
+                    error stop 'chamber_bl_temp_mode=1 requires valid wall_temp_chamber values [K]'
+            endif
         endif
         if(chamber_force_pressure .or. chamber_force_temperature) then
             use_prof_for_tprh=.false.
@@ -7755,11 +7779,13 @@
     !>water-conserving, and a final budget closure enforces identical total-water
     !>change in the two modes to roundoff.
     subroutine apply_chamber_bl_exchange()
+        use numerics, only : find_pos, poly_int
         implicit none
-        integer(i4b) :: i,n
-        real(wp) :: p,t0,rh0,svp0,qv0,qv_bl,t_bl,fmix,dq_bl,qv_air,t_air, &
+        integer(i4b) :: i,n,iloc
+        real(wp) :: p,t0,rh0,svp0,qv0,qv_bl,t_bl,qvs_bl,fmix,dq_wall,qv_air,t_air, &
             ql_total,ql_act,qi0,qtot_target,rh_target,fliq,fice,tnew,qv_new, &
-            rhw_new,rhi_new,qh_l,qh_i,qcond_new,qv_budget,svp_new,factor
+            rhw_new,rhi_new,qh_l,qh_i,qcond_new,qv_budget,svp_new,factor,var,dummy, &
+            tquery
 
         parcel1%qchamber_bl_step=0._wp
         if (chamber_bl_mix.eq.0) return
@@ -7777,27 +7803,51 @@
         qi0=0._wp
         if (parcel1%ice_flag.eq.1) qi0=sum(parcel1%npartice*parcel1%yice(1:n))
 
+        ! Fraction of chamber air that completes a BL excursion during dt.
         fmix=1._wp-exp(-parcel1%dt/chamber_bl_tau)
         fmix=max(0._wp,min(fmix,1._wp))
-        t_bl=t0+chamber_bl_temp_offset
-        qv_bl=chamber_bl_rh*eps1*svp_liq(t_bl)/ &
-            max(p-svp_liq(t_bl),tiny(1._wp))
 
-        dq_bl=fmix*(qv_bl-qv0)
-        ! The BL sink cannot remove more vapour than currently exists.  Any
-        ! additional condensate response is an INTERNAL phase redistribution.
-        dq_bl=max(dq_bl,-qv0)
-        qv_air=max(qv0+dq_bl,0._wp)
+        ! Air enters the BL carrying the bulk vapour mixing ratio.  The BL
+        ! temperature is either a fixed offset from the evolving gas temperature
+        ! or the measured wall-temperature time series.  There is deliberately
+        ! no prescribed BL RH reservoir.
+        select case(chamber_bl_temp_mode)
+        case(0)
+            t_bl=t0+chamber_bl_temp_offset
+        case(1)
+            if (n_levels_c.lt.2) error stop 'Wall-temperature BL mode requires chamber data'
+            tquery=min(max(parcel1%tt,time_chamber(1)),time_chamber(n_levels_c))
+            iloc=find_pos(time_chamber(1:n_levels_c),tquery)
+            iloc=max(1,min(iloc,n_levels_c-1))
+            call poly_int(time_chamber(iloc:iloc+1),wall_temp_chamber(iloc:iloc+1), &
+                tquery,var,dummy)
+            t_bl=var
+        case default
+            error stop 'Invalid chamber_bl_temp_mode'
+        end select
 
+        ! Conserve qv during the BL temperature excursion unless the air would
+        ! exceed liquid saturation at T_bl.  In that case excess vapour is
+        ! assumed to condense on the wall and is removed from airborne total
+        ! water.  The wall is not an infinite source of vapour, so dq_wall <= 0.
+        qvs_bl=eps1*svp_liq(t_bl)/max(p-svp_liq(t_bl),tiny(1._wp))
+        qv_bl=min(qv0,qvs_bl)
+        dq_wall=fmix*(qv_bl-qv0)
+        dq_wall=max(dq_wall,-qv0)
+        qv_air=max(qv0+dq_wall,0._wp)
+
+        ! If gas temperature is observationally forced, do not add a second
+        ! bulk sensible-heat tendency.  Otherwise mix the BL temperature back
+        ! into the well-mixed chamber in proportion to fmix.
         if (chamber_force_temperature) then
             t_air=t0
         else
             t_air=t0+fmix*(t_bl-t0)
         endif
 
-        qtot_target=qv0+ql_total+qi0+dq_bl
-        parcel1%qchamber_bl_step=dq_bl
-        parcel1%qchamber_bl=parcel1%qchamber_bl+dq_bl
+        qtot_target=qv0+ql_total+qi0+dq_wall
+        parcel1%qchamber_bl_step=dq_wall
+        parcel1%qchamber_bl=parcel1%qchamber_bl+dq_wall
 
         fliq=0._wp
         fice=0._wp
@@ -7805,6 +7855,9 @@
         qv_new=qv_air
 
         if (chamber_bl_mix.eq.2) then
+            ! Extreme-inhomogeneous response: no more than the recirculated
+            ! fraction fmix of hydrometeors can completely evaporate/sublimate.
+            ! Residual aerosol is always returned to the airborne population.
             rh_target=min(max(rh0,0._wp),1._wp)
             call diagnose_chamber_bl_inhomogeneous_state(0._wp,0._wp, &
                 ql_act,ql_total,qi0,qv_air,t_air,p,tnew,qv_new,rhw_new,rhi_new, &
@@ -7822,7 +7875,6 @@
                 endif
             endif
 
-            ! Chamber recirculation never destroys the nonvolatile aerosol.
             call prepare_released_hydrometeor_aerosol(fliq,fice,tnew,rhw_new,.true.)
 
             do i=1,n
@@ -7844,8 +7896,9 @@
             error stop 'Invalid chamber_bl_mix in apply_chamber_bl_exchange'
         endif
 
-        ! Enforce the COMMON external total-water change exactly after the
-        ! different homogeneous/inhomogeneous phase responses.
+        ! Internal evaporation/condensation only redistributes airborne water.
+        ! Close the budget exactly to the external wall sink dq_wall, ensuring
+        ! homogeneous and inhomogeneous modes have the same total-water change.
         qcond_new=sum(parcel1%npart*parcel1%y(1:n))
         if (parcel1%ice_flag.eq.1) qcond_new=qcond_new+ &
             sum(parcel1%npartice*parcel1%yice(1:n))
@@ -7869,55 +7922,119 @@
 
 
     ! ============================================================================
-    ! chamber_particle_loss_rate
+    ! chamber_fan_loss_rate
     ! ============================================================================
-    real(wp) function chamber_particle_loss_rate(method,k0,dref,pexp,d) result(rate)
+    !>@brief
+    !>Sigmoid fan-blade collection rate.  The half-maximum diameter is defined
+    !>at chamber_fan_rpm_ref and shifts as RPM**(-1/2), consistent with
+    !>Stokes-number scaling Stk ~ D^2 U for a fixed fan geometry.
+    real(wp) function chamber_fan_loss_rate(d) result(rate)
         implicit none
-        integer(i4b), intent(in) :: method
-        real(wp), intent(in) :: k0,dref,pexp,d
+        real(wp), intent(in) :: d
+        real(wp) :: d50,ratio
 
-        select case(method)
-        case(0)
-            rate=0._wp
-        case(1)
-            rate=max(k0,0._wp)
-        case(2)
-            if (dref.le.0._wp) error stop 'Non-positive chamber loss reference diameter'
-            rate=max(k0,0._wp)*(max(d,tiny(1._wp))/dref)**pexp
-        case default
-            error stop 'Unknown chamber particle loss method'
-        end select
-    end function chamber_particle_loss_rate
+        rate=0._wp
+        if (chamber_fan_loss.eq.0 .or. d.le.0._wp) return
+        d50=chamber_fan_loss_d50_ref*sqrt(chamber_fan_rpm_ref/chamber_fan_rpm)
+        ratio=(d50/max(d,tiny(1._wp)))**chamber_fan_loss_exp
+        rate=chamber_fan_loss_kmax/(1._wp+ratio)
+    end function chamber_fan_loss_rate
+
+
+    ! ============================================================================
+    ! chamber_wall_loss_rate
+    ! ============================================================================
+    !>@brief
+    !>Non-gravitational deposition loss to cylindrical chamber side walls and
+    !>ceiling using the smooth-surface three-layer model of Lai & Nazaroff
+    !>(2000).  The floor is deliberately excluded because gravitational floor
+    !>loss is already represented by apply_particle_fallout.  The model uses
+    !>Brownian and turbulent diffusion and the effect of settling away from the
+    !>downward-facing ceiling.  For very large r+ outside the intended smooth-
+    !>wall aerosol range, r+ is capped at the edge of the viscous-layer fit.
+    real(wp) function chamber_wall_loss_rate(d,vsettle,t,p) result(rate)
+        implicit none
+        real(wp), intent(in) :: d,vsettle,t,p
+        real(wp), parameter :: kb=1.380649e-23_wp
+        real(wp) :: mu,rhoa,nu,lambda_air,cc,db,sc,scm13,rplus,a,b,integ, &
+                    vdvert,vdceil,xarg,radius,volume,aside,aceil,sqrt3
+
+        rate=0._wp
+        if (chamber_wall_loss.eq.0 .or. d.le.0._wp) return
+        if (chamber_diameter.le.0._wp .or. chamber_height.le.0._wp) return
+
+        mu=viscosity_air(t)
+        rhoa=p/(ra*t)
+        nu=mu/rhoa
+        lambda_air=6.6e-8_wp*(101325._wp/p)*(t/293.15_wp)
+        cc=1._wp+2._wp*lambda_air/d*(1.257_wp+0.4_wp* &
+            exp(-1.1_wp*d/(2._wp*lambda_air)))
+        db=kb*t*cc/(3._wp*pi*mu*d)
+        if (db.le.0._wp .or. nu.le.0._wp) return
+
+        sc=max(nu/db,1._wp)
+        scm13=sc**(-1._wp/3._wp)
+        rplus=0.5_wp*d*chamber_wall_ustar/nu
+        rplus=max(0._wp,min(rplus,4.299_wp))
+        sqrt3=sqrt(3._wp)
+
+        a=0.5_wp*log((10.92_wp*scm13+4.3_wp)**3 / &
+            (1._wp/sc+0.0609_wp)) + sqrt3*atan((8.6_wp-10.92_wp*scm13)/ &
+            (sqrt3*10.92_wp*scm13))
+        b=0.5_wp*log((10.92_wp*scm13+rplus)**3 / &
+            (1._wp/sc+7.669e-4_wp*rplus**3)) + sqrt3*atan((2._wp*rplus- &
+            10.92_wp*scm13)/(sqrt3*10.92_wp*scm13))
+        integ=max(3.64_wp*sc**(2._wp/3._wp)*(a-b)+39._wp,tiny(1._wp))
+
+        vdvert=chamber_wall_ustar/integ
+        if (vsettle.le.tiny(1._wp)) then
+            vdceil=vdvert
+        else
+            xarg=max(vsettle,0._wp)*integ/chamber_wall_ustar
+            if (xarg.lt.1.e-6_wp) then
+                vdceil=vdvert
+            elseif (xarg.gt.50._wp) then
+                vdceil=0._wp
+            else
+                vdceil=max(vsettle,0._wp)/(exp(xarg)-1._wp)
+            endif
+        endif
+
+        radius=0.5_wp*chamber_diameter
+        volume=pi*radius**2*chamber_height
+        aside=2._wp*pi*radius*chamber_height
+        aceil=pi*radius**2
+        rate=(aside*vdvert+aceil*vdceil)/volume
+        rate=max(rate,0._wp)
+    end function chamber_wall_loss_rate
 
 
     ! ============================================================================
     ! apply_chamber_particle_losses
     ! ============================================================================
     !>@brief
-    !>Applies independent fan-blade and non-gravitational wall-deposition
-    !>hazards to every airborne warm/aerosol and ice category.  Gravitational
-    !>settling remains in apply_particle_fallout and is therefore independently
-    !>switchable.  All extensive moments are multiplied by the same exact
-    !>survival fraction as number; per-particle properties of survivors do not
-    !>change.  Competing-hazard diagnostics are partitioned by k_fan/k_total and
-    !>k_wall/k_total, avoiding an order-dependent attribution.
+    !>Applies independent fan-blade impaction and non-gravitational wall
+    !>deposition to every airborne warm/aerosol and ice category.  Fan loss uses
+    !>a saturating sigmoid in current particle diameter; wall loss uses the
+    !>Lai-Nazaroff smooth-wall deposition velocity with chamber geometry and
+    !>friction velocity.  Gravitational floor settling remains in
+    !>apply_particle_fallout.  All extensive moments use the same exact
+    !>survival fraction as number.
     subroutine apply_chamber_particle_losses()
         implicit none
         integer(i4b) :: i,n
         real(wp) :: kfan,kwall,ktot,survival,nold,nremoved,qremoved, &
-            fanfrac,wallfrac
+            fanfrac,wallfrac,t,p
 
         if (chamber_fan_loss.eq.0 .and. chamber_wall_loss.eq.0) return
         n=parcel1%n_bin_modew
+        t=parcel1%y(parcel1%ite)
+        p=parcel1%y(parcel1%ipr)
 
         do i=1,n
             if (parcel1%npart(i).le.tiny(1._wp)) cycle
-            kfan=chamber_particle_loss_rate(chamber_fan_loss, &
-                chamber_fan_loss_k0,chamber_fan_loss_dref,chamber_fan_loss_exp, &
-                parcel1%dw(i))
-            kwall=chamber_particle_loss_rate(chamber_wall_loss, &
-                chamber_wall_loss_k0,chamber_wall_loss_dref,chamber_wall_loss_exp, &
-                parcel1%dw(i))
+            kfan=chamber_fan_loss_rate(parcel1%dw(i))
+            kwall=chamber_wall_loss_rate(parcel1%dw(i),parcel1%vel(i),t,p)
             ktot=kfan+kwall
             if (ktot.le.0._wp) cycle
 
@@ -7940,12 +8057,8 @@
         if (parcel1%ice_flag.eq.1) then
             do i=1,n
                 if (parcel1%npartice(i).le.tiny(1._wp)) cycle
-                kfan=chamber_particle_loss_rate(chamber_fan_loss, &
-                    chamber_fan_loss_k0,chamber_fan_loss_dref,chamber_fan_loss_exp, &
-                    parcel1%dwice(i))
-                kwall=chamber_particle_loss_rate(chamber_wall_loss, &
-                    chamber_wall_loss_k0,chamber_wall_loss_dref,chamber_wall_loss_exp, &
-                    parcel1%dwice(i))
+                kfan=chamber_fan_loss_rate(parcel1%dwice(i))
+                kwall=chamber_wall_loss_rate(parcel1%dwice(i),parcel1%vel(n+i),t,p)
                 ktot=kfan+kwall
                 if (ktot.le.0._wp) cycle
 
@@ -8042,13 +8155,19 @@
 	subroutine apply_particle_fallout()
 		implicit none
 		integer(i4b) :: i,n
-		real(wp) :: survival, qfall,nfall
+		real(wp) :: survival, qfall,nfall,fall_depth
 		if (.not.fallout_flag) return
 		
-		if (residence_depth <= 0._wp) then
-			error stop 'residence_depth must be > 0'
-		endif
+        ! For chamber runs with specified geometry, use the physical chamber
+        ! height as V/A_floor.  Generic parcel/LES runs retain residence_depth.
+        if (n_levels_c.gt.0 .and. chamber_height.gt.0._wp) then
+            if (chamber_height.le.0._wp) error stop 'chamber_height must be > 0'
+        elseif (residence_depth.le.0._wp) then
+            error stop 'residence_depth must be > 0'
+        endif
 		n=parcel1%n_bin_modew
+        fall_depth=residence_depth
+        if (n_levels_c.gt.0 .and. chamber_height.gt.0._wp) fall_depth=chamber_height
 		parcel1%qfall_step_liq=0._wp
 		parcel1%qfall_step_ice=0._wp
 		!------------------------------------------------------------------
@@ -8057,7 +8176,7 @@
 		do i=1,n
 			survival=exp( &
 				-max(parcel1%vel(i),0._wp) * &
-				 parcel1%dt/residence_depth)	
+				 parcel1%dt/fall_depth)	
 			! Number removed during this timestep
 			nfall=parcel1%npart(i)*(1._wp-survival)
 			! Liquid-water mass removed
@@ -8084,7 +8203,7 @@
 			do i=1,n
 				survival=exp( &
 					-max(parcel1%vel(n+i),0._wp) * &
-					 parcel1%dt/residence_depth)
+					 parcel1%dt/fall_depth)
 				nfall=parcel1%npartice(i)*(1._wp-survival)
 				qfall=parcel1%yice(i)*nfall
 				parcel1%qfall_step_ice = &
@@ -8361,12 +8480,12 @@
                 (/io1%x_dimid/),io1%varid))
             call check(nf90_put_att(io1%ncid,io1%varid,"units","kg kg-1"))
             call check(nf90_put_att(io1%ncid,io1%varid,"long_name", &
-                "cumulative signed total-water exchange with chamber boundary layer"))
+                "cumulative airborne water transferred to wall by BL saturation cap"))
             call check(nf90_def_var(io1%ncid,"qchamber_bl_step",NF90_DOUBLE, &
                 (/io1%x_dimid/),io1%varid))
             call check(nf90_put_att(io1%ncid,io1%varid,"units","kg kg-1"))
             call check(nf90_put_att(io1%ncid,io1%varid,"long_name", &
-                "signed chamber boundary-layer total-water exchange in previous timestep"))
+                "airborne water transferred to wall by BL saturation cap in previous timestep"))
         endif
 
         if (chamber_fan_loss.gt.0) then
@@ -8600,13 +8719,15 @@
 		fallrate_ice=0._wp	
 		fallrate_liq = &
 			parcel1%qfall_step_liq * &
-			rhod*residence_depth/rhow / &
+			rhod*merge(chamber_height,residence_depth, &
+                n_levels_c.gt.0 .and. chamber_height.gt.0._wp)/rhow / &
 			parcel1%dt * &
 			1000._wp*3600._wp
 		if(ice_flag.eq.1) then
 			fallrate_ice = &
 				parcel1%qfall_step_ice * &
-				rhod*residence_depth/rhow / &
+				rhod*merge(chamber_height,residence_depth, &
+                n_levels_c.gt.0 .and. chamber_height.gt.0._wp)/rhow / &
 				parcel1%dt * &
 				1000._wp*3600._wp
 		endif

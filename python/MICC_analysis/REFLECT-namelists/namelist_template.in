@@ -84,28 +84,42 @@
     n_levels_c = 0,
     !> Independently force pressure from press_chamber(t).
     chamber_force_pressure = .false.,
-    !> Independently force temperature from temp_chamber(t).
+    !> Independently force gas temperature from temp_chamber(t).
     chamber_force_temperature = .false.,
-    !> Independently apply the measured qtot_chamber tendency as an external water source/sink.
+    !> Apply measured qtot_chamber tendency as an external water source/sink.
+    !> Leave false when qtot is uncertain or is used only as a diagnostic.
     chamber_force_qtot = .false.,
-    !> Chamber boundary-layer mixing: 0=off, 1=homogeneous, 2=extreme inhomogeneous.
+
+    !> Boundary-layer interaction: 0=off, 1=homogeneous, 2=extreme inhomogeneous.
     chamber_bl_mix = 0,
-    !> E-folding timescale for chamber bulk/BL recirculation [s].
+    !> E-folding timescale for bulk-air recirculation through the wall BL [s].
     chamber_bl_tau = 60.0,
-    !> Boundary-layer RH with respect to liquid water [fraction].
-    chamber_bl_rh = 1.0,
-    !> Boundary-layer temperature offset relative to chamber bulk [K].
+    !> BL temperature: 0=fixed offset from evolving gas T; 1=wall_temp_chamber(t).
+    chamber_bl_temp_mode = 0,
+    !> Used only for chamber_bl_temp_mode=0: T_BL - T_gas [K].
     chamber_bl_temp_offset = 0.0,
-    !> Fan particle loss: 0=off, 1=constant first-order rate, 2=size-dependent power law.
+
+    !> Drone-fan blade loss: 0=off, 1=saturating sigmoid in current particle diameter.
     chamber_fan_loss = 0,
-    chamber_fan_loss_k0 = 0.0,
-    chamber_fan_loss_dref = 10.e-6,
-    chamber_fan_loss_exp = 2.0,
-    !> Non-gravitational chamber-wall deposition; same method choices as fan loss.
+    !> Asymptotic large-particle first-order fan loss rate [s-1].
+    chamber_fan_loss_kmax = 0.0,
+    !> Diameter giving half kmax at chamber_fan_rpm_ref [m].
+    chamber_fan_loss_d50_ref = 4.0e-6,
+    !> Sigmoid sharpness: k/kmax = 1/[1+(D50/D)^exp].
+    chamber_fan_loss_exp = 6.0,
+    !> Fan speed for this run and reference speed defining d50_ref [rpm].
+    chamber_fan_rpm = 25000.0,
+    chamber_fan_rpm_ref = 25000.0,
+
+    !> Non-gravitational deposition to smooth side walls and ceiling using
+    !> Lai & Nazaroff (2000). The floor remains in the generic fallout scheme.
     chamber_wall_loss = 0,
-    chamber_wall_loss_k0 = 0.0,
-    chamber_wall_loss_dref = 10.e-6,
-    chamber_wall_loss_exp = 2.0
+    !> Wall friction velocity controlling turbulent deposition [m s-1].
+    chamber_wall_ustar = 0.02,
+    !> Cylindrical chamber geometry [m]. If specified in a chamber run,
+    !> chamber_height is also used as the fallout depth V/A_floor.
+    chamber_diameter = 0.0,
+    chamber_height = 0.0
 /
 &aerosol_setup
     !> Number of externally mixed aerosol modes.
