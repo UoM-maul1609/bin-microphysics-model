@@ -29,7 +29,7 @@
     !> Legacy microphysics flag retained for compatibility; it currently does not bypass the BMM driver.
 	microphysics_flag=1,
     !> Ice microphysics switch: 0=liquid only; 1=enable ice bins/processes.
-	ice_flag=1,
+	ice_flag=0,
     !> Bin-remapping scheme: 0=full moving, 1=moving-centre, 2=Chen-Lamb mass-conserving remap.
 	bin_scheme_flag=0,
     !> Collision/SCE switch: 0=off, 1=SCE collection, 2=SCE plus secondary-ice processes.
@@ -37,7 +37,7 @@
     !> Ventilation treatment selector used in diffusional growth calculations.
 	vent_flag=1,
     !> Water-activity/growth formulation: 0=Raoult/Koehler using molecular properties; 1=kappa-Koehler.
-	kappa_flag=0,
+	kappa_flag=1,
     !> Updraft forcing selector: 1=constant, 2=stop at t_thresh, 3=oscillatory, 4=model-specific profile.
 	updraft_type=1,
     !> Threshold time/coordinate used by selected updraft forcing [s for time-based modes].
@@ -53,11 +53,11 @@
     !> Entrains environmental aerosol with entrained air when .true.
  	entrain_aerosol=.true.,
     !> Entrain vertically when .true.; use lateral entrainment when .false.
- 	vert_ent=.true.,
+ 	vert_ent=.false.,
 	!> Prescribed cloud-top height [m].
 	!> The parcel simulation stops when its height reaches or exceeds z_ctop.
 	!> Set <= 0 to disable the cloud-top stopping criterion.    
-	z_ctop=1100.,
+	z_ctop=1060.,
     !> Specified entrainment rate [model convention, normally m-1 for vertical entrainment].
  	ent_rate=1.e-3,
     !> Number of sounding levels supplied in sounding_spec.
@@ -77,7 +77,11 @@
     !> Enable mode-1 freezing/collisional secondary-ice production.
  	mode1_flag=.false.,
     !> Enable mode-2 secondary-ice production.
- 	mode2_flag=.false./
+ 	mode2_flag=.false.,
+    !> Use anomalous-diffraction-theory optical properties when .true.; otherwise use geometric optics.
+	use_adt_optics=.true.,
+    !> Optical wavelength used by ADT calculations [m].
+	optics_wavelength=0.55e-6/
 &aerosol_setup
     !> Number of externally mixed aerosol modes.
     n_mode            = 2,
@@ -142,8 +146,8 @@
  	                        3,  
  	                        3,                      
     !> Component hygroscopicity kappa used when kappa_flag=1.
- 	kappa_core1(1:4)      = 0.3,
- 	                            0.2,  
+ 	kappa_core1(1:4)      = 0.61,
+ 	                            1.29,  
  	                            0.3, 
  	                            0.3, 
     !> Organic-content/abundance specification for the semivolatile bins.

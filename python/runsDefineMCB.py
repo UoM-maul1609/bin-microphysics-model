@@ -14,8 +14,9 @@ EDMUND_SCF=4
 RAYLEIGH=5
 TAYLOR_CONE=6
 TOPAZ=7
+POWERCLOUD=8
 
-spray_method=EDMUND_SCF
+spray_method=POWERCLOUD
 
 # N_aer1=np.array([7246000,3132000,49800])*1e6
 # #N_aer1=np.array([7246000,3132000,0])*1e6
@@ -63,6 +64,10 @@ elif spray_method==TOPAZ:
 	N_aer1		=np.array([3530,190,0.00378])*1e6
 	logSig		=np.array([0.424,0.374,0.01])
 	Dm			=np.array([0.0848,0.198,0.915])*1e-6
+elif spray_method==POWERCLOUD:
+	N_aer1		=np.array([11.59948504,124.6248093,51.36088692])*1e6
+	logSig		=np.log(np.array([1.163293663,1.63031549,1.693508788]))
+	Dm			=np.array([15.76237815,24.49137812,139.9466964])*1e-9
 
 N_aer1=N_aer1/np.sum(N_aer1)
 

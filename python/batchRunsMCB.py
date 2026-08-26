@@ -66,7 +66,7 @@ def batchRuns():
 
         changeFile(dumpFile,tmpFile,'n_aer1(1:3,2:2)        = 0e6, 0.e6, 0.e6,',\
             nStr)
-        changeFile(tmpFile,tmpFile,'d_aer1(1:3,2:2)        = 100e-9   , 1e-9, 1.e-9, ',\
+        changeFile(tmpFile,tmpFile,'d_aer1(1:3,2:2)        = 100e-9   , 1e-9, 1.e-9,',\
             dStr)
         changeFile(tmpFile,tmpFile,'sig_aer1(1:3,2:2)      = 0.5   , 0.3, 0.3, ',\
             sigStr)

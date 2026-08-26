@@ -52,13 +52,13 @@
  	adiabatic_prof=.false.,
     !> Discrete entrainment cadence: 0=homogeneous; positive integer=every N model timesteps.
     !> With dt=10 s, entrain_period=1 gives a finite inhomogeneous event every 10 s.
- 	entrain_period=0,
+ 	entrain_period=1,
     !> Time at which inhomogeneous mixing switches to homogeneous mixing [s].
  	thresh_to_start_hom_mix=100000.,
     !> Re-expose aerosol associated with evaporated liquid during inhomogeneous-mixing treatment when true.
- 	release_aerosol=.true.,
+ 	release_aerosol=.false.,
     !> Entrains environmental aerosol with entrained air when .true.
- 	entrain_aerosol=.true.,
+ 	entrain_aerosol=.false.,
     !> Entrain vertically when .true.; use lateral entrainment when .false.
     vert_ent=.false.,
 	!> Prescribed cloud-top height [m].

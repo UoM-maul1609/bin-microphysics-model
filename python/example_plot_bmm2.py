@@ -35,10 +35,12 @@ def plot_model_run(fileName='/tmp/output1.nc'):
     ndrop=      nc['ndrop'][:]
     deff=       nc['deff'][:]
     mwat=       nc['mwat'][:,:,:]
-    qi=         nc['qi'][:]
-    nice=       nc['nice'][:]
-    mice=       nc['mice'][:,:,:]
-    
+    try:
+    	qi=         nc['qi'][:]
+    	nice=       nc['nice'][:]
+    	mice=       nc['mice'][:,:,:]
+    except:
+        pass
 
     from mpl_toolkits.axes_grid1 import host_subplot
     import mpl_toolkits.axisartist as AA
@@ -79,14 +81,22 @@ def plot_model_run(fileName='/tmp/output1.nc'):
     par2.set_xlabel("Humidity")
     
     p1, = host.plot(ql*1000.,z, label="cloud")
-    p2, = par1.plot(qi*1000.,z, label="ice")
+    try:
+       p2, = par1.plot(qi*1000.,z, label="ice")
+    except:
+       pass
+
     p3, = par2.plot(rh, z,label="humidity")
     
     
     host.legend(loc=6)
     
     host.axis["bottom"].label.set_color(p1.get_color())
-    par1.axis["top"].label.set_color(p2.get_color())
+    try:
+       par1.axis["top"].label.set_color(p2.get_color())
+    except:
+       pass
+
     par2.axis["top"].label.set_color(p3.get_color())
     ##########################################################################
 
@@ -141,8 +151,11 @@ def plot_model_run(fileName='/tmp/output1.nc'):
     par2.set_xlabel("N$_{ice}$ (L$^{-1}$)")
     
     p1, = host.plot(ndrop/1.e6,z, label="CDNC")
-    p3, = par2.plot(nice/1.e3, z,label="N$_{ice}$")
-    
+    try:
+       p3, = par2.plot(nice/1.e3, z,label="N$_{ice}$")
+    except:
+       pass
+
     host.legend(loc=6)
     
     host.axis["bottom"].label.set_color(p1.get_color())
