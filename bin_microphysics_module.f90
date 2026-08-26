@@ -4109,7 +4109,7 @@
                          t,p,nbins1,ncomps,nbinw,nmoms,nmodes,yice,rh,dt,&
                          sce_flag,mode1_flag, ice_nucleation_mech_in)
     use numerics_type
-    use sce, only : calculate_mode1
+    use sce, only : calculate_mode1, sce_receiving_bin
     implicit none
     real(wp), intent(inout) :: t
     real(wp), intent(in) :: p,dt
@@ -4134,12 +4134,12 @@
     real(wp), intent(inout), dimension(nbinw) :: yice
     real(wp), intent(inout) :: rh
 
-    integer(i4b) :: i,j,k,kk,im,inew,it,ib
+    integer(i4b) :: i,j,k,kk,im,inew,it,ib,jl,jh,imode,ibin,iedge
     real(wp) :: fracinliq,naer05,naer_daily,nprimary,nprimary_existing, &
                 ndaily_target,ndaily_existing,avail, &
                 n,nt,nb,mt,mb,mnew,nleft,mttot,mbtot,mleft,mall, &
-                dprimary,dn,frac,dcin,tc
-    logical :: has_inas,has_demott,has_daily
+                dprimary,dn,frac,dcin,tc,dlo,dhi,frac05
+    logical :: has_inas,has_demott,has_daily,full_moving
     logical, dimension(nbinw) :: activated_mask
     integer(i4b) :: idemott
 
@@ -4155,6 +4155,7 @@
     dn01=0._wp
     nin_freeze=0._wp
     idemott=ncomps+6+n_inp_classes
+    full_moving=(parcel1%bin_scheme_flag.eq.BIN_FULL_MOVING)
 
     ! Evaluate the expensive Koehler/FHH activation test once per warm bin and
     ! reuse it for all heterogeneous immersion-nucleation mechanisms.
@@ -4226,9 +4227,29 @@
             if(.not.activated_mask(i)) cycle
             call get_inp_control(mbin2(i,:),has_inas,has_demott,has_daily)
             if((has_inas .and. ice_nucleation_mech_in(INUC_INAS)) .or. .not.has_demott) cycle
-            if(dd(i).gt.0.5e-6_wp) then
-                naer05=naer05+max(npart(i)-dn_inas(i),0._wp)
+
+            ! DeMott uses the number of aerosol particles with dry diameter
+            ! greater than 0.5 micrometres.  Do not classify a whole BMM bin
+            ! from its representative dry diameter.  Instead assume number is
+            ! uniformly distributed in dry diameter across the bin and count
+            ! only the fraction of that bin lying above 0.5 micrometres.
+            imode=(i-1)/nbins1+1
+            ibin=i-(imode-1)*nbins1
+            iedge=ibin+(imode-1)*(nbins1+1)
+            dlo=parcel1%d(iedge)
+            dhi=parcel1%d(iedge+1)
+
+            if(dhi.le.0.5e-6_wp) then
+                frac05=0._wp
+            elseif(dlo.ge.0.5e-6_wp) then
+                frac05=1._wp
+            elseif(dhi.gt.dlo) then
+                frac05=(dhi-0.5e-6_wp)/(dhi-dlo)
+            else
+                frac05=0._wp
             endif
+
+            naer05=naer05+frac05*max(npart(i)-dn_inas(i),0._wp)
         enddo
 
         nprimary=min(naer05,demott_2010(t,naer05))
@@ -4246,9 +4267,27 @@
 
             call get_inp_control(mbin2(i,:),has_inas,has_demott,has_daily)
             if((has_inas .and. ice_nucleation_mech_in(INUC_INAS)) .or. .not.has_demott) cycle
-            if(dd(i).le.0.5e-6_wp) cycle
 
-            avail=max(npart(i)-dn_inas(i)-dn_demott(i),0._wp)
+            ! Use the same flat-within-bin >0.5 micrometre fraction when
+            ! allocating newly nucleated DeMott ice.  This keeps the depletion
+            ! consistent with the naer05 reservoir used to calculate the target.
+            imode=(i-1)/nbins1+1
+            ibin=i-(imode-1)*nbins1
+            iedge=ibin+(imode-1)*(nbins1+1)
+            dlo=parcel1%d(iedge)
+            dhi=parcel1%d(iedge+1)
+
+            if(dhi.le.0.5e-6_wp) then
+                frac05=0._wp
+            elseif(dlo.ge.0.5e-6_wp) then
+                frac05=1._wp
+            elseif(dhi.gt.dlo) then
+                frac05=(dhi-0.5e-6_wp)/(dhi-dlo)
+            else
+                frac05=0._wp
+            endif
+
+            avail=max(frac05*max(npart(i)-dn_inas(i),0._wp)-dn_demott(i),0._wp)
             dprimary=min(nprimary,avail)
             dn_demott(i)=dn_demott(i)+dprimary
             nprimary=nprimary-dprimary
@@ -4407,9 +4446,30 @@
             moments(k,ncomps+4)=npart(k)*mwat(k)
             moments(k,ncomps+5)=npart(k)*mwat(k)
 
-            inew=find_medge(medges,mnew,nbins1,nmodes,i)
-            it=max(find_medge(medges,mt,nbins1,nmodes,i),1)
-            ib=max(find_medge(medges,mb,nbins1,nmodes,i),1)
+            if (full_moving) then
+                ! Primary freezing must remain on the current moving ice
+                ! representation.  Search only within the parent aerosol mode;
+                ! do not project the new crystal back onto the fixed SCE grid.
+                jl=(i-1)*nbins1+1
+                jh=i*nbins1
+
+                inew=sce_receiving_bin(mnew,jl,jh,yice,.true.)
+
+                ! Mode-1 fragments are optional.  If a fragment class is absent,
+                ! leave its destination equal to the primary destination; its
+                ! zero number/mass contribution below then has no effect.
+                it=inew
+                ib=inew
+                if (nt.gt.qsmall2 .and. mt.gt.qsmall2) &
+                    it=sce_receiving_bin(mt,jl,jh,yice,.true.)
+                if (nb.gt.qsmall2 .and. mb.gt.qsmall2) &
+                    ib=sce_receiving_bin(mb,jl,jh,yice,.true.)
+            else
+                ! Existing moving-centre / Chen-Lamb fixed-grid placement.
+                inew=find_medge(medges,mnew,nbins1,nmodes,i)
+                it=max(find_medge(medges,mt,nbins1,nmodes,i),1)
+                ib=max(find_medge(medges,mb,nbins1,nmodes,i),1)
+            endif
 
             if(mall.gt.0._wp) then
                 moments(inew+nbinw,1:ncomps)=moments(inew+nbinw,1:ncomps)+ &
@@ -4452,6 +4512,17 @@
             npartice(inew)=npartice(inew)+nleft
             npartice(it)=npartice(it)+nt
             npartice(ib)=npartice(ib)+nb
+
+            ! Keep the moving pivots current during the freezing loop so the
+            ! next source bin is placed relative to the already-updated ice PSD.
+            ! For an empty receiving bin this sets the pivot exactly to the new
+            ! product mass; for an occupied bin it gives the exact number-weighted
+            ! mean mass.
+            if (full_moving) then
+                if (npartice(inew).gt.qsmall2) yice(inew)=m01(inew)/npartice(inew)
+                if (npartice(it).gt.qsmall2)    yice(it)=m01(it)/npartice(it)
+                if (npartice(ib).gt.qsmall2)    yice(ib)=m01(ib)/npartice(ib)
+            endif
 
             ! Ice moments: phi, nmon and volume.
             moments(inew+nbinw,ncomps+1)=moments(inew+nbinw,ncomps+1)+nleft
@@ -4884,7 +4955,10 @@
 	
 		select case(parcel1%bin_scheme_flag)
 		case(BIN_FULL_MOVING)
-			! No remapping after diffusional growth.
+			! No remapping after diffusional growth.  Keep the duplicated
+			! per-particle hydrometeor-mass column synchronized with the
+			! accepted DVODE representative mass.
+			mbin(:,n_comps+1)=mass_new
 		case(BIN_MOVING_CENTRE)
 			call moving_centre( parcel1%n_bin_mode, &
 				parcel1%n_bin_modew, parcel1%n_bins1, &
