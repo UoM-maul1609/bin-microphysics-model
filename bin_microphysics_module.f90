@@ -1615,43 +1615,6 @@
 	end subroutine project_initial_bmm_to_fixed_grid
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-	! ============================================================================
-	! prepare_state_for_sce
-	! ============================================================================
-	!>@author
-	!>Paul J. Connolly, The University of Manchester
-	!>@brief
-	!>Projects freely moving liquid and ice representative masses onto the fixed SCE grid before
-	!>collection when the full-moving growth scheme is used.
-	subroutine prepare_state_for_sce()
-		implicit none
-		integer(i4b) :: n
-		! SCE uses a sectional/fixed-grid Bott gain calculation.
-		! BIN_FULL_MOVING is allowed for diffusional growth, but the
-		! particle population must be conservatively projected onto
-		! the SCE grid before collection.
-		if (parcel1%bin_scheme_flag.ne.BIN_FULL_MOVING) return
-		n=parcel1%n_bin_modew
-		! ------------------------------------------------------------
-		! Liquid
-		! ------------------------------------------------------------
-		call moving_centre( parcel1%n_bin_mode, n, parcel1%n_bins1, &
-			parcel1%n_modes, parcel1%n_comps, parcel1%n_comps+parcel1%imoms, &
-			parcel1%npart, parcel1%y(1:n), parcel1%moments(1:n,:), &
-			parcel1%mbin, parcel1%mbinedges)
-		! ------------------------------------------------------------
-		! Ice
-		! ------------------------------------------------------------
-		if (parcel1%ice_flag.eq.1) then
-			call moving_centre(parcel1%n_bin_mode, n, parcel1%n_bins1, &
-				parcel1%n_modes, parcel1%n_comps, &
-				parcel1%n_comps+parcel1%imoms, parcel1%npartice, &
-				parcel1%yice(1:n), parcel1%moments(n+1:2*n,:), &
-				parcel1%mbinice, parcel1%mbinedges)
-		endif
-	end subroutine prepare_state_for_sce
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
 
 
 	! ============================================================================
@@ -6541,8 +6504,7 @@
         enddo
 
         ! Remap only when the selected numerical treatment requires it.
-        if ((sce_flag.gt.0).or. &
-            (parcel1%bin_scheme_flag.ne.BIN_FULL_MOVING)) then
+        if (parcel1%bin_scheme_flag.ne.BIN_FULL_MOVING) then
             call moving_centre(parcel1%n_bin_mode,parcel1%n_bin_modew,&
                     parcel1%n_bins1,parcel1%n_modes, parcel1%n_comps, &
                     parcel1%imoms+parcel1%n_comps, parcel1%npart, &
@@ -7149,7 +7111,8 @@
             endif
         enddo
 
-        if (sum(parcel1%npart_temp).gt.tiny(1._wp)) then
+        if ((sum(parcel1%npart_temp).gt.tiny(1._wp)).and. &
+            (parcel1%bin_scheme_flag.ne.BIN_FULL_MOVING)) then
             call moving_centre(parcel1%n_bin_mode,parcel1%n_bin_modew, &
                 parcel1%n_bins1,parcel1%n_modes,parcel1%n_comps, &
                 parcel1%imoms+parcel1%n_comps,parcel1%npart_temp, &
@@ -7464,8 +7427,7 @@
                     parcel1%npart_ent*parcel1%mbin_ent(:,n_comps+1)
             endif
 
-            if ((sce_flag.gt.0).or. &
-                (parcel1%bin_scheme_flag.ne.BIN_FULL_MOVING)) then
+            if (parcel1%bin_scheme_flag.ne.BIN_FULL_MOVING) then
                 call moving_centre(parcel1%n_bin_mode,parcel1%n_bin_modew, &
                     parcel1%n_bins1,parcel1%n_modes,parcel1%n_comps, &
                     parcel1%imoms+parcel1%n_comps,parcel1%npart_ent, &
@@ -8557,22 +8519,10 @@
 		! when ventilation is required.
         call bin_microphysics(fparcelwarm, fparcelcold, & 
             icenucleation, noncollisional_iceformation)
-		! --------------------------------------------------------------
-		! SCE requires an ordered sectional representation.
-		!
-		! For BIN_FULL_MOVING, condensation/deposition is allowed to
-		! move the representative masses freely.  Before collection,
-		! conservatively project the resulting population onto the
-		! common SCE grid.
-		! --------------------------------------------------------------
-		if ((sce_flag.gt.0).and. &
-			(parcel1%bin_scheme_flag.eq.BIN_FULL_MOVING)) then
-			call prepare_state_for_sce()
-		endif
-		! Must be AFTER the SCE projection because remapping changes
-		! particle masses, composition and ice properties.        
-		! Particle masses/shapes have now changed:
-		! calculate terminal velocities of the accepted state.
+		! Particle masses/shapes have now changed.  BIN_FULL_MOVING is
+		! deliberately NOT projected to the fixed SCE grid here; the SCE
+		! moving-pivot gain treatment updates its representative masses
+		! directly.
 		call update_terminal_velocities()
 
         if(sce_flag.gt.0) then
@@ -8584,14 +8534,17 @@
 			! Build the collision kernel from the CURRENT BMM state
 			call update_collision_kernel()              
               
-            ! one time-step of sce model
+            ! One timestep of the selected SCE model.  Both the basic SCE
+            ! (sce_flag=1) and the secondary-ice SCE (sce_flag=2) use the
+            ! fully moving gain treatment when bin_scheme_flag=BIN_FULL_MOVING.
             if(sce_flag.eq.1) then
                 call sce_microphysics(parcel1%n_bins1,parcel1%n_bin_mode,&
                 	parcel1%n_bin_modew, parcel1%n_comps+parcel1%imoms,&
                                 parcel1%npartall,parcel1%moments,parcel1%momenttype, &
                                 parcel1%ecoll,parcel1%indexc, &
                                 parcel1%mbinall(:,parcel1%n_comps+1),parcel1%dt, &
-                                parcel1%y(parcel1%ite),rhoa,parcel1%totaddto)
+                                parcel1%y(parcel1%ite),rhoa,parcel1%totaddto, &
+                                parcel1%bin_scheme_flag.eq.BIN_FULL_MOVING)
             elseif(sce_flag.eq.2) then
                 call sce_sip_microphysics(parcel1%n_bins1,parcel1%n_bin_mode,&
                             parcel1%n_bin_modew,parcel1%n_comps, parcel1%n_comps+&
@@ -8601,7 +8554,8 @@
                             parcel1%mbinall(:,parcel1%n_comps+1),parcel1%vel,parcel1%dt, &
                             parcel1%y(parcel1%ite),rhoa, parcel1%totaddto, &
                             mass_fragment1, mass_fragment2, mass_fragment3, &
-                            hm_flag,break_flag,mode1_flag, mode2_flag )
+                            hm_flag,break_flag,mode1_flag, mode2_flag, &
+                            parcel1%bin_scheme_flag.eq.BIN_FULL_MOVING )
             endif
 
 			! latent heat of fusion

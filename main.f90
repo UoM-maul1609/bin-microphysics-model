@@ -42,7 +42,7 @@
                         n_aer1,d_aer1,sig_aer1,dmina,dmaxa,mass_frac_aer1,molw_core1, &
                         density_core1, nu_core1, kappa_core1, org_content1, molw_org1, &
                         kappa_org1, density_org1, delta_h_vap1,nu_org1, log_c_star1, &
-                        BIN_MOVING_CENTRE, BIN_CHEN_LAMB
+                        BIN_FULL_MOVING, BIN_MOVING_CENTRE, BIN_CHEN_LAMB
                         
         use sce, only : read_in_sce_namelist, initialise_sce_arrays, &
                         n_binsc, n_binst, &
@@ -114,7 +114,9 @@
 				parcel1%n_bin_mode,parcel1%n_bin_modew,parcel1%n_binst, &
 				parcel1%n_modes,parcel1%n_comps, &
 				parcel1%indexc,parcel1%mbinedges)
-			call project_initial_bmm_to_fixed_grid()
+			if (bin_scheme_flag.ne.BIN_FULL_MOVING) then
+				call project_initial_bmm_to_fixed_grid()
+			endif
         endif        
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
