@@ -3857,7 +3857,9 @@
             ydot(ite)=ydot(ite)-w_e*mu*(t-te)
 
             ! Equation 12-32 or 12-34 P+K
-            dlnrho=1._wp/rhop*(1._wp/(ra*t))*(ydot(ipr)- p/(t)*ydot(ite))
+            !dlnrho=1._wp/rhop*(1._wp/(ra*t))*(ydot(ipr)- p/(t)*ydot(ite))
+            ! includes contribution from rv
+            dlnrho = ydot(ipr)/p - ydot(ite)/t - rv*drv/rm
             if(bubble_flag) then
                 ydot(ira) = y(ira)*onethird*(mu*w_e-dlnrho)
             else
@@ -6726,8 +6728,10 @@
         real(wp), intent(in) :: fliq,fice,ql0,qi0,dilution
         real(wp), intent(out) :: tnew,qv_new,radius_new,w_new,rhw_new,rhi_new
 
+        integer(i4b) :: ihaze
         real(wp) :: told,p,qv_old,svp0,rm_old,rho_old,rho_new, &
-            cpm,ql_rem,qi_rem,denom,wold,r_old,dz_event,qsw,qsi
+            cpm,ql_rem,qi_rem,denom,wold,r_old,dz_event,qsw,qsi, &
+            ql_haze,ql_haze_old,qevap_liq,qevap_ice,rh_guess
 
         told=parcel1%y(parcel1%ite)
         p=parcel1%y(parcel1%ipr)
@@ -6744,20 +6748,43 @@
         ! integral, D=exp(-integral(mu dz)).  It is therefore independent of
         ! the amount of liquid/ice subsequently removed by the chosen
         ! inhomogeneous-mixing closure.
-        qv_new=dilution*qv_old+(1._wp-dilution)*wvenv_send + &
-            dilution*(fliq*ql0+fice*qi0)
-        qv_new=max(qv_new,0._wp)
+        !
+        ! Released liquid-droplet residuals retain a finite equilibrium haze-
+        ! water mass.  Solve that small contribution self-consistently because
+        ! the equilibrium residual water depends on the final T and RH, while
+        ! those thermodynamic variables depend on the NET evaporated water.
+        ql_haze=0._wp
+        do ihaze=1,20
+            ql_haze_old=ql_haze
 
-        ql_rem=dilution*(1._wp-fliq)*ql0
-        qi_rem=dilution*(1._wp-fice)*qi0
-        cpm=max(cp+qv_new*cpv+ql_rem*cpw+qi_rem*cpi,0.5_wp*cp)
+            qevap_liq=max(dilution*fliq*ql0-ql_haze,0._wp)
+            ! Ice residual haze water is not yet represented separately; retain
+            ! the existing complete-sublimation treatment for the ice fraction.
+            qevap_ice=dilution*fice*qi0
 
-        ! Environmental sensible mixing plus latent cooling from condensate
-        ! removed in this instantaneous extreme-inhomogeneous event.
-        tnew=told+(1._wp-dilution)*(tenv_send-told) - &
-            dilution*(lv*fliq*ql0+ls*fice*qi0)/cpm
-        if (tnew.le.100._wp) error stop &
-            'Unphysical temperature in inhomogeneous mixing state'
+            qv_new=dilution*qv_old+(1._wp-dilution)*wvenv_send + &
+                qevap_liq+qevap_ice
+            qv_new=max(qv_new,0._wp)
+
+            ql_rem=dilution*(1._wp-fliq)*ql0+ql_haze
+            qi_rem=dilution*(1._wp-fice)*qi0
+            cpm=max(cp+qv_new*cpv+ql_rem*cpw+qi_rem*cpi,0.5_wp*cp)
+
+            ! Environmental sensible mixing plus latent cooling from the NET
+            ! condensate mass transferred to vapour in this event.
+            tnew=told+(1._wp-dilution)*(tenv_send-told) - &
+                (lv*qevap_liq+ls*qevap_ice)/cpm
+            if (tnew.le.100._wp) error stop &
+                'Unphysical temperature in inhomogeneous mixing state'
+
+            qsw=eps1*svp_liq(tnew)/(p-svp_liq(tnew))
+            rh_guess=qv_new/max(qsw,tiny(1._wp))
+            call released_liquid_haze_water(dilution*fliq,tnew,rh_guess, &
+                ql_haze)
+
+            if (abs(ql_haze-ql_haze_old).le. &
+                1.e-10_wp*max(ql0,1.e-20_wp)) exit
+        enddo
 
         rho_new=p/((ra+rv*qv_new)*tnew)
 
@@ -6983,6 +7010,45 @@
     end subroutine equilibrium_residual_water_mass
 
 	! ============================================================================
+	! released_liquid_haze_water
+	! ============================================================================
+	!>@brief
+	!>Returns the liquid-water mixing ratio retained on aerosol residuals from
+	!>the completely evaporated ACTIVATED warm-bin population.  The supplied
+	!>factor is D*fliq, so the returned haze water is on the same pre-event
+	!>population basis as the inhomogeneous liquid reservoir.  If residual
+	!>aerosol release is disabled, all removed droplet water is transferred to
+	!>vapour and this contribution is zero.
+    subroutine released_liquid_haze_water(factor,t_resid,rh_resid,ql_haze)
+        implicit none
+        real(wp), intent(in) :: factor,t_resid,rh_resid
+        real(wp), intent(out) :: ql_haze
+
+        integer(i4b) :: i,j,n
+        real(wp) :: residual_water
+        real(wp), dimension(parcel1%n_comps) :: mcomp
+
+        ql_haze=0._wp
+        if (.not.release_aerosol) return
+        if (factor.le.tiny(1._wp)) return
+
+        n=parcel1%n_bin_modew
+        do i=1,n
+            if (parcel1%npart(i).le.tiny(1._wp)) cycle
+            if (.not.particle_is_activated(i,parcel1%y(i), &
+                parcel1%y(parcel1%ite))) cycle
+
+            do j=1,parcel1%n_comps
+                mcomp(j)=parcel1%moments(i,j)/parcel1%npart(i)
+            enddo
+
+            call equilibrium_residual_water_mass(i,mcomp,t_resid,rh_resid, &
+                residual_water)
+            ql_haze=ql_haze+factor*parcel1%npart(i)*residual_water
+        enddo
+    end subroutine released_liquid_haze_water
+
+	! ============================================================================
 	! prepare_released_hydrometeor_aerosol
 	! ============================================================================
 	!>@brief
@@ -7164,12 +7230,11 @@
         call prepare_released_hydrometeor_aerosol(liq_res_factor, &
             ice_res_factor,tnew,rhw_new)
 
-        ! Ordinary dilution applies first.  Extreme inhomogeneous evaporation
-        ! then removes the same fraction fliq of each ACTIVATED warm-bin
-        ! population in NUMBER, leaving interstitial aerosol untouched apart
-        ! from ordinary dilution and leaving survivor masses unchanged.  If
-        ! release_aerosol is true the removed number is returned below as dry
-        ! residual aerosol; otherwise it is deliberately lost from the model.
+		! Construct the final extreme-inhomogeneous population directly from
+		! the pre-event state.  D accounts for ordinary parcel dilution and
+		! (1-fliq) retains the fraction of activated droplets that survive
+		! complete evaporation.  These factors form one coupled event rather
+		! than two sequential population updates.
         do i=1,n
             ! All warm particles undergo ordinary parcel dilution.  The
             ! additional (1-fliq) loss applies ONLY to activated droplets.
