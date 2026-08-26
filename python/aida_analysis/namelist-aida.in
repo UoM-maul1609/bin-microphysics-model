@@ -4,7 +4,7 @@
     !> Standalone-SCE namelist path used when SCE configuration is read separately.
 	scefile = 'sce/namelist.in',
     !> Total model integration time [s].
-	runtime=7000.,
+	runtime=500.,
     !> Nominal model/microphysics timestep [s].
 	dt=10.,
     !> Initial parcel height [m].
@@ -53,7 +53,7 @@
     !> Entrains environmental aerosol with entrained air when .true.
  	entrain_aerosol=.true.,
     !> Entrain vertically when .true.; use lateral entrainment when .false.
- 	vert_ent=.true.,
+ 	vert_ent=.false.,
 	!> Prescribed cloud-top height [m].
 	!> The parcel simulation stops when its height reaches or exceeds z_ctop.
 	!> Set <= 0 to disable the cloud-top stopping criterion.

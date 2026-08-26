@@ -1,7 +1,7 @@
 import numpy as np
 
 bmm_run=True
-bam_run=True
+bam_run=False
 
 
 bam_location='../../../bam/'
@@ -21,8 +21,9 @@ NaClMR= np.logspace(-14,-4,50)
 w_flag=False
 totM1=800.e6
 totM1=500.e6
-# totM1=5000.e6
-winit=0.2
+totM1=3000.e6
+maxM2=5000e6
+winit=1.3
 logSig=0.5
 Dm=100.e-9
 # see moments of lognormal distribution
@@ -46,12 +47,12 @@ mole_add=58.44e-3
 nu_back = kappa_back*density_w/density_back*mole_back/mole_w
 nu_add = kappa_add*density_w/density_add*mole_add/mole_w
 
-N_aer=np.linspace(0.0,1000e6,50)
+N_aer=np.linspace(0.0,maxM2,50)
 if w_flag:
 	winit=np.linspace(0.01,10,50)
 
 psd_type1=2 # psd of the background aerosol
-psd_type=6 # psd of the added aerosol
+psd_type=1 # psd of the added aerosol
 
 if psd_type==1:
 	N2=np.array([0.49,0.38,1e-8])
