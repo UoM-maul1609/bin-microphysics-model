@@ -29,7 +29,7 @@
                         scefile, sce_flag, hm_flag, break_flag, mode1_flag,mode2_flag, &
                         psurf, tsurf, q_read, theta_read, rh_read, z_read, &
                         time_chamber, press_chamber, temp_chamber, qtot_chamber, &
-                        runtime, dt, zinit, tpert, use_prof_for_tprh, chamber_override, &
+                        runtime, dt, zinit, tpert, use_prof_for_tprh, &
                         winit, &
                         winit2, amplitude2, tinit, pinit, &
                         rhinit, radinit, bubble_flag, &
@@ -93,7 +93,7 @@
         ! initialise parcel1 arrays in bmm module       
         call initialise_bmm_arrays(psurf, tsurf, q_read, theta_read, rh_read, z_read, &
         			time_chamber, press_chamber, temp_chamber, qtot_chamber, &
-                    runtime, dt, zinit, tpert, use_prof_for_tprh, chamber_override, &
+                    runtime, dt, zinit, tpert, use_prof_for_tprh, &
                     winit, tinit, pinit, &
                     rhinit, radinit, bubble_flag, &
                     microphysics_flag, ice_flag, bin_scheme_flag, vent_flag, &

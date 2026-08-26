@@ -56,7 +56,7 @@
  	vert_ent=.true.,
 	!> Prescribed cloud-top height [m].
 	!> The parcel simulation stops when its height reaches or exceeds z_ctop.
-	!> Set <= 0 to disable the cloud-top stopping criterion.    
+	!> Set <= 0 to disable the cloud-top stopping criterion.
 	z_ctop=-1.,
     !> Specified entrainment rate [model convention, normally m-1 for vertical entrainment].
  	ent_rate=1.e-3,
@@ -80,7 +80,36 @@
     !> Enable mode-1 freezing/collisional secondary-ice production.
  	mode1_flag=.false.,
     !> Enable mode-2 secondary-ice production.
- 	mode2_flag=.false./
+ 	mode2_flag=.false.
+	/
+&chamber_options
+    !> Number of chamber time-series samples in &chamber_spec.
+    n_levels_c = 0,
+    !> Independently force pressure from press_chamber(t).
+    chamber_force_pressure = .false.,
+    !> Independently force temperature from temp_chamber(t).
+    chamber_force_temperature = .false.,
+    !> Independently apply the measured qtot_chamber tendency as an external water source/sink.
+    chamber_force_qtot = .false.,
+    !> Chamber boundary-layer mixing: 0=off, 1=homogeneous, 2=extreme inhomogeneous.
+    chamber_bl_mix = 0,
+    !> E-folding timescale for chamber bulk/BL recirculation [s].
+    chamber_bl_tau = 60.0,
+    !> Boundary-layer RH with respect to liquid water [fraction].
+    chamber_bl_rh = 1.0,
+    !> Boundary-layer temperature offset relative to chamber bulk [K].
+    chamber_bl_temp_offset = 0.0,
+    !> Fan particle loss: 0=off, 1=constant first-order rate, 2=size-dependent power law.
+    chamber_fan_loss = 0,
+    chamber_fan_loss_k0 = 0.0,
+    chamber_fan_loss_dref = 10.e-6,
+    chamber_fan_loss_exp = 2.0,
+    !> Non-gravitational chamber-wall deposition; same method choices as fan loss.
+    chamber_wall_loss = 0,
+    chamber_wall_loss_k0 = 0.0,
+    chamber_wall_loss_dref = 10.e-6,
+    chamber_wall_loss_exp = 2.0
+/
 &aerosol_setup
     !> Number of externally mixed aerosol modes.
     n_mode            = 1,

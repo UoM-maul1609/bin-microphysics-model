@@ -82,6 +82,15 @@
 			! particles / kg dry air
 			real(wp) :: nfall_liq=0._wp
 			real(wp) :: nfall_ice=0._wp
+
+            ! Chamber-process diagnostics.  BL exchange is a signed external
+            ! total-water source/sink.  Fan and wall diagnostics are cumulative
+            ! positive airborne hydrometeor/particle losses.
+            real(wp) :: qchamber_bl=0._wp, qchamber_bl_step=0._wp
+            real(wp) :: qfan_liq=0._wp, qfan_ice=0._wp
+            real(wp) :: nfan_liq=0._wp, nfan_ice=0._wp
+            real(wp) :: qwall_liq=0._wp, qwall_ice=0._wp
+            real(wp) :: nwall_liq=0._wp, nwall_ice=0._wp
             real(wp), dimension(:), allocatable :: time_chamber, press_chamber, &
             										temp_chamber, dp_chamber, dt_chamber, &
             										qtot_chamber,dqtot_chamber
@@ -181,13 +190,31 @@
 		real(wp) :: residence_depth=100._wp        
         real(wp) :: zinit,tpert,winit,winit2, amplitude2, tau2, &
                     tinit,pinit,rhinit,radinit,z_ctop=-1._wp, alpha_therm, alpha_cond, &
-                    alpha_therm_ice, alpha_dep, thresh_to_start_hom_mix, &
-                    chamber_inhom=0.0_wp
+                    alpha_therm_ice, alpha_dep, thresh_to_start_hom_mix
+
+        ! Chamber forcing/options.  The measured time series remain in
+        ! &chamber_spec; these switches say how they are used.
+        logical :: chamber_force_pressure=.false., &
+                   chamber_force_temperature=.false., &
+                   chamber_force_qtot=.false.
+        integer(i4b) :: chamber_bl_mix=0_i4b, &
+                        chamber_fan_loss=0_i4b, chamber_wall_loss=0_i4b
+        real(wp) :: chamber_bl_tau=60._wp, chamber_bl_rh=1._wp, &
+                    chamber_bl_temp_offset=0._wp, &
+                    chamber_fan_loss_k0=0._wp, chamber_fan_loss_dref=10.e-6_wp, &
+                    chamber_fan_loss_exp=2._wp, &
+                    chamber_wall_loss_k0=0._wp, chamber_wall_loss_dref=10.e-6_wp, &
+                    chamber_wall_loss_exp=2._wp
+
+        ! Derived compatibility indicator: true whenever measured chamber
+        ! P/T/qtot forcing is active.  It is no longer a namelist option and
+        ! does not control the individual forcing terms.
+        logical :: chamber_forcing_active=.false.
+
         integer(i4b) :: microphysics_flag=0, kappa_flag,updraft_type, vent_flag, &
                         sce_flag=0,ice_flag=0, bin_scheme_flag=1, entrain_period=0
         logical :: use_prof_for_tprh, hm_flag, mode1_flag, mode2_flag, &
-        	chamber_override=.false., bubble_flag, &
-        	release_aerosol, entrain_aerosol
+        	bubble_flag, release_aerosol, entrain_aerosol
         integer(i4b) :: break_flag
         logical, dimension(N_INUC_MECH) :: ice_nucleation_mech = &
             [.true.,.false.,.true.,.false.]
@@ -380,13 +407,19 @@
 	subroutine read_in_bmm_namelist(nmlfile)
 		implicit none
         character(len=*), intent(in) :: nmlfile
-        integer(i4b) :: i,j,k
+        integer(i4b) :: i,j,k,ios
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         ! namelists                                                            !
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         namelist /sounding_spec/ psurf, tsurf,  &
                     q_read, theta_read, rh_read, z_read
         namelist /chamber_spec/ time_chamber, press_chamber, temp_chamber, qtot_chamber
+        namelist /chamber_options/ n_levels_c, &
+                    chamber_force_pressure, chamber_force_temperature, chamber_force_qtot, &
+                    chamber_bl_mix, chamber_bl_tau, chamber_bl_rh, chamber_bl_temp_offset, &
+                    chamber_fan_loss, chamber_fan_loss_k0, chamber_fan_loss_dref, &
+                    chamber_fan_loss_exp, chamber_wall_loss, chamber_wall_loss_k0, &
+                    chamber_wall_loss_dref, chamber_wall_loss_exp
         ! define namelists for environment
         namelist /run_vars/ outputfile, scefile,runtime, dt, &
                     zinit,tpert,use_prof_for_tprh,winit,winit2,amplitude2, &
@@ -394,12 +427,11 @@
                     microphysics_flag, ice_flag, bin_scheme_flag, sce_flag, &
                     ice_nucleation_mech, &
                     hm_flag, break_flag, mode1_flag, mode2_flag, &
-                    use_adt_optics, optics_wavelength, chamber_override, &
-                    chamber_inhom, vent_flag, &
+                    use_adt_optics, optics_wavelength, vent_flag, &
                     kappa_flag, updraft_type,t_thresh, adiabatic_prof, &
                     entrain_period, thresh_to_start_hom_mix, release_aerosol, &
                     entrain_aerosol, vert_ent, &
-                    z_ctop, ent_rate,n_levels_s, n_levels_c, &
+                    z_ctop, ent_rate,n_levels_s, &
                     fallout_flag,residence_depth, &
                     alpha_therm,alpha_cond,alpha_therm_ice,alpha_dep
         namelist /aerosol_setup/ n_intern,n_mode,n_sv,sv_flag, n_bins,n_comps,n_inp_classes
@@ -421,12 +453,67 @@
         ! read in namelists	and allocate arrays								   !
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         open(8,file=nmlfile,status='old', recl=80, delim='apostrophe')
+        rewind(8)
         read(8,nml=run_vars)
+
+        ! Reset optional chamber controls on every namelist read so omission of
+        ! &chamber_options is guaranteed to mean no chamber-specific forcing or
+        ! process, even if this routine is called more than once in one process.
+        n_levels_c=0_i4b
+        chamber_force_pressure=.false.
+        chamber_force_temperature=.false.
+        chamber_force_qtot=.false.
+        chamber_bl_mix=0_i4b
+        chamber_bl_tau=60._wp
+        chamber_bl_rh=1._wp
+        chamber_bl_temp_offset=0._wp
+        chamber_fan_loss=0_i4b
+        chamber_fan_loss_k0=0._wp
+        chamber_fan_loss_dref=10.e-6_wp
+        chamber_fan_loss_exp=2._wp
+        chamber_wall_loss=0_i4b
+        chamber_wall_loss_k0=0._wp
+        chamber_wall_loss_dref=10.e-6_wp
+        chamber_wall_loss_exp=2._wp
+
+        ! Chamber options are deliberately optional.  With no &chamber_options
+        ! group the defaults above leave every chamber-specific process off,
+        ! which keeps future parcel/LES use independent of chamber machinery.
+        rewind(8)
+        read(8,nml=chamber_options,iostat=ios)
+        if (ios.gt.0) error stop 'Malformed &chamber_options namelist'
+
+        ! Derived indicator used internally; not a namelist control.
+        chamber_forcing_active=chamber_force_pressure .or. chamber_force_temperature .or. &
+                         chamber_force_qtot
+
         if (vert_ent) error stop &
             'vert_ent/Sanchez cloud-top entrainment has been removed; use lateral entrainment'
         if (n_levels_c.lt.0) error stop 'n_levels_c must be non-negative'
-        if (chamber_override .and. n_levels_c.lt.2) error stop &
-            'chamber_override requires n_levels_c >= 2'
+        if (chamber_forcing_active .and. n_levels_c.lt.2) error stop &
+            'Measured chamber forcing requires n_levels_c >= 2'
+        if (chamber_bl_mix.lt.0 .or. chamber_bl_mix.gt.2) error stop &
+            'chamber_bl_mix must be 0 (off), 1 (homogeneous), or 2 (inhomogeneous)'
+        if (chamber_bl_mix.gt.0 .and. chamber_bl_tau.le.0._wp) error stop &
+            'chamber_bl_tau must be > 0 when chamber_bl_mix is enabled'
+        if (chamber_bl_rh.lt.0._wp) error stop 'chamber_bl_rh must be non-negative'
+        if (chamber_fan_loss.lt.0 .or. chamber_fan_loss.gt.2) error stop &
+            'chamber_fan_loss must be 0, 1 (constant), or 2 (power law)'
+        if (chamber_wall_loss.lt.0 .or. chamber_wall_loss.gt.2) error stop &
+            'chamber_wall_loss must be 0, 1 (constant), or 2 (power law)'
+        if (chamber_fan_loss_k0.lt.0._wp .or. chamber_wall_loss_k0.lt.0._wp) error stop &
+            'Chamber particle-loss rate coefficients must be non-negative'
+        if (chamber_fan_loss.eq.2 .and. chamber_fan_loss_dref.le.0._wp) error stop &
+            'chamber_fan_loss_dref must be > 0 for power-law fan loss'
+        if (chamber_wall_loss.eq.2 .and. chamber_wall_loss_dref.le.0._wp) error stop &
+            'chamber_wall_loss_dref must be > 0 for power-law wall loss'
+        if (chamber_fan_loss_exp.lt.0._wp .or. chamber_wall_loss_exp.lt.0._wp) error stop &
+            'Chamber particle-loss exponents must be non-negative'
+        if (chamber_force_qtot .and. (chamber_fan_loss.gt.0 .or. chamber_wall_loss.gt.0)) then
+            print *, 'Warning: measured qtot forcing plus chamber particle loss can double-count water loss'
+        endif
+
+        rewind(8)
         read(8,nml=aerosol_setup)
         ! allocate memory / init
 		call allocate_arrays(n_intern,n_mode,n_sv,n_bins,n_comps,nq,n_levels_s, &
@@ -438,7 +525,9 @@
 		                    org_content1,molw_org1,kappa_org1,density_org1, &
 		                    delta_h_vap1,nu_org1,log_c_star1)
         
+        rewind(8)
         read(8,nml=sounding_spec)
+        rewind(8)
         read(8,nml=aerosol_spec)
 
         ! Basic configuration checks.  Zero-number lognormal submodes may use
@@ -514,9 +603,12 @@
             endif
         endif
 
-        if(chamber_override) then 
-        	read(8,nml=chamber_spec)
-        	if(chamber_override) use_prof_for_tprh=.false.
+        if(n_levels_c.gt.0) then
+            rewind(8)
+            read(8,nml=chamber_spec)
+        endif
+        if(chamber_force_pressure .or. chamber_force_temperature) then
+            use_prof_for_tprh=.false.
         endif
         close(8)
         tau2 = 2._wp*pi/winit2*amplitude2
@@ -742,7 +834,7 @@
 	!>@param[in] runtime,dt: model run time and timestep
 	!>@param[in] zinit,tpert,winit,tinit,pinit,rhinit,radinit: initial parcel height, perturbation,
 	!>vertical velocity, temperature, pressure, relative humidity and radius
-	!>@param[in] use_prof_for_tprh,chamber_override,bubble_flag: switches controlling
+	!>@param[in] use_prof_for_tprh,bubble_flag: profile and parcel-interface switches; chamber forcing is controlled by chamber_force_*
 	!>environmental/profile and parcel geometry setup
 	!>@param[in] microphysics_flag,ice_flag,bin_scheme_flag,vent_flag,kappa_flag,updraft_type:
 	!>microphysics configuration flags
@@ -759,7 +851,7 @@
 	!>@param[in] sce_flag: stochastic-collection-equation switch
     subroutine initialise_bmm_arrays(psurf, tsurf, q_read, theta_read, rh_read, z_read, &
     				time_chamber, press_chamber, temp_chamber, qtot_chamber, &
-                    runtime, dt, zinit, tpert, use_prof_for_tprh, chamber_override, &
+                    runtime, dt, zinit, tpert, use_prof_for_tprh, &
                     winit, tinit, pinit, &
                     rhinit, radinit, bubble_flag, &
                     microphysics_flag, ice_flag, bin_scheme_flag, vent_flag, &
@@ -775,8 +867,7 @@
     use numerics, only : find_pos, poly_int, zeroin, fmin,vode_integrate
 
     implicit none
-    logical, intent(in) :: use_prof_for_tprh, adiabatic_prof, vert_ent, bubble_flag, &
-    				chamber_override
+    logical, intent(in) :: use_prof_for_tprh, adiabatic_prof, vert_ent, bubble_flag
     integer(i4b), intent(in) :: microphysics_flag, ice_flag, bin_scheme_flag, vent_flag, &
                     kappa_flag, updraft_type, n_levels_s,n_levels_c, &
                     n_intern, n_mode, n_sv, &
@@ -835,6 +926,17 @@
 	
 	parcel1%nfall_liq=0._wp
 	parcel1%nfall_ice=0._wp
+	! Chamber diagnostics
+	parcel1%qchamber_bl=0._wp
+	parcel1%qchamber_bl_step=0._wp
+	parcel1%qfan_liq=0._wp
+	parcel1%qfan_ice=0._wp
+	parcel1%nfan_liq=0._wp
+	parcel1%nfan_ice=0._wp
+	parcel1%qwall_liq=0._wp
+	parcel1%qwall_ice=0._wp
+	parcel1%nwall_liq=0._wp
+	parcel1%nwall_ice=0._wp
     
 
     parcel1%ice_flag=ice_flag
@@ -1129,48 +1231,69 @@
         print *,'t,p,rh from sounding: ', parcel1%t, parcel1%p, parcel1%rh
     endif
     
-    ! initialise with chamber conditions
-    if (chamber_override) then
-    	parcel1%time_chamber=time_chamber 
-    	parcel1%press_chamber=press_chamber 
-    	parcel1%temp_chamber=temp_chamber 
-    	parcel1%qtot_chamber=qtot_chamber 
-        ! interpolate to find theta
-        iloc=find_pos(parcel1%time_chamber(1:n_levels_c),parcel1%TT)
+    ! Initialise/copy chamber data.  The measured time series can be retained
+    ! even when only a subset of P/T/qtot is used as forcing.
+    if (n_levels_c.ge.2) then
+        parcel1%time_chamber=time_chamber
+        parcel1%press_chamber=press_chamber
+        parcel1%temp_chamber=temp_chamber
+        parcel1%qtot_chamber=qtot_chamber
+
+        ! Chamber model time starts at t=0.  Do not use parcel1%TT here: the
+        ! ODE clock is initialised later in this routine.
+        iloc=find_pos(parcel1%time_chamber(1:n_levels_c),0._wp)
         iloc=min(n_levels_c-1,iloc)
         iloc=max(1,iloc)
-        ! linear interp t
-        call poly_int(parcel1%time_chamber(iloc:iloc+1), &
-        	parcel1%temp_chamber(iloc:iloc+1), &
-        	min(parcel1%TT,parcel1%time_chamber(n_levels_c)), var,dummy)        
-        parcel1%t=var +tpert
-        ! linear interp pressure
-        call poly_int(parcel1%time_chamber(iloc:iloc+1), &
-        	parcel1%press_chamber(iloc:iloc+1), &
-            min(parcel1%TT,parcel1%time_chamber(n_levels_c)), var,dummy)        
-        parcel1%p=var 
-        parcel1%rh=rhinit
-        ! linear interp qtot
-        call poly_int(parcel1%time_chamber(iloc:iloc+1), &
-        	parcel1%qtot_chamber(iloc:iloc+1), &
-            min(parcel1%TT,parcel1%time_chamber(n_levels_c)), var,dummy)        
-        parcel1%qtot=var 
-        parcel1%rh=parcel1%qtot/ (eps1*svp_liq(parcel1%t)/(parcel1%p-svp_liq(parcel1%t)))
-    	
-    	! calculate derivatives
-    	do i=1,n_levels_c-1
-    		parcel1%dp_chamber(i) = &
-    			(parcel1%press_chamber(i+1)-parcel1%press_chamber(i))/ &
-    			(parcel1%time_chamber(i+1)-parcel1%time_chamber(i))
-    		parcel1%dt_chamber(i) = &
-    			(parcel1%temp_chamber(i+1)-parcel1%temp_chamber(i))/ &
-    			(parcel1%time_chamber(i+1)-parcel1%time_chamber(i))
-    		parcel1%dqtot_chamber(i) = &
-    			(parcel1%qtot_chamber(i+1)-parcel1%qtot_chamber(i))/ &
-    			(parcel1%time_chamber(i+1)-parcel1%time_chamber(i))
-    	enddo
-        
-        print *,'t,p,rh from chamber: ', parcel1%t, parcel1%p, parcel1%rh
+
+        if (chamber_force_temperature) then
+            call poly_int(parcel1%time_chamber(iloc:iloc+1), &
+                parcel1%temp_chamber(iloc:iloc+1), &
+                min(max(0._wp,parcel1%time_chamber(1)), &
+                    parcel1%time_chamber(n_levels_c)),var,dummy)
+            parcel1%t=var+tpert
+        endif
+
+        if (chamber_force_pressure) then
+            call poly_int(parcel1%time_chamber(iloc:iloc+1), &
+                parcel1%press_chamber(iloc:iloc+1), &
+                min(max(0._wp,parcel1%time_chamber(1)), &
+                    parcel1%time_chamber(n_levels_c)),var,dummy)
+            parcel1%p=var
+        endif
+
+        if (chamber_force_qtot) then
+            call poly_int(parcel1%time_chamber(iloc:iloc+1), &
+                parcel1%qtot_chamber(iloc:iloc+1), &
+                min(max(0._wp,parcel1%time_chamber(1)), &
+                    parcel1%time_chamber(n_levels_c)),var,dummy)
+            parcel1%qtot=var
+            ! At chamber initialisation the supplied qtot is interpreted as
+            ! vapour for setting RH, matching the historical chamber setup.
+            parcel1%rh=parcel1%qtot / &
+                (eps1*svp_liq(parcel1%t)/(parcel1%p-svp_liq(parcel1%t)))
+        else
+            parcel1%rh=rhinit
+        endif
+
+        ! Piecewise-linear forcing tendencies.  All are retained so the user
+        ! can switch individual forcing variables without rebuilding the data.
+        do i=1,n_levels_c-1
+            if (parcel1%time_chamber(i+1).le.parcel1%time_chamber(i)) error stop &
+                'time_chamber must be strictly increasing'
+            parcel1%dp_chamber(i)= &
+                (parcel1%press_chamber(i+1)-parcel1%press_chamber(i))/ &
+                (parcel1%time_chamber(i+1)-parcel1%time_chamber(i))
+            parcel1%dt_chamber(i)= &
+                (parcel1%temp_chamber(i+1)-parcel1%temp_chamber(i))/ &
+                (parcel1%time_chamber(i+1)-parcel1%time_chamber(i))
+            parcel1%dqtot_chamber(i)= &
+                (parcel1%qtot_chamber(i+1)-parcel1%qtot_chamber(i))/ &
+                (parcel1%time_chamber(i+1)-parcel1%time_chamber(i))
+        enddo
+
+        if (chamber_forcing_active) then
+            print *,'t,p,rh from chamber forcing: ',parcel1%t,parcel1%p,parcel1%rh
+        endif
     endif
     
     parcel1%zlast=parcel1%z
@@ -1332,9 +1455,11 @@
 		allocate( parcel1%moments_ent0(1:parcel1%n_bin_mode,1:n_comps+parcel1%imoms), &
 			STAT = AllocateStatus)
 		if (AllocateStatus /= 0) STOP "*** Not enough memory ***"
-        ! Temporary warm population used for aerosol residuals released by
-        ! completely evaporated drops and, when required, sublimated ice during
-        ! a discrete inhomogeneous event.
+    endif
+
+    ! Temporary warm population used for aerosol residuals released by either
+    ! atmospheric extreme-inhomogeneous mixing or chamber BL mode 2.
+    if ((.not.adiabatic_prof) .or. chamber_bl_mix.eq.2) then
         allocate( parcel1%mbinedges_temp(1:parcel1%n_bins1+1,1:parcel1%n_modes), &
             STAT = AllocateStatus)
         if (AllocateStatus /= 0) STOP "*** Not enough memory ***"
@@ -2085,38 +2210,6 @@
 	    rh**(-q*rv/(cp+q*cpv))
 
 	end function calc_theta_q3    
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-
-	! ============================================================================
-	! dq_total_water
-	! ============================================================================
-	!>@author
-	!>Paul J. Connolly, The University of Manchester
-	!>@brief
-	!>Returns the imposed chamber rate of change of total water at the requested integration time.
-	!>@param[in] t: model/chamber time
-	!>@param[in] q: ODE state array; retained for the derivative-routine interface
-	!>@param[out] dqdt: total-water time derivative
-	subroutine dq_total_water(t,q,dqdt)
-	use numerics_type
-	implicit none
-	real(wp), intent(in) :: t
-	real(wp), dimension(:), intent(in) :: q
-	real(wp), dimension(:), intent(out) :: dqdt
-	real(wp) :: var, dummy
-	integer(i4b) :: iloc
-
-
-	! interpolate to find dq/dt
-	iloc=find_pos(parcel1%time_chamber(1:n_levels_c),t)
-	iloc=min(n_levels_c-1,iloc)
-	iloc=max(1,iloc)
-	dqdt(1)=parcel1%dqtot_chamber(iloc)
-
-	
-	
-	end subroutine dq_total_water
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
@@ -3678,11 +3771,15 @@
         ! now calculate derivatives
         ! adiabatic parcel model
         ydot(iz )=y(iw)                         ! vertical wind
-        if(chamber_override) then
+        if(chamber_force_pressure .or. chamber_force_temperature .or. chamber_force_qtot) then
 			iloc=find_pos(parcel1%time_chamber(1:n_levels_c),TT)
 			iloc=min(n_levels_c-1,iloc)
 			iloc=max(1,iloc)
-        	ydot(ipr)=parcel1%dp_chamber(iloc)
+            if (chamber_force_pressure) then
+                ydot(ipr)=parcel1%dp_chamber(iloc)
+            else
+                ydot(ipr)=-p/rm/t*grav*ydot(iz)
+            endif
         else
 	        ydot(ipr)=-p/rm/t*grav*ydot(iz)      ! hydrostatic equation
 		endif
@@ -3730,20 +3827,18 @@
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         ! change in temperature of parcel                                        !
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        if (chamber_override) then
-        	ydot(ite) = parcel1%dt_chamber(iloc)
-        	! we have total water
-        	!
-        	if ((rh>1.0_wp)) &
-        		drv = drv + parcel1%dqtot_chamber(iloc)*(1._wp-chamber_inhom)
-        	
-!         	if (rh>0.95_wp) then
-! 	        	drv = drv - (svp_liq(t)-svp_liq(t-1.0))*1e-7
-! 	        endif
+        if (chamber_force_qtot) then
+            ! The measured total-water trajectory is an explicit external
+            ! source/sink.  It is independent of BL mixing and particle loss.
+            drv=drv+parcel1%dqtot_chamber(iloc)
+        endif
+
+        if (chamber_force_temperature) then
+            ydot(ite)=parcel1%dt_chamber(iloc)
         else
-			ydot(ite)=rm/p*ydot(ipr)*t/cpm  ! temperature change: expansion
-			ydot(ite)=ydot(ite)-lv/cpm*drv ! temp change: condensation
-		endif
+            ydot(ite)=rm/p*ydot(ipr)*t/cpm  ! temperature change: expansion
+            ydot(ite)=ydot(ite)-lv/cpm*drv ! temp change: condensation/source
+        endif
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         
         
@@ -3942,7 +4037,7 @@
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         ydot(ite)=rm/p*ydot(ipr)*t/cpm  ! temperature change: expansion 
         								! the pressure change is zero, so 0
-        if (.not.chamber_override) &
+        if (.not.chamber_force_temperature) &
 	        ydot(ite)=ydot(ite)-ls/cpm*drv ! temp change: sublimation
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
@@ -4549,7 +4644,7 @@
 
     ! Freezing releases latent heat.  Vapour mass is unchanged, so recompute RH
     ! at the updated temperature.
-    if(.not.chamber_override) then
+    if(.not.chamber_force_temperature) then
         call adjust_t_rh(sum(mwat(:)*dn01(:)),t,rh,p)
     endif
 
@@ -6150,13 +6245,12 @@
 	!>@param[in] func4: fixed-grid/non-collisional ice-formation callback
     subroutine bin_microphysics(func1,func2,func3,func4)
     use numerics_type
-    use numerics, only : zeroin, dvode, fmin, vode_integrate
+    use numerics, only : zeroin, dvode, fmin
     use sce, only : qsmall
     implicit none
     real(wp) :: mass1, mass2, deltam, vapour_mass, liquid_mass, x1,x2 , cpm, &
         var, dummy, gamma_t, dep_density, rhoa, qv, qvsat, wv, &
     	ql, qtot_m,qtot, eps2=1.e-4_wp,hmin=0.0_wp,htry=1.e-1_wp
-    real(wp), dimension(1) :: ql_inhom
     real(wp), dimension(parcel1%n_bin_modew) :: stk, vd, impaction_time, loss_rate
     integer(i4b) :: iloc, i
     
@@ -6313,7 +6407,7 @@
     ! mass balance                                                         !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 	parcel1%yold=parcel1%y ! store old
-    if(adiabatic_prof.and.(.not.chamber_override)) then
+    if(adiabatic_prof.and.(.not.chamber_forcing_active)) then
         call mass_balance(parcel1%neq,parcel1%neqice,parcel1%y,&
                     parcel1%yice,parcel1%npart,parcel1%npartice, &
                         mass1,parcel1%n_bin_modew,&
@@ -6363,28 +6457,6 @@
 	endif
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     	
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! Adjust total water by altering number concentration chamber          !                                           
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	if(chamber_override.and. &
-		(parcel1%y(parcel1%irh)>1.0_wp ) ) then
-	    ql=sum(parcel1%y(1:parcel1%n_bin_modew)*parcel1%npart)
-		ql_inhom(1) = 0.0_wp !sum(parcel1%y(1:parcel1%n_bin_modew)*parcel1%npart)
-		!print *,parcel1%tout,parcel1%dt, ql_inhom,ql
-		call vode_integrate(ql_inhom,parcel1%tout-parcel1%dt, &
-			parcel1%tout,eps2,htry,hmin,dq_total_water)
-		ql_inhom=ql_inhom*chamber_inhom
-		dummy = 1._wp+ql_inhom(1)/ql
-		! only if the factor is greater than 10%
-		if (dummy.gt.0.1_wp) then
-			parcel1%npart = parcel1%npart*dummy
-			parcel1%moments = parcel1%moments*dummy
-		endif
-	endif
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-
-
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! Routines for adjusting for entrainment          					   !                                           
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -6570,7 +6642,7 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! mass balance                                                         !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    if(adiabatic_prof.and.(.not.chamber_override)) then
+    if(adiabatic_prof.and.(.not.chamber_forcing_active)) then
         ! total water after:
         call mass_balance(parcel1%neq,parcel1%neqice,parcel1%y,&
                     parcel1%yice,parcel1%npart,parcel1%npartice, &
@@ -6968,11 +7040,13 @@
 	!>ice-only/current-ice state, including n_demott, is reset.  If
 	!>release_aerosol=.false. the residual population is intentionally discarded.
     subroutine prepare_released_hydrometeor_aerosol(liq_factor,ice_factor, &
-        t_resid,rh_resid)
+        t_resid,rh_resid,force_release)
         implicit none
         real(wp), intent(in) :: liq_factor,ice_factor,t_resid,rh_resid
+        logical, intent(in), optional :: force_release
         integer(i4b) :: i,j,ii,n
         real(wp) :: residual_water
+        logical :: do_release
 
         n=parcel1%n_bin_modew
         parcel1%npart_temp=0._wp
@@ -6980,7 +7054,9 @@
         parcel1%mbin_temp=0._wp
         parcel1%mbinedges_temp=parcel1%mbinedges
 
-        if (.not.release_aerosol) return
+        do_release=release_aerosol
+        if (present(force_release)) do_release=force_release
+        if (.not.do_release) return
 
         ! A fraction of each ACTIVATED old warm-bin population belongs to the
         ! part of the cloud whose droplets evaporate completely.  Interstitial
@@ -7387,6 +7463,511 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 	
 	
+
+
+    ! ============================================================================
+    ! chamber_released_haze_water
+    ! ============================================================================
+    !>@brief
+    !>Diagnoses equilibrium haze water carried by aerosol residuals released
+    !>when prescribed fractions of activated liquid droplets and ice particles
+    !>are completely evaporated/sublimated by chamber boundary-layer mixing.
+    !>Unlike atmospheric entrainment, chamber BL recirculation always returns
+    !>the nonvolatile aerosol residual to the airborne chamber population.
+    subroutine chamber_released_haze_water(fliq,fice,t_resid,rh_resid, &
+        qhaze_liq,qhaze_ice)
+        implicit none
+        real(wp), intent(in) :: fliq,fice,t_resid,rh_resid
+        real(wp), intent(out) :: qhaze_liq,qhaze_ice
+        integer(i4b) :: i,j,n,ii
+        real(wp) :: residual_water
+        real(wp), dimension(parcel1%n_comps) :: mcomp
+
+        n=parcel1%n_bin_modew
+        qhaze_liq=0._wp
+        qhaze_ice=0._wp
+
+        if (fliq.gt.tiny(1._wp)) then
+            do i=1,n
+                if (parcel1%npart(i).le.tiny(1._wp)) cycle
+                if (.not.particle_is_activated(i,parcel1%y(i), &
+                    parcel1%y(parcel1%ite))) cycle
+                do j=1,parcel1%n_comps
+                    mcomp(j)=parcel1%moments(i,j)/parcel1%npart(i)
+                enddo
+                call equilibrium_residual_water_mass(i,mcomp,t_resid,rh_resid, &
+                    residual_water)
+                qhaze_liq=qhaze_liq+fliq*parcel1%npart(i)*residual_water
+            enddo
+        endif
+
+        if (parcel1%ice_flag.eq.1 .and. fice.gt.tiny(1._wp)) then
+            do i=1,n
+                if (parcel1%npartice(i).le.tiny(1._wp)) cycle
+                ii=n+i
+                do j=1,parcel1%n_comps
+                    mcomp(j)=parcel1%moments(ii,j)/parcel1%npartice(i)
+                enddo
+                call equilibrium_residual_water_mass(i,mcomp,t_resid,rh_resid, &
+                    residual_water)
+                qhaze_ice=qhaze_ice+fice*parcel1%npartice(i)*residual_water
+            enddo
+        endif
+    end subroutine chamber_released_haze_water
+
+
+    ! ============================================================================
+    ! diagnose_chamber_bl_inhomogeneous_state
+    ! ============================================================================
+    !>@brief
+    !>Side-effect-free thermodynamic diagnosis for extreme-inhomogeneous chamber
+    !>BL mixing.  fliq/fice are fractions of the CURRENT activated-liquid and
+    !>ice populations that completely disappear as hydrometeors.  External BL
+    !>water exchange has already produced qv_air/t_air.  Hydrometeor evaporation
+    !>only redistributes water internally, so it cannot change total water.
+    subroutine diagnose_chamber_bl_inhomogeneous_state(fliq,fice,ql_act,ql_total, &
+        qi0,qv_air,t_air,p,tnew,qv_new,rhw_new,rhi_new,qhaze_liq,qhaze_ice)
+        implicit none
+        real(wp), intent(in) :: fliq,fice,ql_act,ql_total,qi0,qv_air,t_air,p
+        real(wp), intent(out) :: tnew,qv_new,rhw_new,rhi_new,qhaze_liq,qhaze_ice
+        integer(i4b) :: iter
+        real(wp) :: qh_l_old,qh_i_old,qevap_liq,qevap_ice,ql_rem,qi_rem,cpm, &
+            qsw,qsi,rh_guess
+
+        qhaze_liq=0._wp
+        qhaze_ice=0._wp
+        tnew=t_air
+
+        do iter=1,30
+            qh_l_old=qhaze_liq
+            qh_i_old=qhaze_ice
+
+            qevap_liq=max(fliq*ql_act-qhaze_liq,0._wp)
+            qevap_ice=max(fice*qi0-qhaze_ice,0._wp)
+            qv_new=max(qv_air+qevap_liq+qevap_ice,0._wp)
+
+            ql_rem=max(ql_total-fliq*ql_act,0._wp)+qhaze_liq+qhaze_ice
+            qi_rem=max((1._wp-fice)*qi0,0._wp)
+            cpm=max(cp+qv_new*cpv+ql_rem*cpw+qi_rem*cpi,0.5_wp*cp)
+
+            if (chamber_force_temperature) then
+                tnew=t_air
+            else
+                ! Liquid residual water never vaporised; ice residual water is
+                ! treated as sublimation followed by condensation onto aerosol.
+                tnew=t_air-(lv*qevap_liq+ls*fice*qi0-lv*qhaze_ice)/cpm
+            endif
+            if (tnew.le.100._wp) error stop &
+                'Unphysical temperature in chamber BL inhomogeneous mixing'
+
+            qsw=eps1*svp_liq(tnew)/max(p-svp_liq(tnew),tiny(1._wp))
+            rh_guess=qv_new/max(qsw,tiny(1._wp))
+            call chamber_released_haze_water(fliq,fice,tnew,rh_guess, &
+                qhaze_liq,qhaze_ice)
+            qhaze_liq=min(max(qhaze_liq,0._wp),max(fliq*ql_act,0._wp))
+            qhaze_ice=min(max(qhaze_ice,0._wp),max(fice*qi0,0._wp))
+
+            if (abs(qhaze_liq-qh_l_old)+abs(qhaze_ice-qh_i_old).le. &
+                1.e-10_wp*max(ql_total+qi0,1.e-20_wp)) exit
+        enddo
+
+        ! Re-evaluate with the converged residual-water estimate.
+        qevap_liq=max(fliq*ql_act-qhaze_liq,0._wp)
+        qevap_ice=max(fice*qi0-qhaze_ice,0._wp)
+        qv_new=max(qv_air+qevap_liq+qevap_ice,0._wp)
+        ql_rem=max(ql_total-fliq*ql_act,0._wp)+qhaze_liq+qhaze_ice
+        qi_rem=max((1._wp-fice)*qi0,0._wp)
+        cpm=max(cp+qv_new*cpv+ql_rem*cpw+qi_rem*cpi,0.5_wp*cp)
+        if (chamber_force_temperature) then
+            tnew=t_air
+        else
+            tnew=t_air-(lv*qevap_liq+ls*fice*qi0-lv*qhaze_ice)/cpm
+        endif
+
+        qsw=eps1*svp_liq(tnew)/max(p-svp_liq(tnew),tiny(1._wp))
+        rhw_new=qv_new/max(qsw,tiny(1._wp))
+        if (tnew.lt.ttr .and. parcel1%ice_flag.eq.1) then
+            qsi=eps1*svp_ice(tnew)/max(p-svp_ice(tnew),tiny(1._wp))
+            rhi_new=qv_new/max(qsi,tiny(1._wp))
+        else
+            rhi_new=huge(1._wp)
+        endif
+    end subroutine diagnose_chamber_bl_inhomogeneous_state
+
+
+    ! ============================================================================
+    ! solve_chamber_bl_liquid_fraction
+    ! ============================================================================
+    subroutine solve_chamber_bl_liquid_fraction(ql_act,ql_total,qi0,qv_air,t_air,p, &
+        rh_target,fmax,fliq,tnew,qv_new,rhw_new,rhi_new)
+        implicit none
+        real(wp), intent(in) :: ql_act,ql_total,qi0,qv_air,t_air,p,rh_target,fmax
+        real(wp), intent(out) :: fliq,tnew,qv_new,rhw_new,rhi_new
+        integer(i4b) :: iter
+        real(wp) :: lo,hi,mid,rlo,dum_t,dum_qv,dum_rhw,dum_rhi,dum_qlh,dum_qih, &
+            qlh,qih
+
+        call diagnose_chamber_bl_inhomogeneous_state(0._wp,0._wp,ql_act,ql_total, &
+            qi0,qv_air,t_air,p,tnew,qv_new,rhw_new,rhi_new,qlh,qih)
+        if (ql_act.le.tiny(1._wp) .or. fmax.le.tiny(1._wp) .or. &
+            rhw_new.ge.rh_target) then
+            fliq=0._wp
+            return
+        endif
+
+        call diagnose_chamber_bl_inhomogeneous_state(fmax,0._wp,ql_act,ql_total, &
+            qi0,qv_air,t_air,p,dum_t,dum_qv,dum_rhw,dum_rhi,dum_qlh,dum_qih)
+        if (dum_rhw.lt.rh_target) then
+            fliq=fmax
+            tnew=dum_t; qv_new=dum_qv; rhw_new=dum_rhw; rhi_new=dum_rhi
+            return
+        endif
+
+        lo=0._wp
+        hi=fmax
+        rlo=rhw_new-rh_target
+        mid=0._wp
+        do iter=1,60
+            mid=0.5_wp*(lo+hi)
+            call diagnose_chamber_bl_inhomogeneous_state(mid,0._wp,ql_act,ql_total, &
+                qi0,qv_air,t_air,p,dum_t,dum_qv,dum_rhw,dum_rhi,dum_qlh,dum_qih)
+            if (abs(dum_rhw-rh_target).le.1.e-8_wp) exit
+            if ((dum_rhw-rh_target)*rlo.le.0._wp) then
+                hi=mid
+            else
+                lo=mid
+                rlo=dum_rhw-rh_target
+            endif
+        enddo
+        fliq=mid
+        tnew=dum_t; qv_new=dum_qv; rhw_new=dum_rhw; rhi_new=dum_rhi
+    end subroutine solve_chamber_bl_liquid_fraction
+
+
+    ! ============================================================================
+    ! solve_chamber_bl_ice_fraction
+    ! ============================================================================
+    subroutine solve_chamber_bl_ice_fraction(fliq,ql_act,ql_total,qi0,qv_air,t_air,p, &
+        fmax,fice,tnew,qv_new,rhw_new,rhi_new)
+        implicit none
+        real(wp), intent(in) :: fliq,ql_act,ql_total,qi0,qv_air,t_air,p,fmax
+        real(wp), intent(out) :: fice,tnew,qv_new,rhw_new,rhi_new
+        integer(i4b) :: iter
+        real(wp) :: lo,hi,mid,rlo,dum_t,dum_qv,dum_rhw,dum_rhi,dum_qlh,dum_qih, &
+            qlh,qih
+
+        call diagnose_chamber_bl_inhomogeneous_state(fliq,0._wp,ql_act,ql_total, &
+            qi0,qv_air,t_air,p,tnew,qv_new,rhw_new,rhi_new,qlh,qih)
+        if (qi0.le.tiny(1._wp) .or. fmax.le.tiny(1._wp) .or. rhi_new.ge.1._wp) then
+            fice=0._wp
+            return
+        endif
+
+        call diagnose_chamber_bl_inhomogeneous_state(fliq,fmax,ql_act,ql_total, &
+            qi0,qv_air,t_air,p,dum_t,dum_qv,dum_rhw,dum_rhi,dum_qlh,dum_qih)
+        if (dum_rhi.lt.1._wp) then
+            fice=fmax
+            tnew=dum_t; qv_new=dum_qv; rhw_new=dum_rhw; rhi_new=dum_rhi
+            return
+        endif
+
+        lo=0._wp
+        hi=fmax
+        rlo=rhi_new-1._wp
+        mid=0._wp
+        do iter=1,60
+            mid=0.5_wp*(lo+hi)
+            call diagnose_chamber_bl_inhomogeneous_state(fliq,mid,ql_act,ql_total, &
+                qi0,qv_air,t_air,p,dum_t,dum_qv,dum_rhw,dum_rhi,dum_qlh,dum_qih)
+            if (abs(dum_rhi-1._wp).le.1.e-8_wp) exit
+            if ((dum_rhi-1._wp)*rlo.le.0._wp) then
+                hi=mid
+            else
+                lo=mid
+                rlo=dum_rhi-1._wp
+            endif
+        enddo
+        fice=mid
+        tnew=dum_t; qv_new=dum_qv; rhw_new=dum_rhw; rhi_new=dum_rhi
+    end subroutine solve_chamber_bl_ice_fraction
+
+
+    ! ============================================================================
+    ! merge_released_aerosol_into_warm
+    ! ============================================================================
+    !>@brief
+    !>Merges the temporary residual-aerosol population into the prognostic warm
+    !>population while conserving number, nonvolatile component moments, INP
+    !>moments and residual haze water.
+    subroutine merge_released_aerosol_into_warm()
+        implicit none
+        integer(i4b) :: i,j,n
+        real(wp) :: nnew
+
+        n=parcel1%n_bin_modew
+        if (sum(parcel1%npart_temp).le.tiny(1._wp)) return
+
+        do i=1,n
+            nnew=parcel1%npart(i)+parcel1%npart_temp(i)
+            if (nnew.gt.tiny(1._wp)) then
+                parcel1%y(i)=(parcel1%y(i)*parcel1%npart(i)+ &
+                    parcel1%mbin_temp(i,parcel1%n_comps+1)*parcel1%npart_temp(i))/nnew
+            endif
+        enddo
+        parcel1%moments(1:n,:)=parcel1%moments(1:n,:)+parcel1%moments_temp(1:n,:)
+        parcel1%npart=parcel1%npart+parcel1%npart_temp
+
+        do i=1,n
+            if (parcel1%npart(i).le.tiny(1._wp)) cycle
+            do j=1,parcel1%n_comps
+                parcel1%mbin(i,j)=parcel1%moments(i,j)/parcel1%npart(i)
+            enddo
+            parcel1%mbin(i,parcel1%n_comps+1)=parcel1%y(i)
+        enddo
+
+        if (parcel1%bin_scheme_flag.ne.BIN_FULL_MOVING) then
+            call moving_centre(parcel1%n_bin_mode,parcel1%n_bin_modew, &
+                parcel1%n_bins1,parcel1%n_modes,parcel1%n_comps, &
+                parcel1%imoms+parcel1%n_comps,parcel1%npart, &
+                parcel1%y(1:n),parcel1%moments(1:n,:),parcel1%mbin, &
+                parcel1%mbinedges)
+        endif
+
+        parcel1%npart_temp=0._wp
+        parcel1%moments_temp=0._wp
+        parcel1%mbin_temp=0._wp
+    end subroutine merge_released_aerosol_into_warm
+
+
+    ! ============================================================================
+    ! apply_chamber_bl_exchange
+    ! ============================================================================
+    !>@brief
+    !>Applies one chamber boundary-layer recirculation operator.  Modes 1 and 2
+    !>use the SAME external total-water exchange
+    !>
+    !>  dq_BL = (qv_BL-qv) [1-exp(-dt/tau_BL)] .
+    !>
+    !>Mode 1 leaves the resulting humidity deficit to the ordinary diffusional
+    !>microphysics (homogeneous response).  Mode 2 instead permits at most the
+    !>same recirculated fraction of activated droplets/ice to disappear
+    !>completely (extreme inhomogeneous response).  Internal phase changes are
+    !>water-conserving, and a final budget closure enforces identical total-water
+    !>change in the two modes to roundoff.
+    subroutine apply_chamber_bl_exchange()
+        implicit none
+        integer(i4b) :: i,n
+        real(wp) :: p,t0,rh0,svp0,qv0,qv_bl,t_bl,fmix,dq_bl,qv_air,t_air, &
+            ql_total,ql_act,qi0,qtot_target,rh_target,fliq,fice,tnew,qv_new, &
+            rhw_new,rhi_new,qh_l,qh_i,qcond_new,qv_budget,svp_new,factor
+
+        parcel1%qchamber_bl_step=0._wp
+        if (chamber_bl_mix.eq.0) return
+        if (chamber_bl_tau.le.0._wp) error stop 'chamber_bl_tau must be > 0'
+
+        n=parcel1%n_bin_modew
+        p=parcel1%y(parcel1%ipr)
+        t0=parcel1%y(parcel1%ite)
+        rh0=parcel1%y(parcel1%irh)
+        svp0=svp_liq(t0)
+        qv0=eps1*rh0*svp0/max(p-svp0,tiny(1._wp))
+
+        ql_total=sum(parcel1%npart*parcel1%y(1:n))
+        call inhomogeneous_liquid_reservoir(ql_act)
+        qi0=0._wp
+        if (parcel1%ice_flag.eq.1) qi0=sum(parcel1%npartice*parcel1%yice(1:n))
+
+        fmix=1._wp-exp(-parcel1%dt/chamber_bl_tau)
+        fmix=max(0._wp,min(fmix,1._wp))
+        t_bl=t0+chamber_bl_temp_offset
+        qv_bl=chamber_bl_rh*eps1*svp_liq(t_bl)/ &
+            max(p-svp_liq(t_bl),tiny(1._wp))
+
+        dq_bl=fmix*(qv_bl-qv0)
+        ! The BL sink cannot remove more vapour than currently exists.  Any
+        ! additional condensate response is an INTERNAL phase redistribution.
+        dq_bl=max(dq_bl,-qv0)
+        qv_air=max(qv0+dq_bl,0._wp)
+
+        if (chamber_force_temperature) then
+            t_air=t0
+        else
+            t_air=t0+fmix*(t_bl-t0)
+        endif
+
+        qtot_target=qv0+ql_total+qi0+dq_bl
+        parcel1%qchamber_bl_step=dq_bl
+        parcel1%qchamber_bl=parcel1%qchamber_bl+dq_bl
+
+        fliq=0._wp
+        fice=0._wp
+        tnew=t_air
+        qv_new=qv_air
+
+        if (chamber_bl_mix.eq.2) then
+            rh_target=min(max(rh0,0._wp),1._wp)
+            call diagnose_chamber_bl_inhomogeneous_state(0._wp,0._wp, &
+                ql_act,ql_total,qi0,qv_air,t_air,p,tnew,qv_new,rhw_new,rhi_new, &
+                qh_l,qh_i)
+
+            if (rhw_new.lt.rh_target) then
+                call solve_chamber_bl_liquid_fraction(ql_act,ql_total,qi0, &
+                    qv_air,t_air,p,rh_target,fmix,fliq,tnew,qv_new,rhw_new,rhi_new)
+
+                if (parcel1%ice_flag.eq.1 .and. tnew.lt.ttr .and. &
+                    qi0.gt.tiny(1._wp) .and. rhi_new.lt.1._wp .and. &
+                    (ql_act.le.tiny(1._wp) .or. fliq.ge.fmix-1.e-10_wp)) then
+                    call solve_chamber_bl_ice_fraction(fliq,ql_act,ql_total,qi0, &
+                        qv_air,t_air,p,fmix,fice,tnew,qv_new,rhw_new,rhi_new)
+                endif
+            endif
+
+            ! Chamber recirculation never destroys the nonvolatile aerosol.
+            call prepare_released_hydrometeor_aerosol(fliq,fice,tnew,rhw_new,.true.)
+
+            do i=1,n
+                factor=1._wp
+                if (parcel1%npart(i).gt.tiny(1._wp)) then
+                    if (particle_is_activated(i,parcel1%y(i),t0)) factor=1._wp-fliq
+                endif
+                parcel1%npart(i)=parcel1%npart(i)*factor
+                parcel1%moments(i,:)=parcel1%moments(i,:)*factor
+            enddo
+            if (parcel1%ice_flag.eq.1) then
+                factor=1._wp-fice
+                parcel1%npartice=parcel1%npartice*factor
+                parcel1%moments(n+1:2*n,:)=parcel1%moments(n+1:2*n,:)*factor
+            endif
+
+            call merge_released_aerosol_into_warm()
+        elseif (chamber_bl_mix.ne.1) then
+            error stop 'Invalid chamber_bl_mix in apply_chamber_bl_exchange'
+        endif
+
+        ! Enforce the COMMON external total-water change exactly after the
+        ! different homogeneous/inhomogeneous phase responses.
+        qcond_new=sum(parcel1%npart*parcel1%y(1:n))
+        if (parcel1%ice_flag.eq.1) qcond_new=qcond_new+ &
+            sum(parcel1%npartice*parcel1%yice(1:n))
+        qv_budget=qtot_target-qcond_new
+        if (qv_budget.lt.-1.e-12_wp) error stop &
+            'Chamber BL phase adjustment exceeded available total water'
+        qv_new=max(qv_budget,0._wp)
+
+        parcel1%y(parcel1%ite)=tnew
+        svp_new=svp_liq(tnew)
+        parcel1%y(parcel1%irh)=qv_new*max(p-svp_new,tiny(1._wp))/ &
+            max(eps1*svp_new,tiny(1._wp))
+        parcel1%y(parcel1%irh)=max(parcel1%y(parcel1%irh),0._wp)
+        parcel1%qtot=qtot_target
+
+        if (parcel1%ice_flag.eq.1) then
+            parcel1%yice(parcel1%itei)=parcel1%y(parcel1%ite)
+            parcel1%yice(parcel1%irhi)=parcel1%y(parcel1%irh)
+        endif
+    end subroutine apply_chamber_bl_exchange
+
+
+    ! ============================================================================
+    ! chamber_particle_loss_rate
+    ! ============================================================================
+    real(wp) function chamber_particle_loss_rate(method,k0,dref,pexp,d) result(rate)
+        implicit none
+        integer(i4b), intent(in) :: method
+        real(wp), intent(in) :: k0,dref,pexp,d
+
+        select case(method)
+        case(0)
+            rate=0._wp
+        case(1)
+            rate=max(k0,0._wp)
+        case(2)
+            if (dref.le.0._wp) error stop 'Non-positive chamber loss reference diameter'
+            rate=max(k0,0._wp)*(max(d,tiny(1._wp))/dref)**pexp
+        case default
+            error stop 'Unknown chamber particle loss method'
+        end select
+    end function chamber_particle_loss_rate
+
+
+    ! ============================================================================
+    ! apply_chamber_particle_losses
+    ! ============================================================================
+    !>@brief
+    !>Applies independent fan-blade and non-gravitational wall-deposition
+    !>hazards to every airborne warm/aerosol and ice category.  Gravitational
+    !>settling remains in apply_particle_fallout and is therefore independently
+    !>switchable.  All extensive moments are multiplied by the same exact
+    !>survival fraction as number; per-particle properties of survivors do not
+    !>change.  Competing-hazard diagnostics are partitioned by k_fan/k_total and
+    !>k_wall/k_total, avoiding an order-dependent attribution.
+    subroutine apply_chamber_particle_losses()
+        implicit none
+        integer(i4b) :: i,n
+        real(wp) :: kfan,kwall,ktot,survival,nold,nremoved,qremoved, &
+            fanfrac,wallfrac
+
+        if (chamber_fan_loss.eq.0 .and. chamber_wall_loss.eq.0) return
+        n=parcel1%n_bin_modew
+
+        do i=1,n
+            if (parcel1%npart(i).le.tiny(1._wp)) cycle
+            kfan=chamber_particle_loss_rate(chamber_fan_loss, &
+                chamber_fan_loss_k0,chamber_fan_loss_dref,chamber_fan_loss_exp, &
+                parcel1%dw(i))
+            kwall=chamber_particle_loss_rate(chamber_wall_loss, &
+                chamber_wall_loss_k0,chamber_wall_loss_dref,chamber_wall_loss_exp, &
+                parcel1%dw(i))
+            ktot=kfan+kwall
+            if (ktot.le.0._wp) cycle
+
+            survival=exp(-ktot*parcel1%dt)
+            nold=parcel1%npart(i)
+            nremoved=nold*(1._wp-survival)
+            qremoved=parcel1%y(i)*nremoved
+            fanfrac=kfan/ktot
+            wallfrac=kwall/ktot
+
+            parcel1%nfan_liq=parcel1%nfan_liq+fanfrac*nremoved
+            parcel1%qfan_liq=parcel1%qfan_liq+fanfrac*qremoved
+            parcel1%nwall_liq=parcel1%nwall_liq+wallfrac*nremoved
+            parcel1%qwall_liq=parcel1%qwall_liq+wallfrac*qremoved
+
+            parcel1%npart(i)=nold*survival
+            parcel1%moments(i,:)=parcel1%moments(i,:)*survival
+        enddo
+
+        if (parcel1%ice_flag.eq.1) then
+            do i=1,n
+                if (parcel1%npartice(i).le.tiny(1._wp)) cycle
+                kfan=chamber_particle_loss_rate(chamber_fan_loss, &
+                    chamber_fan_loss_k0,chamber_fan_loss_dref,chamber_fan_loss_exp, &
+                    parcel1%dwice(i))
+                kwall=chamber_particle_loss_rate(chamber_wall_loss, &
+                    chamber_wall_loss_k0,chamber_wall_loss_dref,chamber_wall_loss_exp, &
+                    parcel1%dwice(i))
+                ktot=kfan+kwall
+                if (ktot.le.0._wp) cycle
+
+                survival=exp(-ktot*parcel1%dt)
+                nold=parcel1%npartice(i)
+                nremoved=nold*(1._wp-survival)
+                qremoved=parcel1%yice(i)*nremoved
+                fanfrac=kfan/ktot
+                wallfrac=kwall/ktot
+
+                parcel1%nfan_ice=parcel1%nfan_ice+fanfrac*nremoved
+                parcel1%qfan_ice=parcel1%qfan_ice+fanfrac*qremoved
+                parcel1%nwall_ice=parcel1%nwall_ice+wallfrac*nremoved
+                parcel1%qwall_ice=parcel1%qwall_ice+wallfrac*qremoved
+
+                parcel1%npartice(i)=nold*survival
+                parcel1%moments(n+i,:)=parcel1%moments(n+i,:)*survival
+            enddo
+        endif
+    end subroutine apply_chamber_particle_losses
+
+
 	! ============================================================================
 	! update_terminal_velocities
 	! ============================================================================
@@ -7773,8 +8354,47 @@
 				"units","mm h-1"))
 			call check(nf90_put_att(io1%ncid,io1%varid, &
 				"long_name","liquid fallout rate from residence-time sink"))
-        endif         
-                   
+        endif
+
+        if (chamber_bl_mix.gt.0) then
+            call check(nf90_def_var(io1%ncid,"qchamber_bl",NF90_DOUBLE, &
+                (/io1%x_dimid/),io1%varid))
+            call check(nf90_put_att(io1%ncid,io1%varid,"units","kg kg-1"))
+            call check(nf90_put_att(io1%ncid,io1%varid,"long_name", &
+                "cumulative signed total-water exchange with chamber boundary layer"))
+            call check(nf90_def_var(io1%ncid,"qchamber_bl_step",NF90_DOUBLE, &
+                (/io1%x_dimid/),io1%varid))
+            call check(nf90_put_att(io1%ncid,io1%varid,"units","kg kg-1"))
+            call check(nf90_put_att(io1%ncid,io1%varid,"long_name", &
+                "signed chamber boundary-layer total-water exchange in previous timestep"))
+        endif
+
+        if (chamber_fan_loss.gt.0) then
+            call check(nf90_def_var(io1%ncid,"qfan_liq",NF90_DOUBLE, &
+                (/io1%x_dimid/),io1%varid))
+            call check(nf90_put_att(io1%ncid,io1%varid,"units","kg kg-1"))
+            call check(nf90_put_att(io1%ncid,io1%varid,"long_name", &
+                "cumulative liquid water removed by chamber fan"))
+            call check(nf90_def_var(io1%ncid,"nfan_liq",NF90_DOUBLE, &
+                (/io1%x_dimid/),io1%varid))
+            call check(nf90_put_att(io1%ncid,io1%varid,"units","kg-1"))
+            call check(nf90_put_att(io1%ncid,io1%varid,"long_name", &
+                "cumulative warm particle number removed by chamber fan"))
+        endif
+
+        if (chamber_wall_loss.gt.0) then
+            call check(nf90_def_var(io1%ncid,"qwall_liq",NF90_DOUBLE, &
+                (/io1%x_dimid/),io1%varid))
+            call check(nf90_put_att(io1%ncid,io1%varid,"units","kg kg-1"))
+            call check(nf90_put_att(io1%ncid,io1%varid,"long_name", &
+                "cumulative liquid water removed by non-gravitational chamber wall deposition"))
+            call check(nf90_def_var(io1%ncid,"nwall_liq",NF90_DOUBLE, &
+                (/io1%x_dimid/),io1%varid))
+            call check(nf90_put_att(io1%ncid,io1%varid,"units","kg-1"))
+            call check(nf90_put_att(io1%ncid,io1%varid,"long_name", &
+                "cumulative warm particle number removed by non-gravitational chamber wall deposition"))
+        endif
+
         if(ice_flag .eq. 1) then
             ! define variable: qi
             call check( nf90_def_var(io1%ncid, "qi", NF90_DOUBLE, &
@@ -7871,7 +8491,33 @@
 					"units","mm h-1"))
 				call check(nf90_put_att(io1%ncid,io1%varid, &
 					"long_name","ice fallout rate from residence-time sink"))
-            endif  
+            endif
+
+            if (chamber_fan_loss.gt.0) then
+                call check(nf90_def_var(io1%ncid,"qfan_ice",NF90_DOUBLE, &
+                    (/io1%x_dimid/),io1%varid))
+                call check(nf90_put_att(io1%ncid,io1%varid,"units","kg kg-1"))
+                call check(nf90_put_att(io1%ncid,io1%varid,"long_name", &
+                    "cumulative ice water removed by chamber fan"))
+                call check(nf90_def_var(io1%ncid,"nfan_ice",NF90_DOUBLE, &
+                    (/io1%x_dimid/),io1%varid))
+                call check(nf90_put_att(io1%ncid,io1%varid,"units","kg-1"))
+                call check(nf90_put_att(io1%ncid,io1%varid,"long_name", &
+                    "cumulative ice particle number removed by chamber fan"))
+            endif
+
+            if (chamber_wall_loss.gt.0) then
+                call check(nf90_def_var(io1%ncid,"qwall_ice",NF90_DOUBLE, &
+                    (/io1%x_dimid/),io1%varid))
+                call check(nf90_put_att(io1%ncid,io1%varid,"units","kg kg-1"))
+                call check(nf90_put_att(io1%ncid,io1%varid,"long_name", &
+                    "cumulative ice water removed by non-gravitational chamber wall deposition"))
+                call check(nf90_def_var(io1%ncid,"nwall_ice",NF90_DOUBLE, &
+                    (/io1%x_dimid/),io1%varid))
+                call check(nf90_put_att(io1%ncid,io1%varid,"units","kg-1"))
+                call check(nf90_put_att(io1%ncid,io1%varid,"long_name", &
+                    "cumulative ice particle number removed by non-gravitational chamber wall deposition"))
+            endif
         endif
         
         call check( nf90_enddef(io1%ncid) )
@@ -8072,7 +8718,34 @@
 		call check(nf90_inq_varid(io1%ncid,"fallrate_liq",io1%varid))
 		call check(nf90_put_var(io1%ncid,io1%varid, &
 			fallrate_liq,start=(/io1%icur/)))
-	endif    
+	endif
+
+    if (chamber_bl_mix.gt.0) then
+        call check(nf90_inq_varid(io1%ncid,"qchamber_bl",io1%varid))
+        call check(nf90_put_var(io1%ncid,io1%varid, &
+            parcel1%qchamber_bl,start=(/io1%icur/)))
+        call check(nf90_inq_varid(io1%ncid,"qchamber_bl_step",io1%varid))
+        call check(nf90_put_var(io1%ncid,io1%varid, &
+            parcel1%qchamber_bl_step,start=(/io1%icur/)))
+    endif
+
+    if (chamber_fan_loss.gt.0) then
+        call check(nf90_inq_varid(io1%ncid,"qfan_liq",io1%varid))
+        call check(nf90_put_var(io1%ncid,io1%varid, &
+            parcel1%qfan_liq,start=(/io1%icur/)))
+        call check(nf90_inq_varid(io1%ncid,"nfan_liq",io1%varid))
+        call check(nf90_put_var(io1%ncid,io1%varid, &
+            parcel1%nfan_liq,start=(/io1%icur/)))
+    endif
+
+    if (chamber_wall_loss.gt.0) then
+        call check(nf90_inq_varid(io1%ncid,"qwall_liq",io1%varid))
+        call check(nf90_put_var(io1%ncid,io1%varid, &
+            parcel1%qwall_liq,start=(/io1%icur/)))
+        call check(nf90_inq_varid(io1%ncid,"nwall_liq",io1%varid))
+        call check(nf90_put_var(io1%ncid,io1%varid, &
+            parcel1%nwall_liq,start=(/io1%icur/)))
+    endif
 
     if(ice_flag .eq. 1) then
     	if (use_adt_optics) then
@@ -8194,7 +8867,25 @@
 			call check(nf90_inq_varid(io1%ncid,"fallrate_ice",io1%varid))
 			call check(nf90_put_var(io1%ncid,io1%varid, &
 				fallrate_ice,start=(/io1%icur/)))
-		endif    					
+		endif
+
+        if (chamber_fan_loss.gt.0) then
+            call check(nf90_inq_varid(io1%ncid,"qfan_ice",io1%varid))
+            call check(nf90_put_var(io1%ncid,io1%varid, &
+                parcel1%qfan_ice,start=(/io1%icur/)))
+            call check(nf90_inq_varid(io1%ncid,"nfan_ice",io1%varid))
+            call check(nf90_put_var(io1%ncid,io1%varid, &
+                parcel1%nfan_ice,start=(/io1%icur/)))
+        endif
+
+        if (chamber_wall_loss.gt.0) then
+            call check(nf90_inq_varid(io1%ncid,"qwall_ice",io1%varid))
+            call check(nf90_put_var(io1%ncid,io1%varid, &
+                parcel1%qwall_ice,start=(/io1%icur/)))
+            call check(nf90_inq_varid(io1%ncid,"nwall_ice",io1%varid))
+            call check(nf90_put_var(io1%ncid,io1%varid, &
+                parcel1%nwall_ice,start=(/io1%icur/)))
+        endif
             
     endif
     
@@ -8466,6 +9157,13 @@
 		! when ventilation is required.
         call bin_microphysics(fparcelwarm, fparcelcold, & 
             icenucleation, noncollisional_iceformation)
+
+        ! Optional chamber boundary-layer recirculation.  Both BL modes use
+        ! the same external total-water exchange; only the phase response differs.
+        if (chamber_bl_mix.gt.0) then
+            call apply_chamber_bl_exchange()
+        endif
+
 		! Particle masses/shapes have now changed.  BIN_FULL_MOVING is
 		! deliberately NOT projected to the fixed SCE grid here; the SCE
 		! moving-pivot gain treatment updates its representative masses
@@ -8507,7 +9205,7 @@
 
 			! latent heat of fusion
 			if(ice_flag.eq.1) then
-				if(.not.chamber_override) then
+				if(.not.chamber_force_temperature) then
 					call adjust_t_rh(parcel1%totaddto,parcel1%y(parcel1%ite), &
 							parcel1%y(parcel1%irh), parcel1%y(parcel1%ipr))
 				endif
@@ -8531,6 +9229,14 @@
         endif    
 
         !--------------------------------------------------------------
+        ! Optional chamber-specific physical particle losses.  These are
+        ! distinct from gravitational sedimentation/fallout below.
+        !--------------------------------------------------------------
+        if (chamber_fan_loss.gt.0 .or. chamber_wall_loss.gt.0) then
+            call apply_chamber_particle_losses()
+        endif
+
+        !--------------------------------------------------------------
         ! Sedimentation / finite parcel residence time
         !
         ! If SCE is off, velocities are those calculated after
@@ -8551,7 +9257,7 @@
         ! SCE and fallout remain operator-consistent.  The final output
         ! call below writes this last accepted state.
         ! --------------------------------------------------------------
-        if ((.not.chamber_override) .and. (z_ctop.gt.0._wp)) then
+        if ((.not.chamber_forcing_active) .and. (z_ctop.gt.0._wp)) then
             if (parcel1%y(parcel1%iz).ge.z_ctop) then
                 parcel1%break_flag=.true.
             endif

@@ -134,7 +134,9 @@ def runModel():
 	changeFile(tmpFile,tmpFile,'d_aer1(1:3,1:1)        = 73e-9   , 106e-9, 240e-9, ',dStr)
 	changeFile(tmpFile,tmpFile,'sig_aer1(1:3,1:1)      = 0.12   , 0.451, 0.398, ',sigStr)
 	changeFile(tmpFile,tmpFile,'n_levels_c = 0,','n_levels_c = ' +str(len(tp['chamber']['temp_chamber'])))
-	changeFile(tmpFile,tmpFile,'chamber_override=.false.,','chamber_override=.true.,')
+	changeFile(tmpFile,tmpFile,'chamber_force_pressure = .false.,','chamber_force_pressure = .true.,')
+	changeFile(tmpFile,tmpFile,'chamber_force_temperature = .false.,','chamber_force_temperature = .true.,')
+	changeFile(tmpFile,tmpFile,'chamber_force_qtot = .false.,','chamber_force_qtot = .true.,')
 	
 	changeFile(tmpFile,tmpFile,'! CHAMBER_DATA_PLACEHOLDER',tp['str1'])
 	
