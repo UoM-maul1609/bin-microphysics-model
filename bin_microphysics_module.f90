@@ -500,8 +500,9 @@
         if (n_levels_c.lt.0) error stop 'n_levels_c must be non-negative'
         if (chamber_forcing_active .and. n_levels_c.lt.2) error stop &
             'Measured chamber forcing requires n_levels_c >= 2'
-        if (chamber_bl_mix.lt.0 .or. chamber_bl_mix.gt.2) error stop &
-            'chamber_bl_mix must be 0 (off), 1 (homogeneous), or 2 (inhomogeneous)'
+        if (chamber_bl_mix.lt.0 .or. chamber_bl_mix.gt.3) error stop &
+            'chamber_bl_mix must be 0 (off), 1 (homogeneous), ' // &
+            '2 (uniform extreme inhomogeneous), or 3 (D2-weighted extreme inhomogeneous)'
         if (chamber_bl_mix.gt.0 .and. chamber_bl_tau.le.0._wp) error stop &
             'chamber_bl_tau must be > 0 when chamber_bl_mix is enabled'
         if (chamber_bl_temp_mode.lt.0 .or. chamber_bl_temp_mode.gt.1) error stop &
@@ -1482,8 +1483,8 @@
     endif
 
     ! Temporary warm population used for aerosol residuals released by either
-    ! atmospheric extreme-inhomogeneous mixing or chamber BL mode 2.
-    if ((.not.adiabatic_prof) .or. chamber_bl_mix.eq.2) then
+    ! atmospheric extreme-inhomogeneous mixing or chamber BL modes 2/3.
+    if ((.not.adiabatic_prof) .or. chamber_bl_mix.eq.2 .or. chamber_bl_mix.eq.3) then
         allocate( parcel1%mbinedges_temp(1:parcel1%n_bins1+1,1:parcel1%n_modes), &
             STAT = AllocateStatus)
         if (AllocateStatus /= 0) STOP "*** Not enough memory ***"
@@ -7079,12 +7080,13 @@
 	!>ice-only/current-ice state, including n_demott, is reset.  If
 	!>release_aerosol=.false. the residual population is intentionally discarded.
     subroutine prepare_released_hydrometeor_aerosol(liq_factor,ice_factor, &
-        t_resid,rh_resid,force_release)
+        t_resid,rh_resid,force_release,liq_factors)
         implicit none
         real(wp), intent(in) :: liq_factor,ice_factor,t_resid,rh_resid
         logical, intent(in), optional :: force_release
+        real(wp), dimension(:), intent(in), optional :: liq_factors
         integer(i4b) :: i,j,ii,n
-        real(wp) :: residual_water
+        real(wp) :: residual_water,liq_factor_i
         logical :: do_release
 
         n=parcel1%n_bin_modew
@@ -7101,8 +7103,18 @@
         ! part of the cloud whose droplets evaporate completely.  Interstitial
         ! aerosol is not part of this residual source.  Returning the activated
         ! residual population conserves aerosol number and nonvolatile mass.
-        if (liq_factor.gt.tiny(1._wp)) then
+        if (liq_factor.gt.tiny(1._wp) .or. present(liq_factors)) then
+            if (present(liq_factors)) then
+                if (size(liq_factors).ne.n) error stop &
+                    'liq_factors has wrong size in prepare_released_hydrometeor_aerosol'
+            endif
             do i=1,n
+                if (present(liq_factors)) then
+                    liq_factor_i=max(0._wp,min(liq_factors(i),1._wp))
+                else
+                    liq_factor_i=max(0._wp,min(liq_factor,1._wp))
+                endif
+                if (liq_factor_i.le.tiny(1._wp)) cycle
                 if (parcel1%npart(i).le.tiny(1._wp)) cycle
                 ! Only activated cloud droplets can be completely evaporated
                 ! by the extreme-inhomogeneous closure.  Interstitial aerosol
@@ -7110,16 +7122,16 @@
                 if (.not.particle_is_activated(i,parcel1%y(i), &
                     parcel1%y(parcel1%ite))) cycle
                 parcel1%npart_temp(i)=parcel1%npart_temp(i)+ &
-                    liq_factor*parcel1%npart(i)
+                    liq_factor_i*parcel1%npart(i)
                 parcel1%moments_temp(i,1:parcel1%n_comps)= &
                     parcel1%moments_temp(i,1:parcel1%n_comps)+ &
-                    liq_factor*parcel1%moments(i,1:parcel1%n_comps)
+                    liq_factor_i*parcel1%moments(i,1:parcel1%n_comps)
                 if (parcel1%ice_flag.eq.1 .and. parcel1%n_inp_classes.gt.0) then
                     parcel1%moments_temp(i,parcel1%iinp_start: &
                         parcel1%iinp_start+parcel1%n_inp_classes-1)= &
                         parcel1%moments_temp(i,parcel1%iinp_start: &
                         parcel1%iinp_start+parcel1%n_inp_classes-1)+ &
-                        liq_factor*parcel1%moments(i,parcel1%iinp_start: &
+                        liq_factor_i*parcel1%moments(i,parcel1%iinp_start: &
                         parcel1%iinp_start+parcel1%n_inp_classes-1)
                 endif
             enddo
@@ -7732,6 +7744,323 @@
 
 
     ! ============================================================================
+    ! chamber_bl_d2_liquid_fractions
+    ! ============================================================================
+    !>@brief
+    !>Constructs the size-dependent complete-evaporation fractions used by
+    !>chamber_bl_mix=3.  The weighting is motivated by the classical D^2
+    !>evaporation lifetime, tau_evap ~ D^2 ~ m_w^(2/3): particles with shorter
+    !>lifetimes receive a larger complete-evaporation probability.  The
+    !>smallest activated liquid-water mass is used only to nondimensionalise
+    !>the weights; the solved coefficient therefore has no dependence on an
+    !>arbitrary reference mass.
+    subroutine chamber_bl_d2_liquid_fractions(coeff,fracliq)
+        implicit none
+        real(wp), intent(in) :: coeff
+        real(wp), dimension(:), intent(out) :: fracliq
+        integer(i4b) :: i,n
+        real(wp) :: mmin,mw,weight
+
+        n=parcel1%n_bin_modew
+        if (size(fracliq).ne.n) error stop &
+            'fracliq has wrong size in chamber_bl_d2_liquid_fractions'
+        fracliq=0._wp
+        mmin=huge(1._wp)
+        do i=1,n
+            if (parcel1%npart(i).le.tiny(1._wp)) cycle
+            if (.not.particle_is_activated(i,parcel1%y(i), &
+                parcel1%y(parcel1%ite))) cycle
+            mw=parcel1%y(i)
+            if (mw.gt.tiny(1._wp)) mmin=min(mmin,mw)
+        enddo
+        if (mmin.eq.huge(1._wp)) return
+
+        do i=1,n
+            if (parcel1%npart(i).le.tiny(1._wp)) cycle
+            if (.not.particle_is_activated(i,parcel1%y(i), &
+                parcel1%y(parcel1%ite))) cycle
+            mw=max(parcel1%y(i),tiny(1._wp))
+            weight=(mmin/mw)**twothirds
+            fracliq(i)=min(1._wp,max(0._wp,coeff*weight))
+        enddo
+    end subroutine chamber_bl_d2_liquid_fractions
+
+
+    ! ============================================================================
+    ! chamber_released_haze_water_weighted
+    ! ============================================================================
+    !>@brief
+    !>As chamber_released_haze_water, but with a separate complete-evaporation
+    !>fraction for each activated warm bin.  Ice retains the scalar fraction
+    !>used by the existing extreme-inhomogeneous closure.
+    subroutine chamber_released_haze_water_weighted(fracliq,fice,t_resid,rh_resid, &
+        qhaze_liq,qhaze_ice)
+        implicit none
+        real(wp), dimension(:), intent(in) :: fracliq
+        real(wp), intent(in) :: fice,t_resid,rh_resid
+        real(wp), intent(out) :: qhaze_liq,qhaze_ice
+        integer(i4b) :: i,j,n,ii
+        real(wp) :: residual_water,f
+        real(wp), dimension(parcel1%n_comps) :: mcomp
+
+        n=parcel1%n_bin_modew
+        if (size(fracliq).ne.n) error stop &
+            'fracliq has wrong size in chamber_released_haze_water_weighted'
+        qhaze_liq=0._wp
+        qhaze_ice=0._wp
+
+        do i=1,n
+            f=max(0._wp,min(fracliq(i),1._wp))
+            if (f.le.tiny(1._wp) .or. parcel1%npart(i).le.tiny(1._wp)) cycle
+            if (.not.particle_is_activated(i,parcel1%y(i), &
+                parcel1%y(parcel1%ite))) cycle
+            do j=1,parcel1%n_comps
+                mcomp(j)=parcel1%moments(i,j)/parcel1%npart(i)
+            enddo
+            call equilibrium_residual_water_mass(i,mcomp,t_resid,rh_resid, &
+                residual_water)
+            qhaze_liq=qhaze_liq+f*parcel1%npart(i)*residual_water
+        enddo
+
+        if (parcel1%ice_flag.eq.1 .and. fice.gt.tiny(1._wp)) then
+            do i=1,n
+                if (parcel1%npartice(i).le.tiny(1._wp)) cycle
+                ii=n+i
+                do j=1,parcel1%n_comps
+                    mcomp(j)=parcel1%moments(ii,j)/parcel1%npartice(i)
+                enddo
+                call equilibrium_residual_water_mass(i,mcomp,t_resid,rh_resid, &
+                    residual_water)
+                qhaze_ice=qhaze_ice+fice*parcel1%npartice(i)*residual_water
+            enddo
+        endif
+    end subroutine chamber_released_haze_water_weighted
+
+
+    ! ============================================================================
+    ! diagnose_chamber_bl_d2_state
+    ! ============================================================================
+    !>@brief
+    !>Thermodynamic diagnosis for chamber_bl_mix=3.  fracliq(i) is the fraction
+    !>of activated warm bin i that disappears completely.  Surviving particles
+    !>are unchanged.  Thus the closure is extreme-inhomogeneous, but the
+    !>complete-evaporation probability is biased toward the shortest D^2-law
+    !>evaporation lifetimes rather than being identical in every size bin.
+    subroutine diagnose_chamber_bl_d2_state(fracliq,fice,ql_total,qi0,qv_air,t_air,p, &
+        tnew,qv_new,rhw_new,rhi_new,qhaze_liq,qhaze_ice)
+        implicit none
+        real(wp), dimension(:), intent(in) :: fracliq
+        real(wp), intent(in) :: fice,ql_total,qi0,qv_air,t_air,p
+        real(wp), intent(out) :: tnew,qv_new,rhw_new,rhi_new,qhaze_liq,qhaze_ice
+        integer(i4b) :: i,iter,n
+        real(wp) :: qh_l_old,qh_i_old,qremove_liq,qevap_liq,qevap_ice,ql_rem, &
+            qi_rem,cpm,qsw,qsi,rh_guess,f
+
+        n=parcel1%n_bin_modew
+        if (size(fracliq).ne.n) error stop &
+            'fracliq has wrong size in diagnose_chamber_bl_d2_state'
+        qremove_liq=0._wp
+        do i=1,n
+            f=max(0._wp,min(fracliq(i),1._wp))
+            if (f.le.tiny(1._wp) .or. parcel1%npart(i).le.tiny(1._wp)) cycle
+            if (.not.particle_is_activated(i,parcel1%y(i), &
+                parcel1%y(parcel1%ite))) cycle
+            qremove_liq=qremove_liq+f*parcel1%npart(i)*parcel1%y(i)
+        enddo
+
+        qhaze_liq=0._wp
+        qhaze_ice=0._wp
+        tnew=t_air
+        do iter=1,30
+            qh_l_old=qhaze_liq
+            qh_i_old=qhaze_ice
+            qevap_liq=max(qremove_liq-qhaze_liq,0._wp)
+            qevap_ice=max(fice*qi0-qhaze_ice,0._wp)
+            qv_new=max(qv_air+qevap_liq+qevap_ice,0._wp)
+            ql_rem=max(ql_total-qremove_liq,0._wp)+qhaze_liq+qhaze_ice
+            qi_rem=max((1._wp-fice)*qi0,0._wp)
+            cpm=max(cp+qv_new*cpv+ql_rem*cpw+qi_rem*cpi,0.5_wp*cp)
+
+            if (chamber_force_temperature) then
+                tnew=t_air
+            else
+                tnew=t_air-(lv*qevap_liq+ls*fice*qi0-lv*qhaze_ice)/cpm
+            endif
+            if (tnew.le.100._wp) error stop &
+                'Unphysical temperature in chamber BL D2-weighted mixing'
+
+            qsw=eps1*svp_liq(tnew)/max(p-svp_liq(tnew),tiny(1._wp))
+            rh_guess=qv_new/max(qsw,tiny(1._wp))
+            call chamber_released_haze_water_weighted(fracliq,fice,tnew,rh_guess, &
+                qhaze_liq,qhaze_ice)
+            qhaze_liq=min(max(qhaze_liq,0._wp),max(qremove_liq,0._wp))
+            qhaze_ice=min(max(qhaze_ice,0._wp),max(fice*qi0,0._wp))
+            if (abs(qhaze_liq-qh_l_old)+abs(qhaze_ice-qh_i_old).le. &
+                1.e-10_wp*max(ql_total+qi0,1.e-20_wp)) exit
+        enddo
+
+        qevap_liq=max(qremove_liq-qhaze_liq,0._wp)
+        qevap_ice=max(fice*qi0-qhaze_ice,0._wp)
+        qv_new=max(qv_air+qevap_liq+qevap_ice,0._wp)
+        ql_rem=max(ql_total-qremove_liq,0._wp)+qhaze_liq+qhaze_ice
+        qi_rem=max((1._wp-fice)*qi0,0._wp)
+        cpm=max(cp+qv_new*cpv+ql_rem*cpw+qi_rem*cpi,0.5_wp*cp)
+        if (chamber_force_temperature) then
+            tnew=t_air
+        else
+            tnew=t_air-(lv*qevap_liq+ls*fice*qi0-lv*qhaze_ice)/cpm
+        endif
+        qsw=eps1*svp_liq(tnew)/max(p-svp_liq(tnew),tiny(1._wp))
+        rhw_new=qv_new/max(qsw,tiny(1._wp))
+        if (tnew.lt.ttr .and. parcel1%ice_flag.eq.1) then
+            qsi=eps1*svp_ice(tnew)/max(p-svp_ice(tnew),tiny(1._wp))
+            rhi_new=qv_new/max(qsi,tiny(1._wp))
+        else
+            rhi_new=huge(1._wp)
+        endif
+    end subroutine diagnose_chamber_bl_d2_state
+
+
+    ! ============================================================================
+    ! solve_chamber_bl_d2_liquid
+    ! ============================================================================
+    !>@brief
+    !>Solves one dimensionless coefficient controlling the D^-2 (m_w^-2/3)
+    !>complete-evaporation fractions.  Fractions are clipped at one, so the
+    !>smallest droplets are exhausted first and progressively larger droplets
+    !>participate if more water is required.  If complete evaporation of every
+    !>activated droplet is insufficient, the all-one state is returned and the
+    !>parcel is allowed to remain below the requested RH.
+    subroutine solve_chamber_bl_d2_liquid(ql_total,qi0,qv_air,t_air,p,rh_target, &
+        fracliq,tnew,qv_new,rhw_new,rhi_new)
+        implicit none
+        real(wp), intent(in) :: ql_total,qi0,qv_air,t_air,p,rh_target
+        real(wp), dimension(:), intent(out) :: fracliq
+        real(wp), intent(out) :: tnew,qv_new,rhw_new,rhi_new
+        integer(i4b) :: i,iter,n
+        real(wp) :: lo,hi,mid,rlo,dum_t,dum_qv,dum_rhw,dum_rhi,dum_qlh,dum_qih, &
+            qlh,qih,wmin,mmin,mw
+        real(wp), allocatable :: ftmp(:)
+
+        n=parcel1%n_bin_modew
+        if (size(fracliq).ne.n) error stop &
+            'fracliq has wrong size in solve_chamber_bl_d2_liquid'
+        allocate(ftmp(n))
+        fracliq=0._wp
+        call diagnose_chamber_bl_d2_state(fracliq,0._wp,ql_total,qi0,qv_air,t_air,p, &
+            tnew,qv_new,rhw_new,rhi_new,qlh,qih)
+        if (rhw_new.ge.rh_target) then
+            deallocate(ftmp)
+            return
+        endif
+
+        ! Largest coefficient required to make every activated liquid bin reach
+        ! frac=1.  With weights normalised to the smallest water mass, this is
+        ! simply the inverse of the weakest (largest-drop) weight.
+        mmin=huge(1._wp)
+        do i=1,n
+            if (parcel1%npart(i).le.tiny(1._wp)) cycle
+            if (.not.particle_is_activated(i,parcel1%y(i), &
+                parcel1%y(parcel1%ite))) cycle
+            mw=parcel1%y(i)
+            if (mw.gt.tiny(1._wp)) mmin=min(mmin,mw)
+        enddo
+        if (mmin.eq.huge(1._wp)) then
+            deallocate(ftmp)
+            return
+        endif
+        wmin=1._wp
+        do i=1,n
+            if (parcel1%npart(i).le.tiny(1._wp)) cycle
+            if (.not.particle_is_activated(i,parcel1%y(i), &
+                parcel1%y(parcel1%ite))) cycle
+            mw=max(parcel1%y(i),tiny(1._wp))
+            wmin=min(wmin,(mmin/mw)**twothirds)
+        enddo
+        hi=max(1._wp,1._wp/max(wmin,tiny(1._wp)))
+        call chamber_bl_d2_liquid_fractions(hi,ftmp)
+        call diagnose_chamber_bl_d2_state(ftmp,0._wp,ql_total,qi0,qv_air,t_air,p, &
+            dum_t,dum_qv,dum_rhw,dum_rhi,dum_qlh,dum_qih)
+        if (dum_rhw.lt.rh_target) then
+            fracliq=ftmp
+            tnew=dum_t; qv_new=dum_qv; rhw_new=dum_rhw; rhi_new=dum_rhi
+            deallocate(ftmp)
+            return
+        endif
+
+        lo=0._wp
+        rlo=rhw_new-rh_target
+        mid=0._wp
+        do iter=1,60
+            mid=0.5_wp*(lo+hi)
+            call chamber_bl_d2_liquid_fractions(mid,ftmp)
+            call diagnose_chamber_bl_d2_state(ftmp,0._wp,ql_total,qi0,qv_air,t_air,p, &
+                dum_t,dum_qv,dum_rhw,dum_rhi,dum_qlh,dum_qih)
+            if (abs(dum_rhw-rh_target).le.1.e-8_wp) exit
+            if ((dum_rhw-rh_target)*rlo.le.0._wp) then
+                hi=mid
+            else
+                lo=mid
+                rlo=dum_rhw-rh_target
+            endif
+        enddo
+        fracliq=ftmp
+        tnew=dum_t; qv_new=dum_qv; rhw_new=dum_rhw; rhi_new=dum_rhi
+        deallocate(ftmp)
+    end subroutine solve_chamber_bl_d2_liquid
+
+
+    ! ============================================================================
+    ! solve_chamber_bl_d2_ice
+    ! ============================================================================
+    !>@brief
+    !>After the D2-weighted liquid reservoir is exhausted as far as required,
+    !>retain the existing uniform extreme-inhomogeneous ice treatment.
+    subroutine solve_chamber_bl_d2_ice(fracliq,ql_total,qi0,qv_air,t_air,p,fmax, &
+        fice,tnew,qv_new,rhw_new,rhi_new)
+        implicit none
+        real(wp), dimension(:), intent(in) :: fracliq
+        real(wp), intent(in) :: ql_total,qi0,qv_air,t_air,p,fmax
+        real(wp), intent(out) :: fice,tnew,qv_new,rhw_new,rhi_new
+        integer(i4b) :: iter
+        real(wp) :: lo,hi,mid,rlo,dum_t,dum_qv,dum_rhw,dum_rhi,dum_qlh,dum_qih, &
+            qlh,qih
+
+        call diagnose_chamber_bl_d2_state(fracliq,0._wp,ql_total,qi0,qv_air,t_air,p, &
+            tnew,qv_new,rhw_new,rhi_new,qlh,qih)
+        if (qi0.le.tiny(1._wp) .or. fmax.le.tiny(1._wp) .or. rhi_new.ge.1._wp) then
+            fice=0._wp
+            return
+        endif
+        call diagnose_chamber_bl_d2_state(fracliq,fmax,ql_total,qi0,qv_air,t_air,p, &
+            dum_t,dum_qv,dum_rhw,dum_rhi,dum_qlh,dum_qih)
+        if (dum_rhi.lt.1._wp) then
+            fice=fmax
+            tnew=dum_t; qv_new=dum_qv; rhw_new=dum_rhw; rhi_new=dum_rhi
+            return
+        endif
+        lo=0._wp
+        hi=fmax
+        rlo=rhi_new-1._wp
+        mid=0._wp
+        do iter=1,60
+            mid=0.5_wp*(lo+hi)
+            call diagnose_chamber_bl_d2_state(fracliq,mid,ql_total,qi0,qv_air,t_air,p, &
+                dum_t,dum_qv,dum_rhw,dum_rhi,dum_qlh,dum_qih)
+            if (abs(dum_rhi-1._wp).le.1.e-8_wp) exit
+            if ((dum_rhi-1._wp)*rlo.le.0._wp) then
+                hi=mid
+            else
+                lo=mid
+                rlo=dum_rhi-1._wp
+            endif
+        enddo
+        fice=mid
+        tnew=dum_t; qv_new=dum_qv; rhw_new=dum_rhw; rhi_new=dum_rhi
+    end subroutine solve_chamber_bl_d2_ice
+
+
+    ! ============================================================================
     ! merge_released_aerosol_into_warm
     ! ============================================================================
     !>@brief
@@ -7782,15 +8111,16 @@
     ! apply_chamber_bl_exchange
     ! ============================================================================
     !>@brief
-    !>Applies one chamber boundary-layer recirculation operator.  Modes 1 and 2
+    !>Applies one chamber boundary-layer recirculation operator.  Modes 1--3
     !>use the SAME external total-water exchange
     !>
     !>  dq_BL = (qv_BL-qv) [1-exp(-dt/tau_BL)] .
     !>
     !>Mode 1 leaves the resulting humidity deficit to the ordinary diffusional
-    !>microphysics (homogeneous response).  Mode 2 instead permits at most the
-    !>same recirculated fraction of activated droplets/ice to disappear
-    !>completely (extreme inhomogeneous response).  Internal phase changes are
+    !>microphysics (homogeneous response).  Mode 2 applies a uniform complete-
+    !>evaporation fraction to activated hydrometeors.  Mode 3 is also extreme
+    !>inhomogeneous, but weights liquid complete evaporation by inverse D2-law
+    !>lifetime (~m_w^-2/3), clipping each bin fraction at one.  Internal phase changes are
     !>water-conserving, and a final budget closure enforces identical total-water
     !>change in the two modes to roundoff.
     subroutine apply_chamber_bl_exchange()
@@ -7801,6 +8131,7 @@
             ql_total,ql_act,qi0,qtot_target,rh_target,fliq,fice,tnew,qv_new, &
             rhw_new,rhi_new,qh_l,qh_i,qcond_new,qv_budget,svp_new,factor,var,dummy, &
             tquery
+        real(wp), allocatable :: fracliq(:)
 
         parcel1%qchamber_bl_step=0._wp
         if (chamber_bl_mix.eq.0) return
@@ -7872,7 +8203,10 @@
         if (chamber_bl_mix.eq.2) then
             ! Extreme-inhomogeneous response: no more than the recirculated
             ! fraction fmix of hydrometeors can completely evaporate/sublimate.
-            ! Residual aerosol is always returned to the airborne population.
+            ! Whether completely evaporated/sublimated hydrometeors return their
+            ! residual aerosol to the warm population is controlled by the
+            ! release_aerosol namelist switch, consistently with atmospheric
+            ! inhomogeneous mixing.
             rh_target=min(max(rh0,0._wp),1._wp)
             call diagnose_chamber_bl_inhomogeneous_state(0._wp,0._wp, &
                 ql_act,ql_total,qi0,qv_air,t_air,p,tnew,qv_new,rhw_new,rhi_new, &
@@ -7890,7 +8224,7 @@
                 endif
             endif
 
-            call prepare_released_hydrometeor_aerosol(fliq,fice,tnew,rhw_new,.true.)
+            call prepare_released_hydrometeor_aerosol(fliq,fice,tnew,rhw_new)
 
             do i=1,n
                 factor=1._wp
@@ -7907,6 +8241,52 @@
             endif
 
             call merge_released_aerosol_into_warm()
+        elseif (chamber_bl_mix.eq.3) then
+            ! D2-law-weighted extreme-inhomogeneous response.  Droplets still
+            ! disappear completely (survivors are unchanged), but the removal
+            ! fraction varies as the inverse D2 evaporation lifetime,
+            ! F_i ~ m_w^(-2/3), and is clipped at one.  A single coefficient is
+            ! solved so the same thermodynamic RH deficit is met; if even
+            ! complete evaporation of every activated droplet is insufficient,
+            ! the parcel remains below the target RH rather than creating water.
+            rh_target=min(max(rh0,0._wp),1._wp)
+            allocate(fracliq(n))
+            fracliq=0._wp
+            call diagnose_chamber_bl_d2_state(fracliq,0._wp,ql_total,qi0, &
+                qv_air,t_air,p,tnew,qv_new,rhw_new,rhi_new,qh_l,qh_i)
+
+            if (rhw_new.lt.rh_target) then
+                call solve_chamber_bl_d2_liquid(ql_total,qi0,qv_air,t_air,p, &
+                    rh_target,fracliq,tnew,qv_new,rhw_new,rhi_new)
+
+                if (parcel1%ice_flag.eq.1 .and. tnew.lt.ttr .and. &
+                    qi0.gt.tiny(1._wp) .and. rhi_new.lt.1._wp .and. &
+                    sum(fracliq*parcel1%npart*parcel1%y(1:n)).ge. &
+                    ql_act*(1._wp-1.e-10_wp)) then
+                    call solve_chamber_bl_d2_ice(fracliq,ql_total,qi0,qv_air, &
+                        t_air,p,fmix,fice,tnew,qv_new,rhw_new,rhi_new)
+                endif
+            endif
+
+            call prepare_released_hydrometeor_aerosol(0._wp,fice,tnew,rhw_new, &
+                liq_factors=fracliq)
+
+            do i=1,n
+                factor=1._wp
+                if (parcel1%npart(i).gt.tiny(1._wp)) then
+                    if (particle_is_activated(i,parcel1%y(i),t0)) &
+                        factor=1._wp-max(0._wp,min(fracliq(i),1._wp))
+                endif
+                parcel1%npart(i)=parcel1%npart(i)*factor
+                parcel1%moments(i,:)=parcel1%moments(i,:)*factor
+            enddo
+            if (parcel1%ice_flag.eq.1) then
+                factor=1._wp-fice
+                parcel1%npartice=parcel1%npartice*factor
+                parcel1%moments(n+1:2*n,:)=parcel1%moments(n+1:2*n,:)*factor
+            endif
+            call merge_released_aerosol_into_warm()
+            deallocate(fracliq)
         elseif (chamber_bl_mix.ne.1) then
             error stop 'Invalid chamber_bl_mix in apply_chamber_bl_exchange'
         endif

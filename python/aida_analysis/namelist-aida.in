@@ -90,7 +90,9 @@
     !> Leave false when qtot is uncertain or is used only as a diagnostic.
     chamber_force_qtot = .false.,
 
-    !> Boundary-layer interaction: 0=off, 1=homogeneous, 2=extreme inhomogeneous.
+    !> Boundary-layer interaction: 0=off, 1=homogeneous, 2=uniform extreme inhomogeneous.
+    !> 3=D2-law-weighted extreme inhomogeneous: smaller activated droplets have a
+    !> larger complete-evaporation fraction, proportional to m_w^(-2/3), capped at 1.
     chamber_bl_mix = 0,
     !> E-folding timescale for bulk-air recirculation through the wall BL [s].
     chamber_bl_tau = 60.0,
