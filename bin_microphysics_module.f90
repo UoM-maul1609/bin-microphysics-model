@@ -83,9 +83,9 @@
 			real(wp) :: nfall_liq=0._wp
 			real(wp) :: nfall_ice=0._wp
 
-            ! Chamber-process diagnostics.  qchamber_bl is the cumulative
-            ! airborne-water transfer to the wall caused by BL supersaturation
-            ! (zero or negative). Fan and wall diagnostics are cumulative
+			! qchamber_bl is cumulative airborne water removed to the chamber
+			! wall by the BL saturation cap. Positive values denote loss.
+			! Fan and wall diagnostics are cumulative
             ! positive airborne hydrometeor/particle losses.
             real(wp) :: qchamber_bl=0._wp, qchamber_bl_step=0._wp
             real(wp) :: qfan_liq=0._wp, qfan_ice=0._wp
@@ -7861,8 +7861,8 @@
         endif
 
         qtot_target=qv0+ql_total+qi0+dq_wall
-        parcel1%qchamber_bl_step=dq_wall
-        parcel1%qchamber_bl=parcel1%qchamber_bl+dq_wall
+        parcel1%qchamber_bl_step=-dq_wall
+        parcel1%qchamber_bl=parcel1%qchamber_bl-dq_wall
 
         fliq=0._wp
         fice=0._wp
