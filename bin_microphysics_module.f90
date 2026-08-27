@@ -4347,28 +4347,34 @@
             call get_inp_control(mbin2(i,:),has_inas,has_demott,has_daily)
             if((has_inas .and. ice_nucleation_mech_in(INUC_INAS)) .or. .not.has_demott) cycle
 
-            ! DeMott uses the number of aerosol particles with dry diameter
-            ! greater than 0.5 micrometres.  Do not classify a whole BMM bin
-            ! from its representative dry diameter.  Instead assume number is
-            ! uniformly distributed in dry diameter across the bin and count
-            ! only the fraction of that bin lying above 0.5 micrometres.
-            imode=(i-1)/nbins1+1
-            ibin=i-(imode-1)*nbins1
-            iedge=ibin+(imode-1)*(nbins1+1)
-            dlo=parcel1%d(iedge)
-            dhi=parcel1%d(iedge+1)
-
-            if(dhi.le.0.5e-6_wp) then
-                frac05=0._wp
-            elseif(dlo.ge.0.5e-6_wp) then
-                frac05=1._wp
-            elseif(dhi.gt.dlo) then
-                frac05=(dhi-0.5e-6_wp)/(dhi-dlo)
-            else
-                frac05=0._wp
-            endif
-
-            naer05=naer05+frac05*max(npart(i)-dn_inas(i),0._wp)
+			if (full_moving) then
+				! Full-moving bins retain their original dry-aerosol-bin identity.
+				! Integrate a flat number distribution across the original dry bin
+				! when it straddles the DeMott 0.5 micron threshold.
+				imode=(i-1)/nbins1+1
+				ibin=i-(imode-1)*nbins1
+				iedge=ibin+(imode-1)*(nbins1+1)
+			
+				dlo=parcel1%d(iedge)
+				dhi=parcel1%d(iedge+1)
+			
+				if (dhi.le.0.5e-6_wp) then
+					frac05=0._wp
+				elseif (dlo.ge.0.5e-6_wp) then
+					frac05=1._wp
+				elseif (dhi.gt.dlo) then
+					frac05=(dhi-0.5e-6_wp)/(dhi-dlo)
+				else
+					frac05=0._wp
+				endif
+			else
+				! Moving-centre and Chen-Lamb remap particles between numerical bins,
+				! so the original parcel1%d interval is no longer associated with bin i.
+				! Classify using the representative dry-equivalent diameter reconstructed
+				! from the aerosol component masses carried by the remapped population.
+				frac05=merge(1._wp,0._wp,dd(i).gt.0.5e-6_wp)
+			endif
+           naer05=naer05+frac05*max(npart(i)-dn_inas(i),0._wp)
         enddo
 
         nprimary=min(naer05,demott_2010(t,naer05))
@@ -4387,24 +4393,33 @@
             call get_inp_control(mbin2(i,:),has_inas,has_demott,has_daily)
             if((has_inas .and. ice_nucleation_mech_in(INUC_INAS)) .or. .not.has_demott) cycle
 
-            ! Use the same flat-within-bin >0.5 micrometre fraction when
-            ! allocating newly nucleated DeMott ice.  This keeps the depletion
-            ! consistent with the naer05 reservoir used to calculate the target.
-            imode=(i-1)/nbins1+1
-            ibin=i-(imode-1)*nbins1
-            iedge=ibin+(imode-1)*(nbins1+1)
-            dlo=parcel1%d(iedge)
-            dhi=parcel1%d(iedge+1)
-
-            if(dhi.le.0.5e-6_wp) then
-                frac05=0._wp
-            elseif(dlo.ge.0.5e-6_wp) then
-                frac05=1._wp
-            elseif(dhi.gt.dlo) then
-                frac05=(dhi-0.5e-6_wp)/(dhi-dlo)
-            else
-                frac05=0._wp
-            endif
+			if (full_moving) then
+				! Full-moving bins retain their original dry-aerosol-bin identity.
+				! Integrate a flat number distribution across the original dry bin
+				! when it straddles the DeMott 0.5 micron threshold.
+				imode=(i-1)/nbins1+1
+				ibin=i-(imode-1)*nbins1
+				iedge=ibin+(imode-1)*(nbins1+1)
+			
+				dlo=parcel1%d(iedge)
+				dhi=parcel1%d(iedge+1)
+			
+				if (dhi.le.0.5e-6_wp) then
+					frac05=0._wp
+				elseif (dlo.ge.0.5e-6_wp) then
+					frac05=1._wp
+				elseif (dhi.gt.dlo) then
+					frac05=(dhi-0.5e-6_wp)/(dhi-dlo)
+				else
+					frac05=0._wp
+				endif
+			else
+				! Moving-centre and Chen-Lamb remap particles between numerical bins,
+				! so the original parcel1%d interval is no longer associated with bin i.
+				! Classify using the representative dry-equivalent diameter reconstructed
+				! from the aerosol component masses carried by the remapped population.
+				frac05=merge(1._wp,0._wp,dd(i).gt.0.5e-6_wp)
+			endif
 
             avail=max(frac05*max(npart(i)-dn_inas(i),0._wp)-dn_demott(i),0._wp)
             dprimary=min(nprimary,avail)
@@ -8266,6 +8281,9 @@
     logical, intent(inout) :: new_file
     character (len=*),intent(in) :: outputfile
     real(wp) :: phi, sd2, sd3, deff, precip
+    real(wp) :: m0_liq,m1_liq,m2_liq,m3_liq,dmean_liq,dvol_liq, &
+        dsigma_liq,rel_disp_liq
+    real(wp) :: m0_ice,m1_ice,m2_ice,dmean_ice,dsigma_ice,rel_disp_ice
     real(wp) :: svp1,qv,rm,rhod,beta_ext, beta_abs,beta_ext_ice, beta_abs_ice
 	real(wp) :: phi_mean,nmon_mean,rhoi_mean, nact, test, &
 		mcrit
@@ -8394,15 +8412,53 @@
         call check( nf90_put_att(io1%ncid, io1%a_dimid, &
                    "units", "#/kg") )
                    
-        ! define variable: deff
+        ! Liquid-drop bulk size diagnostics. These are calculated from the
+        ! same activated population used for ndrop and from the instantaneous
+        ! wet volume-equivalent diameter.
         call check( nf90_def_var(io1%ncid, "deff", NF90_DOUBLE, &
                     (/io1%x_dimid/), io1%varid) )
-        ! get id to a_dimid
-        call check( nf90_inq_varid(io1%ncid, "deff", io1%a_dimid) )
-        ! units
-        call check( nf90_put_att(io1%ncid, io1%a_dimid, &
-                   "units", "m") )
-                   
+        call check( nf90_put_att(io1%ncid,io1%varid,"units","m") )
+        call check( nf90_put_att(io1%ncid,io1%varid,"long_name", &
+                   "liquid effective diameter M3/M2 of activated drops") )
+
+        call check( nf90_def_var(io1%ncid, "dmean_liq", NF90_DOUBLE, &
+                    (/io1%x_dimid/), io1%varid) )
+        call check( nf90_put_att(io1%ncid,io1%varid,"units","m") )
+        call check( nf90_put_att(io1%ncid,io1%varid,"long_name", &
+                   "number-weighted mean wet diameter of activated liquid drops") )
+
+        call check( nf90_def_var(io1%ncid, "dvol_liq", NF90_DOUBLE, &
+                    (/io1%x_dimid/), io1%varid) )
+        call check( nf90_put_att(io1%ncid,io1%varid,"units","m") )
+        call check( nf90_put_att(io1%ncid,io1%varid,"long_name", &
+                   "volume-mean diameter (M3/M0)^(1/3) of activated liquid drops") )
+
+        call check( nf90_def_var(io1%ncid, "rel_disp_liq", NF90_DOUBLE, &
+                    (/io1%x_dimid/), io1%varid) )
+        call check( nf90_put_att(io1%ncid,io1%varid,"units","1") )
+        call check( nf90_put_att(io1%ncid,io1%varid,"long_name", &
+                   "relative dispersion sigma_D/mean_D of activated liquid drops") )
+
+        ! Native warm-particle PSD coordinates. nwat retains all warm particles;
+        ! nliq contains only activated liquid drops. dwet is the instantaneous
+        ! wet diameter associated with each native model bin. These are moving
+        ! wet diameters, not fixed wet-size intervals, so no diagnostic wet-bin
+        ! width is written; post-processing should rebin (number,dwet) onto a
+        ! fixed logarithmic or instrument grid before calculating dN/dlogD.
+        call check( nf90_def_var(io1%ncid, "dwet", NF90_DOUBLE, &
+                    (/io1%bin2_dimid,io1%mode_dimid,io1%x_dimid/), io1%varid) )
+        call check( nf90_put_att(io1%ncid,io1%varid,"units","m") )
+        call check( nf90_put_att(io1%ncid,io1%varid,"long_name", &
+                   "instantaneous wet volume-equivalent diameter of all warm particles") )
+        call check( nf90_put_att(io1%ncid,io1%varid,"comment", &
+                   "Use with nwat for the complete warm PSD; includes aerosol, haze and activated drops") )
+
+        call check( nf90_def_var(io1%ncid, "nliq", NF90_DOUBLE, &
+                    (/io1%bin2_dimid,io1%mode_dimid,io1%x_dimid/), io1%varid) )
+        call check( nf90_put_att(io1%ncid,io1%varid,"units","kg-1") )
+        call check( nf90_put_att(io1%ncid,io1%varid,"long_name", &
+                   "activated liquid-drop number mixing ratio in each native bin") )
+
         ! define variable: mwat
         call check( nf90_def_var(io1%ncid, "mwat", NF90_DOUBLE, &
                     (/io1%bin_dimid,io1%mode_dimid, io1%x_dimid/), io1%varid) )
@@ -8420,6 +8476,11 @@
         ! units
         call check( nf90_put_att(io1%ncid, io1%a_dimid, &
                    "units", "#/kg") )
+        call check( nf90_put_att(io1%ncid, io1%a_dimid, &
+                   "long_name", "number mixing ratio of all warm particles") )
+        call check( nf90_put_att(io1%ncid, io1%a_dimid, "comment", &
+                   "Includes unactivated aerosol, haze particles and activated "// &
+                   "liquid drops; pair with dwet for the complete warm PSD") )
 
         ! define variable: maer
         call check( nf90_def_var(io1%ncid, "maer", NF90_DOUBLE, &
@@ -8534,6 +8595,27 @@
             call check( nf90_put_att(io1%ncid, io1%a_dimid, &
                        "units", "#/kg") )  
                         
+            ! Native ice size coordinate. dwice is maximum dimension (Dmax),
+            ! not a volume-equivalent diameter. nicem contains the associated
+            ! ice number mixing ratio on the same native bins.
+            call check( nf90_def_var(io1%ncid, "dmaxice", NF90_DOUBLE, &
+                        (/io1%bin2_dimid,io1%mode_dimid,io1%x_dimid/), io1%varid) )
+            call check( nf90_put_att(io1%ncid,io1%varid,"units","m") )
+            call check( nf90_put_att(io1%ncid,io1%varid,"long_name", &
+                       "instantaneous maximum dimension Dmax of ice particles") )
+
+            call check( nf90_def_var(io1%ncid, "dmean_ice", NF90_DOUBLE, &
+                        (/io1%x_dimid/), io1%varid) )
+            call check( nf90_put_att(io1%ncid,io1%varid,"units","m") )
+            call check( nf90_put_att(io1%ncid,io1%varid,"long_name", &
+                       "number-weighted mean ice maximum dimension") )
+
+            call check( nf90_def_var(io1%ncid, "rel_disp_ice", NF90_DOUBLE, &
+                        (/io1%x_dimid/), io1%varid) )
+            call check( nf90_put_att(io1%ncid,io1%varid,"units","1") )
+            call check( nf90_put_att(io1%ncid,io1%varid,"long_name", &
+                       "relative dispersion sigma_Dmax/mean_Dmax of ice particles") )
+
             ! define variable: mice
             call check( nf90_def_var(io1%ncid, "mice", NF90_DOUBLE, &
                         (/io1%bin_dimid,io1%mode_dimid, io1%x_dimid/), io1%varid) )
@@ -8742,61 +8824,64 @@
 					start = (/io1%icur/)))
 	endif
 	
-	! calculate actually activated drops using the same Koehler/FHH
-	! critical-point criterion used by immersion freezing
-	nact=0._wp	
-	do i=1,parcel1%n_bin_modew	
-		if (parcel1%npart(i) <= 0._wp) cycle
-		if (particle_is_activated(i,parcel1%y(i), &
-			parcel1%y(parcel1%ite))) then
-			nact=nact+parcel1%npart(i)
-		endif
-	enddo
-    
+    ! Refresh diagnostic particle diameters from the accepted state. This is
+    ! diagnostic-only and does not change particle number or mass moments.
+    call update_terminal_velocities()
+
+    ! Diagnose activated drops once and use exactly the same population for
+    ! ndrop, bulk size moments, relative dispersion and the native nliq PSD.
+    parcel1%ndrop=0._wp
+    do i=1,parcel1%n_bin_modew
+        if (parcel1%npart(i) <= 0._wp) cycle
+        if (particle_is_activated(i,parcel1%y(i), &
+            parcel1%y(parcel1%ite))) parcel1%ndrop(i)=parcel1%npart(i)
+    enddo
+    nact=sum(parcel1%ndrop)
+
     call check( nf90_inq_varid(io1%ncid, "ndrop", io1%varid ) )
-    call check( nf90_put_var(io1%ncid, io1%varid, &
-        nact, start = (/io1%icur/)))
+    call check( nf90_put_var(io1%ncid,io1%varid,nact,start=(/io1%icur/)))
 
-    ! write variable: number > 1.24 microns (1.e-15 kg)
-!     parcel1%ndrop=0._wp
-!     where (parcel1%y(1:parcel1%n_bin_modew) > 1.e-15_wp)
-!         parcel1%ndrop=parcel1%npart(:)
-!     end where
-!     
-!     call check( nf90_inq_varid(io1%ncid, "ndrop", io1%varid ) )
-!     call check( nf90_put_var(io1%ncid, io1%varid, &
-!         sum(parcel1%ndrop), start = (/io1%icur/)))
+    m0_liq=sum(parcel1%ndrop)
+    m1_liq=sum(parcel1%ndrop*parcel1%dw)
+    m2_liq=sum(parcel1%ndrop*parcel1%dw**2)
+    m3_liq=sum(parcel1%ndrop*parcel1%dw**3)
+    if (m0_liq > tiny(1._wp)) then
+        dmean_liq=m1_liq/m0_liq
+        dvol_liq=(m3_liq/m0_liq)**onethird
+        dsigma_liq=sqrt(max(m2_liq/m0_liq-dmean_liq**2,0._wp))
+        if (dmean_liq > tiny(1._wp)) then
+            rel_disp_liq=dsigma_liq/dmean_liq
+        else
+            rel_disp_liq=0._wp
+        endif
+    else
+        dmean_liq=0._wp
+        dvol_liq=0._wp
+        rel_disp_liq=0._wp
+    endif
+    if (m2_liq > tiny(1._wp)) then
+        deff=m3_liq/m2_liq
+    else
+        deff=0._wp
+    endif
 
-
-
-
-    ! write variable: effective diameter
     call check( nf90_inq_varid(io1%ncid, "deff", io1%varid ) )
-    
-    parcel1%ndrop=0._wp
-    where (parcel1%y(1:parcel1%n_bin_modew) > 1.e-15_wp)
-    	parcel1%ndrop =  (parcel1%y(1:parcel1%n_bin_modew)* &
-            6._wp/(rhow*pi))**(3._wp/3._wp)* parcel1%npart(1:parcel1%n_bin_modew)
-	end where
-	sd3 = sum(parcel1%ndrop)
-	
-    parcel1%ndrop=0._wp
-    where (parcel1%y(1:parcel1%n_bin_modew) > 1.e-15_wp)
-    	parcel1%ndrop =  (parcel1%y(1:parcel1%n_bin_modew)* &
-            6._wp/(rhow*pi))**(twothirds)* parcel1%npart(1:parcel1%n_bin_modew)
-	end where
-	sd2 = sum(parcel1%ndrop)
-	
-	if(sd2 .lt. 1.e-10_wp) then
-		deff = 0._wp
-	else
-		deff = sd3 / sd2
-	endif
-    
-    call check( nf90_put_var(io1%ncid, io1%varid, deff, &
-                start = (/io1%icur/)))
+    call check( nf90_put_var(io1%ncid,io1%varid,deff,start=(/io1%icur/)))
+    call check( nf90_inq_varid(io1%ncid, "dmean_liq", io1%varid ) )
+    call check( nf90_put_var(io1%ncid,io1%varid,dmean_liq,start=(/io1%icur/)))
+    call check( nf90_inq_varid(io1%ncid, "dvol_liq", io1%varid ) )
+    call check( nf90_put_var(io1%ncid,io1%varid,dvol_liq,start=(/io1%icur/)))
+    call check( nf90_inq_varid(io1%ncid, "rel_disp_liq", io1%varid ) )
+    call check( nf90_put_var(io1%ncid,io1%varid,rel_disp_liq,start=(/io1%icur/)))
 
-
+    call check( nf90_inq_varid(io1%ncid, "dwet", io1%varid ) )
+    call check( nf90_put_var(io1%ncid,io1%varid, &
+        reshape(parcel1%dw,(/parcel1%n_bins1,parcel1%n_modes/)), &
+        start=(/1,1,io1%icur/)))
+    call check( nf90_inq_varid(io1%ncid, "nliq", io1%varid ) )
+    call check( nf90_put_var(io1%ncid,io1%varid, &
+        reshape(parcel1%ndrop,(/parcel1%n_bins1,parcel1%n_modes/)), &
+        start=(/1,1,io1%icur/)))
 
     call check( nf90_inq_varid(io1%ncid, "mwat", io1%varid ) )
     call check( nf90_put_var(io1%ncid, io1%varid, &
@@ -8901,6 +8986,31 @@
         call check( nf90_inq_varid(io1%ncid, "nice", io1%varid ) )
         call check( nf90_put_var(io1%ncid, io1%varid, &
             sum(parcel1%nice), start = (/io1%icur/)))
+
+        call check( nf90_inq_varid(io1%ncid, "dmaxice", io1%varid ) )
+        call check( nf90_put_var(io1%ncid,io1%varid, &
+            reshape(parcel1%dwice,(/parcel1%n_bins1,parcel1%n_modes/)), &
+            start=(/1,1,io1%icur/)))
+
+        m0_ice=sum(parcel1%npartice)
+        m1_ice=sum(parcel1%npartice*parcel1%dwice)
+        m2_ice=sum(parcel1%npartice*parcel1%dwice**2)
+        if (m0_ice > tiny(1._wp)) then
+            dmean_ice=m1_ice/m0_ice
+            dsigma_ice=sqrt(max(m2_ice/m0_ice-dmean_ice**2,0._wp))
+            if (dmean_ice > tiny(1._wp)) then
+                rel_disp_ice=dsigma_ice/dmean_ice
+            else
+                rel_disp_ice=0._wp
+            endif
+        else
+            dmean_ice=0._wp
+            rel_disp_ice=0._wp
+        endif
+        call check( nf90_inq_varid(io1%ncid, "dmean_ice", io1%varid ) )
+        call check( nf90_put_var(io1%ncid,io1%varid,dmean_ice,start=(/io1%icur/)))
+        call check( nf90_inq_varid(io1%ncid, "rel_disp_ice", io1%varid ) )
+        call check( nf90_put_var(io1%ncid,io1%varid,rel_disp_ice,start=(/io1%icur/)))
     
         call check( nf90_inq_varid(io1%ncid, "mice", io1%varid ) )
         call check( nf90_put_var(io1%ncid, io1%varid, &
