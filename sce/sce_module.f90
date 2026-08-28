@@ -2513,6 +2513,10 @@
     integer(i4b) :: k,l,jl,jh,modeinto,phase
 
     if (npart(i).lt.qsmall2) return
+    ! xn is the hydrometeor (water/ice) mass coordinate.  An occupied
+    ! aerosol residual with zero hydrometeor mass is not an SCE
+    ! hydrometeor category and must not self-collect here.
+    if (xn(i).le.qsmall) return
 
     ! Number of self-collision events.  The factor 1/2 is required only
     ! for the diagonal because an i-i pair would otherwise be counted twice.
@@ -2720,6 +2724,7 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     do i=il,ih
         if (npart(i).lt.qsmall2) cycle
+        if (xn(i).le.qsmall) cycle
 
         ! Diagonal (i=i) self collection is handled separately because each
         ! collision event removes two particles from the same source bin.
@@ -2729,6 +2734,7 @@
 
         do j=i+1,ih
         	if (npart(j).lt.qsmall2) cycle
+            if (xn(j).le.qsmall) cycle
             phase1=(i-1)/n_bin_modew
             phase2=(j-1)/n_bin_modew
 
@@ -2743,7 +2749,9 @@
             if((phase1==0).and.(phase2==1)) then
                 totaddto = totaddto+xn(i)*remove1  
             endif
-            ! number to add to new bin:
+            ! number to add to new bin.  Avoid 0/0 for degenerate
+            ! hydrometeor-mass coordinates.
+            if (massn.le.qsmall .or. massaddto.le.qsmall) cycle
             nnew = massaddto/massn
             
             if (nnew.lt.qsmall2) cycle
@@ -2889,6 +2897,7 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     do i=il,ih
         if (npart(i).lt.qsmall2) cycle
+        if (xn(i).le.qsmall) cycle
 
         ! Diagonal (i=i) self collection is handled separately because each
         ! collision event removes two particles from the same source bin.
@@ -2898,6 +2907,7 @@
 
         do j=i+1,ih
             if (npart(j).lt.qsmall2) cycle
+            if (xn(j).le.qsmall) cycle
             ! numbers removed from each bin:
             remove2=min(rhoa*npart(i)*ecoll(j,i)*npart(j)*dt,npart(j),npart(i))
             remove1=remove2
@@ -3083,7 +3093,9 @@
             endif            
             !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-            ! number to add to new bin:
+            ! number to add to new bin.  Fragment adjustments can leave
+            ! a degenerate zero-mass product; do not evaluate 0/0.
+            if (massn.le.qsmall .or. massaddto.le.qsmall) cycle
             nnew = massaddto/massn
             
             if (nnew.lt.qsmall2) cycle
@@ -3512,6 +3524,23 @@
     integer(i4b) :: k
     real(wp) :: gk,beta1,cw,fk05,fracadj1,fracadj2,fracl,fraclp,temp, &
                 f1,f2,fnew,ncoll,category_frac,cin_total,nadd1,nadd2,naddtot
+
+    ! The Bott fixed-grid formula below requires a strictly positive
+    ! product mass and two strictly positive receiving pivots.  A zero
+    ! hydrometeor-mass aerosol residual violates that invariant and used to
+    ! generate log(0), Inf-Inf and division-by-zero NaNs here.
+    if (mass_stot.le.qsmall .or. mass_s.le.qsmall .or. masstot.le.qsmall) then
+        print *, 'SCE invalid fixed-grid gain mass:', mass_stot,mass_s,masstot
+        error stop 'SCE zero-mass fixed-grid gain'
+    endif
+    if (lf1.lt.1 .or. lf1.ge.n_bin_mode) then
+        print *, 'SCE invalid fixed-grid receiving bin:',lf1,n_bin_mode
+        error stop 'SCE fixed-grid receiving index out of range'
+    endif
+    if (xn(lf1).le.qsmall .or. xn(lf1+1).le.qsmall) then
+        print *, 'SCE non-positive fixed-grid pivots:',lf1,xn(lf1),xn(lf1+1),mass_s
+        error stop 'SCE fixed-grid requires positive mass pivots'
+    endif
 
     ! Defining courant number, etc++++++++++++++++++++++++++++++++++++++++++++
     ! add the mass into the new bin:
