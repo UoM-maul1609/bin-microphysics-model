@@ -831,6 +831,8 @@
     !>n_sel, rh_act and mult, and historically read parcel1%t.  Save/restore
     !>those values here and temporarily set parcel1%t to the current ODE
     !>temperature so the activation test is evaluated at the current state.
+    !>The critical point is located in ln(nw) space; a linear search over the
+    !>historical 1e-50--1e1 mol interval can miss submicron activation maxima.
     logical function particle_is_activated(ibin,mwat_current,t_current) result(activated)
         use numerics, only : fmin
         implicit none
@@ -855,9 +857,9 @@
 
         select case(kappa_flag)
         case(0)
-            nwcrit=fmin(1.e-50_wp,1.e1_wp,koehler02,1.e-30_wp)
+            nwcrit=exp(fmin(log(1.e-30_wp),log(1.e-5_wp),koehler02_lognw,1.e-10_wp))
         case(1)
-            nwcrit=fmin(1.e-50_wp,1.e1_wp,kkoehler02,1.e-30_wp)
+            nwcrit=exp(fmin(log(1.e-30_wp),log(1.e-5_wp),kkoehler02_lognw,1.e-10_wp))
         case default
             parcel1%t=t_save
             mult=mult_save
@@ -1370,7 +1372,7 @@
                 rh_act=0._wp !min(parcel1%rh,0.999_wp)
                 mult=-1._wp
                 ! has to be less than the peak moles of water at activation
-                test=fmin(1.e-50_wp,1.e1_wp, koehler02,1.e-30_wp)
+                test=exp(fmin(log(1.e-30_wp),log(1.e-5_wp),koehler02_lognw,1.e-10_wp))
                 rh_act=min(parcel1%rh,0.999_wp)
                 mult=1._wp
                 d_dummy=zeroin(1.e-30_wp, test, koehler02,1.e-30_wp)*molw_water 
@@ -1387,7 +1389,7 @@
                 rh_act=0._wp !min(parcel1%rh,0.999_wp)
                 mult=-1._wp
                 ! has to be less than the peak moles of water at activation
-                test=fmin(1.e-50_wp,1.e1_wp, kkoehler02,1.e-30_wp)
+                test=exp(fmin(log(1.e-30_wp),log(1.e-5_wp),kkoehler02_lognw,1.e-10_wp))
                 rh_act=min(parcel1%rh,0.999_wp)
                 mult=1._wp
                 d_dummy=zeroin(1.e-30_wp, test, kkoehler02,1.e-30_wp)*molw_water 
@@ -2752,6 +2754,29 @@
            aw*fads)-rh_act
     end function kkoehler02
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+    ! ============================================================================
+    ! koehler02_lognw / kkoehler02_lognw
+    ! ============================================================================
+    !>Log-water wrappers for critical-point searches.  The Koehler/FHH maximum
+    !>for atmospheric aerosol occurs at water contents spanning many orders of
+    !>magnitude.  Searching directly in linear nw over a very broad interval can
+    !>miss the physically relevant maximum.  These wrappers allow the existing
+    !>Brent/golden-section fmin routine to operate in ln(nw) space instead.
+    function koehler02_lognw(lnnw) result(val)
+        implicit none
+        real(wp), intent(in) :: lnnw
+        real(wp) :: val
+        val=koehler02(exp(lnnw))
+    end function koehler02_lognw
+
+    function kkoehler02_lognw(lnnw) result(val)
+        implicit none
+        real(wp), intent(in) :: lnnw
+        real(wp) :: val
+        val=kkoehler02(exp(lnnw))
+    end function kkoehler02_lognw
     
     
     
@@ -2850,6 +2875,25 @@
            aw*fads)-rh_act
     end function kkoehler02_ent
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+    ! ============================================================================
+    ! koehler02_ent_lognw / kkoehler02_ent_lognw
+    ! ============================================================================
+    !>Log-water wrappers for entraining-aerosol critical-point searches.
+    function koehler02_ent_lognw(lnnw) result(val)
+        implicit none
+        real(wp), intent(in) :: lnnw
+        real(wp) :: val
+        val=koehler02_ent(exp(lnnw))
+    end function koehler02_ent_lognw
+
+    function kkoehler02_ent_lognw(lnnw) result(val)
+        implicit none
+        real(wp), intent(in) :: lnnw
+        real(wp) :: val
+        val=kkoehler02_ent(exp(lnnw))
+    end function kkoehler02_ent_lognw
     
     
     
@@ -7034,13 +7078,13 @@
         mult=-1._wp
         select case(kappa_flag)
         case(0)
-            nwcrit=fmin(1.e-50_wp,1.e1_wp,koehler02,1.e-30_wp)
+            nwcrit=exp(fmin(log(1.e-30_wp),log(1.e-5_wp),koehler02_lognw,1.e-10_wp))
             rh_use=min(max(rh_resid,1.e-8_wp),0.999_wp)
             rh_act=rh_use
             mult=1._wp
             nweq=zeroin(1.e-30_wp,nwcrit,koehler02,1.e-30_wp)
         case(1)
-            nwcrit=fmin(1.e-50_wp,1.e1_wp,kkoehler02,1.e-30_wp)
+            nwcrit=exp(fmin(log(1.e-30_wp),log(1.e-5_wp),kkoehler02_lognw,1.e-10_wp))
             rh_use=min(max(rh_resid,1.e-8_wp),0.999_wp)
             rh_act=rh_use
             mult=1._wp
@@ -7497,7 +7541,7 @@
                     n_sel=i
                     rh_act=0._wp
                     mult=-1._wp
-                    dummy=fmin(1.e-50_wp,1.e1_wp,koehler02_ent,1.e-30_wp)
+                    dummy=exp(fmin(log(1.e-30_wp),log(1.e-5_wp),koehler02_ent_lognw,1.e-10_wp))
                     mult=1._wp
                     rh_act=koehler02_ent(dummy)
                     rh_act=min(rhenv,rh_act)
@@ -7511,7 +7555,7 @@
                     n_sel=i
                     rh_act=0._wp
                     mult=-1._wp
-                    dummy=fmin(1.e-50_wp,1.e1_wp,kkoehler02_ent,1.e-30_wp)
+                    dummy=exp(fmin(log(1.e-30_wp),log(1.e-5_wp),kkoehler02_ent_lognw,1.e-10_wp))
                     mult=1._wp
                     rh_act=kkoehler02_ent(dummy)
                     rh_act=min(rhenv,rh_act)
