@@ -826,9 +826,10 @@
     ! particle_is_activated
     ! ============================================================================
     !>Return true when a warm BMM particle lies beyond the maximum of its
-    !>current Koehler/FHH equilibrium curve.  This is the same activation
-    !>criterion used by the ndrop diagnostic: current water mass must exceed
-    !>the critical water mass at the Koehler/FHH maximum.  For a fixed dry
+    !>current Koehler/FHH equilibrium curve.  For full-moving bins this is
+    !>also the ndrop diagnostic criterion.  Fixed-bin schemes use the same
+    !>critical water mass but fractionally count a bin when that threshold
+    !>lies between its fixed water-mass edges.  For a fixed dry
     !>composition this is equivalent to wet diameter being greater than the
     !>critical wet diameter.
     !>
@@ -838,17 +839,16 @@
     !>temperature so the activation test is evaluated at the current state.
     !>The critical point is located in ln(nw) space; a linear search over the
     !>historical 1e-50--1e1 mol interval can miss submicron activation maxima.
-    logical function particle_is_activated(ibin,mwat_current,t_current) result(activated)
+    real(wp) function particle_activation_water_mass(ibin,t_current) result(mcrit)
         use numerics, only : fmin
         implicit none
         integer(i4b), intent(in) :: ibin
-        real(wp), intent(in) :: mwat_current,t_current
+        real(wp), intent(in) :: t_current
         integer(i4b) :: n_sel_save
-        real(wp) :: rh_act_save,mult_save,t_save,nwcrit,mcrit
+        real(wp) :: rh_act_save,mult_save,t_save,nwcrit
 
-        activated=.false.
+        mcrit=huge(1._wp)
         if (ibin.lt.1 .or. ibin.gt.parcel1%n_bin_modew) return
-        if (mwat_current.le.tiny(1._wp)) return
 
         n_sel_save=n_sel
         rh_act_save=rh_act
@@ -870,16 +870,30 @@
             mult=mult_save
             rh_act=rh_act_save
             n_sel=n_sel_save
-            error stop 'Unknown kappa_flag in particle_is_activated'
+            error stop 'Unknown kappa_flag in particle_activation_water_mass'
         end select
 
         mcrit=max(nwcrit,0._wp)*molw_water
-        activated=mwat_current.gt.mcrit
 
         parcel1%t=t_save
         mult=mult_save
         rh_act=rh_act_save
         n_sel=n_sel_save
+    end function particle_activation_water_mass
+
+
+    logical function particle_is_activated(ibin,mwat_current,t_current) result(activated)
+        implicit none
+        integer(i4b), intent(in) :: ibin
+        real(wp), intent(in) :: mwat_current,t_current
+        real(wp) :: mcrit
+
+        activated=.false.
+        if (ibin.lt.1 .or. ibin.gt.parcel1%n_bin_modew) return
+        if (mwat_current.le.tiny(1._wp)) return
+
+        mcrit=particle_activation_water_mass(ibin,t_current)
+        activated=mwat_current.gt.mcrit
     end function particle_is_activated
 
 
@@ -1357,6 +1371,8 @@
                 (parcel1%time_chamber(i+1)-parcel1%time_chamber(i))
         enddo
 
+        ! Report the accepted initial chamber-forced thermodynamic state once.
+        ! This is useful run context, not a timestep diagnostic.
         if (chamber_forcing_active) then
             print *,'t,p,rh from chamber forcing: ',parcel1%t,parcel1%p,parcel1%rh
         endif
@@ -1481,13 +1497,15 @@
     ! extra input variables:
     parcel1%iwork=0
     parcel1%rwork=0._wp
-    parcel1%iwork(6) = 100 ! max steps
+    ! DVODE MXSTEP: 100 was too small for strongly evaporating near-edge bins.
+    ! The solver can legitimately require >100 internal BDF steps over one
+    ! external microphysics timestep, especially as liquid mass approaches 0.
+    parcel1%iwork(6) = 1000 ! max internal steps per DVODE call
     parcel1%iwork(7) = 10 ! max message printed per problem
     parcel1%iwork(5) = 5 ! order
     parcel1%rwork(5) = 0._wp !1.e-3_wp ! initial time-step
     parcel1%rwork(6) = dt ! max time-step
     parcel1%rwork(7) = 0._wp !1.e-9_wp ! min time-step allowed
-    parcel1%rwork(14) = 2._wp ! tolerance scale factor
     
     ! put water in solution vector and set p, t, rh, z, w
     parcel1%y(1:parcel1%n_bin_modew)=parcel1%mbin(:,n_comps+1)
@@ -1652,13 +1670,13 @@
         ! extra input variables:
         parcel1%iworkice=0
         parcel1%rworkice=0._wp
-        parcel1%iworkice(6) = 100 ! max steps
+        ! Keep the ice solver consistent with the warm solver MXSTEP allowance.
+        parcel1%iworkice(6) = 1000 ! max internal steps per DVODE call
         parcel1%iworkice(7) = 10 ! max message printed per problem
         parcel1%iworkice(5) = 5 ! order
         parcel1%rworkice(5) = 0._wp !1.e-3_wp ! initial time-step
         parcel1%rworkice(6) = dt ! max time-step
         parcel1%rworkice(7) = 0._wp !1.e-9_wp ! min time-step allowed
-        parcel1%rworkice(14) = 2._wp ! tolerance scale factor
     
         ! put water in solution vector and set p, t, rh, z, w
         parcel1%yice(1:parcel1%n_bin_modew)=parcel1%mbinice(:,n_comps+1)
@@ -3802,6 +3820,7 @@
                   mu_old, mu_now, dz_ent
 
         integer(i4b) :: i, j,iloc, ipart, ipr, ite, irh, iz,iw, ira
+        real(wp), dimension(neq) :: y_eval
 
         
         ipart=parcel1%n_bin_modew
@@ -3822,9 +3841,15 @@
         p=y(ipr)
     
 
-        ! check there are no negative values
-        where(y(1:ipart).le.0.e1_wp)
-            y(1:ipart)=1.e-22_wp
+        ! Do not modify DVODE's state vector inside the RHS callback.
+        ! Use the true positive hydrometeor mass for microphysical evaluation.
+        ! Only non-positive trial states need a tiny positive numerical mass;
+        ! the previous 1e-22 kg floor could exceed the actual mass of a nearly
+        ! evaporated particle and artificially accelerate its final mass loss.
+        where (y(1:ipart) > 0._wp)
+            y_eval(1:ipart)=y(1:ipart)
+        elsewhere
+            y_eval(1:ipart)=1.e-30_wp
         end where
 
 
@@ -3895,12 +3920,12 @@
         ! calculate equilibrium rhs
         select case (kappa_flag)
             case (0)
-              call koehler01(t,y(1:ipart),parcel1%mbin(:,1:n_comps), &
+              call koehler01(t,y_eval(1:ipart),parcel1%mbin(:,1:n_comps), &
                    parcel1%rhobin(:,1:n_comps), parcel1%nubin(:,1:n_comps), &
                    parcel1%molwbin(:,1:n_comps),ipart, &
                    parcel1%rh_eq,parcel1%rhoat, parcel1%dw) 
             case (1)
-              call kkoehler01(t,y(1:ipart),parcel1%mbin(:,1:n_comps), &
+              call kkoehler01(t,y_eval(1:ipart),parcel1%mbin(:,1:n_comps), &
                    parcel1%rhobin(:,1:n_comps), parcel1%kappabin(:,1:n_comps), &
                    parcel1%molwbin(:,1:n_comps),ipart, &
                    parcel1%rh_eq,parcel1%rhoat, parcel1%dw)
@@ -3926,6 +3951,26 @@
         
         ! mass growth rate
         ydot(1:ipart)=pi*parcel1%rhoat*parcel1%dw**2 * parcel1%da_dt
+        ! Water mass is bounded below by zero.
+        !
+        ! IMPORTANT for MF=22: DVODE forms its Jacobian by finite-difference
+        ! perturbations of y.  A bin which STARTS this external step exactly
+        ! dry must therefore remain on the same non-evaporating branch during
+        ! those perturbations.  Testing only the instantaneous trial value y
+        ! makes the RHS discontinuous at y=0: the base call gives dm/dt=0,
+        ! while a tiny positive Jacobian perturbation gives dm/dt<0.  That
+        ! produces an enormous numerical Jacobian and repeated convergence
+        ! failures (ISTATE=-5).
+        !
+        ! Use mbin(:,n_comps+1), which is fixed during a DVODE call, as the
+        ! active-set mask for bins that start dry.  Positive condensation is
+        ! still allowed, so a dry aerosol can reactivate when conditions demand
+        ! it.  The instantaneous-y test is retained to stop a wet bin that
+        ! reaches zero during this DVODE call from evaporating negative.
+        where ((parcel1%mbin(1:ipart,n_comps+1) <= 0._wp .or. &
+                y(1:ipart) <= 0._wp) .and. ydot(1:ipart) < 0._wp)
+            ydot(1:ipart)=0._wp
+        end where
         ! Microphysical change of liquid-water mixing ratio.  The ratio
         ! accounts for the homogeneous increase in parcel mass/flux during the
         ! current ODE step; the stored particle concentrations are diluted after
@@ -4085,6 +4130,7 @@
                   te, qve, pe, var, dummy, rhoe, rhop, b, rh_ice
 
         integer(i4b) :: i, j,iloc, ipartice, ipr, ite, irh, iz,iw
+        real(wp), dimension(neq) :: y_eval
 
         ipartice=parcel1%n_bin_modew
         ipr=parcel1%ipri
@@ -4100,9 +4146,15 @@
         w=y(iw)
     
 
-        ! check there are no negative values
-        where(y(1:ipartice).le.0.e1_wp)
-            y(1:ipartice)=1.e-22_wp
+        ! Do not modify DVODE's state vector inside the RHS callback.
+        ! Use the true positive ice mass for microphysical evaluation.
+        ! Only non-positive trial states need a tiny positive numerical mass;
+        ! the previous 1e-22 kg floor could exceed the actual mass of a nearly
+        ! sublimated crystal and artificially accelerate its final mass loss.
+        where (y(1:ipartice) > 0._wp)
+            y_eval(1:ipartice)=y(1:ipartice)
+        elsewhere
+            y_eval(1:ipartice)=1.e-30_wp
         end where
 
 
@@ -4111,7 +4163,7 @@
         sl=(sl*p/(1._wp+sl))/svp_liq(t)
         wv=eps1*rh*svp_liq(t) / (p-svp_liq(t)) ! vapour mixing ratio
         wl=sum(parcel1%npart*parcel1%y(1:ipartice))          ! liquid mixing ratio
-        wi=sum(parcel1%npartice*y(1:ipartice))             ! liquid mixing ratio
+        wi=sum(parcel1%npartice*max(y(1:ipartice),0._wp))             ! liquid mixing ratio
         rh_ice = wv / ( eps1*svp_ice(t) / (p-svp_ice(t) ) ) ! rh over ice
 
         ! calculate the moist gas constants and specific heats
@@ -4125,7 +4177,7 @@
         
         ! particle growth rate - mass growth rate
         parcel1%rh_eq=1._wp
-        ydot(1:ipartice)=icegrowthrate01(t,p,rh_ice,parcel1%rh_eq,y(1:ipartice), &
+        ydot(1:ipartice)=icegrowthrate01(t,p,rh_ice,parcel1%rh_eq,y_eval(1:ipartice), &
             parcel1%mbinice(:,1:n_comps),parcel1%rhobinice,&
             parcel1%phi,parcel1%rhoi,parcel1%nump,parcel1%rime,ipartice) 
         
@@ -4134,6 +4186,7 @@
             if(isnan(ydot(i)).or.parcel1%npartice(i).le. 1.e-9_wp) then
               ydot(i)=0._wp
             endif
+            if (y(i) <= 0._wp .and. ydot(i) < 0._wp) ydot(i)=0._wp
         enddo
 
         ! change in vapour content
@@ -5319,6 +5372,7 @@
 		n_mode,n_comps,n_moments, &
 		npart,mass_old,mass_new,moments,mbin,mbinedges)
 		use sce, only : qsmall2
+		use, intrinsic :: ieee_arithmetic, only : ieee_is_finite
 		implicit none
 		integer(i4b), intent(in) :: n_bin_modew,n_binst,&
 			n_mode,n_comps,n_moments
@@ -5339,6 +5393,36 @@
 		real(wp), dimension(n_bin_modew,n_moments) :: moments_tmp
 		real(wp), dimension(n_binst) :: dN_work,dM_work
 		real(wp), dimension(n_moments) :: moments_before,moments_after
+
+		! --------------------------------------------------------------
+		! Fail at the FIRST non-finite remapper input.  Ordinary relational
+		! tests do not catch NaN (all <, > and <= comparisons are false), so
+		! without this guard a NaN can silently pass through the Chen-Lamb
+		! validity checks and contaminate destination mass/moments.
+		! --------------------------------------------------------------
+		do isrc=1,n_bin_modew
+			if (.not.ieee_is_finite(npart(isrc))) then
+				print *,'Chen-Lamb non-finite INPUT npart'
+				print *,'source, npart = ',isrc,npart(isrc)
+				error stop 'non-finite Chen-Lamb input'
+			endif
+			if (npart(isrc) > qsmall2) then
+				if ((.not.ieee_is_finite(mass_old(isrc))).or. &
+				    (.not.ieee_is_finite(mass_new(isrc))).or. &
+				    any(.not.ieee_is_finite(mbin(isrc,:))).or. &
+				    any(.not.ieee_is_finite(moments(isrc,:)))) then
+					print *,'Chen-Lamb non-finite OCCUPIED INPUT'
+					print *,'source/mode/bin = ',isrc, &
+					    (isrc-1)/n_binst+1,mod(isrc-1,n_binst)+1
+					print *,'npart, old/new mass = ',npart(isrc), &
+					    mass_old(isrc),mass_new(isrc)
+					print *,'mbin = ',mbin(isrc,:)
+					print *,'moments = ',moments(isrc,:)
+					error stop 'non-finite Chen-Lamb occupied input'
+				endif
+			endif
+		enddo
+
 		! --------------------------------------------------------------
 		! Scratch destination state
 		! --------------------------------------------------------------
@@ -5388,14 +5472,117 @@
 				xmean_old=mass_old(isrc)
 				xmean_new=mass_new(isrc)
 				! --------------------------------------------------------------
-				! An occupied category must have a positive old mean mass.
+				! Dry-residual source state.
+				!
+				! A completely evaporated aerosol residual can legitimately have
+				! Nsrc > 0 and xmean_old = 0.  In that limit there is no finite-
+				! width liquid-water distribution whose edges can be advanced with
+				! the Chen-Lamb m^(1/3) scaling (division by xmean_old would be
+				! singular).  The physically consistent source is a point mass at
+				! zero water.
+				!
+				! If it remains dry, keep that point at zero.  If DVODE has given
+				! it positive condensate, reactivate it as a point population at
+				! xmean_new and place it directly into the corresponding fixed
+				! category.  This conserves number, hydrometeor mass, aerosol
+				! composition and all carried extensive moments exactly.
 				! --------------------------------------------------------------
-				if (xmean_old <= 0._wp) then
-					print *,'Chen-Lamb invalid old mean mass'
+				if (xmean_old < 0._wp) then
+					print *,'Chen-Lamb negative old mean mass'
 					print *,'mode/bin = ',imode,isbin
 					print *,'mass_old = ',xmean_old
 					error stop
 				endif
+				if (xmean_old == 0._wp) then
+					! A zero-water occupied source is only consistent with the
+					! lowest fixed category whose lower boundary is zero.
+					tolM=1000._wp*epsilon(1._wp)*max(abs(x2),tiny(1._wp))
+					if ((isbin /= 1).or.(abs(x1) > tolM)) then
+						print *,'Chen-Lamb zero old mass outside dry-residual bin'
+						print *,'mode/bin = ',imode,isbin
+						print *,'source limits = ',x1,x2
+						print *,'old/new mean = ',xmean_old,xmean_new
+						error stop
+					endif
+
+					if (xmean_new < 0._wp) then
+						print *,'Chen-Lamb negative new mass from dry residual'
+						print *,'mode/bin = ',imode,isbin
+						print *,'old/new mean = ',xmean_old,xmean_new
+						error stop
+					endif
+
+					tolM=1000._wp*epsilon(1._wp)*max(abs(xmean_new), &
+						abs(mbinedges(n_binst+1,imode)),tiny(1._wp))
+					if (xmean_new > mbinedges(n_binst+1,imode)+tolM) then
+						print *,'Chen-Lamb dry-residual reactivation above grid'
+						print *,'mode/bin = ',imode,isbin
+						print *,'new mean/grid max = ',xmean_new, &
+							mbinedges(n_binst+1,imode)
+						error stop
+					endif
+
+					! Remove only roundoff-sized excursions at the upper edge.
+					xmean_new=min(max(xmean_new,0._wp), &
+						mbinedges(n_binst+1,imode))
+					mass_new(isrc)=xmean_new
+
+					! Locate the destination using the actual fixed-grid boundaries.
+					! Do NOT add the whole-grid mass tolerance here: the grid spans
+					! many orders of magnitude, so a tolerance scaled by the largest
+					! edge can exceed the widths of the smallest bins and incorrectly
+					! classify a reactivated dry particle into bin 1.  A value exactly
+					! on a boundary is assigned to the lower bin; a roundoff excursion
+					! above it naturally goes to the upper bin, both of which preserve
+					! the inclusive destination-bin invariant.
+					idbin=1
+					do while (idbin < n_binst)
+						if (xmean_new <= mbinedges(idbin+1,imode)) exit
+						idbin=idbin+1
+					enddo
+					idest=(imode-1)*n_binst+idbin
+					! Dry-residual reactivation is a valid boundary transition;
+					! do not print during normal operation.
+					Mtarget=Nsrc*xmean_new
+					npart_tmp(idest)=npart_tmp(idest)+Nsrc
+					mass_tmp(idest)=mass_tmp(idest)+Mtarget
+					moments_tmp(idest,:)=moments_tmp(idest,:)+moments(isrc,:)
+					cycle
+				endif
+
+				! --------------------------------------------------------------
+				! Complete evaporation / sublimation endpoint.
+				!
+				! DVODE is not a positivity-preserving integrator, so a category
+				! whose physical hydrometeor mass reaches zero can arrive here at
+				! exactly zero (after the accepted-state projection above), or at
+				! a tiny non-positive value in other callers.  The nonlinear
+				! Chen-Lamb edge formula is singular/collapsed in this limit.
+				! Represent the entire source population as a point at zero mass
+				! in the first fixed bin.  Number and every carried extensive
+				! moment are retained exactly; hydrometeor mass becomes zero.
+				! --------------------------------------------------------------
+				if (xmean_old > 0._wp .and. xmean_new <= 0._wp) then
+					tolM=100._wp*epsilon(1._wp)*max(abs(x1),abs(x2), &
+						abs(xmean_old),tiny(1._wp))
+					if (abs(mbinedges(1,imode)) > tolM) then
+						print *,'Chen-Lamb zero endpoint requires zero lower grid edge'
+						print *,'mode/bin/lower edge = ',imode,isbin,mbinedges(1,imode)
+						error stop
+					endif
+					! Complete phase-mass loss is a normal physical endpoint;
+					! keep normal runs quiet. Invariant failures around this branch
+					! still print immediately before ERROR STOP.
+					xmean_new=0._wp
+					mass_new(isrc)=0._wp
+					idbin=1
+					idest=(imode-1)*n_binst+idbin
+					npart_tmp(idest)=npart_tmp(idest)+Nsrc
+					! Mtarget is exactly zero at complete phase-mass loss.
+					moments_tmp(idest,:)=moments_tmp(idest,:)+moments(isrc,:)
+					cycle
+				endif
+
 				! --------------------------------------------------------------
 				! Before diffusional growth, the representative mean should lie
 				! within the fixed source bin.
@@ -5523,9 +5710,17 @@
 					abs(xmean_new),abs(x2_new-x1_new),tiny(1._wp))
 				if ((abs(xmean_new-x1_new) <= tolM).or. &
 					(abs(xmean_new-x2_new) <= tolM)) then
+					! Locate the destination using the actual fixed-grid boundaries.
+					! Do NOT add the whole-grid mass tolerance here: the grid spans
+					! many orders of magnitude, so a tolerance scaled by the largest
+					! edge can exceed the widths of the smallest bins and incorrectly
+					! classify a reactivated dry particle into bin 1.  A value exactly
+					! on a boundary is assigned to the lower bin; a roundoff excursion
+					! above it naturally goes to the upper bin, both of which preserve
+					! the inclusive destination-bin invariant.
 					idbin=1
 					do while (idbin < n_binst)
-						if (xmean_new <= mbinedges(idbin+1,imode)+tolM) exit
+						if (xmean_new <= mbinedges(idbin+1,imode)) exit
 						idbin=idbin+1
 					enddo
 					idest=(imode-1)*n_binst+idbin
@@ -6408,7 +6603,9 @@
         var, dummy, gamma_t, dep_density, rhoa, qv, qvsat, wv, &
     	ql, qtot_m,qtot, eps2=1.e-4_wp,hmin=0.0_wp,htry=1.e-1_wp
     real(wp), dimension(parcel1%n_bin_modew) :: stk, vd, impaction_time, loss_rate
-    integer(i4b) :: iloc, i
+    integer(i4b) :: iloc, i, warm_continuations, ice_continuations
+    integer(i4b), parameter :: max_dvode_continuations=10_i4b
+    real(wp) :: warm_start_mismatch, ice_start_mismatch
     
 	! ============================================================================
 	! func1
@@ -6577,16 +6774,87 @@
     ! ODE solver                                                           !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     parcel1%tout=parcel1%tt+parcel1%dt
-    do while (parcel1%tt .lt. parcel1%tout)
-        parcel1%istate=1
-        
+
+    ! At the start of a warm DVODE call the solution-vector water masses and
+    ! BMM per-particle water masses should describe the same accepted state.
+    ! Keep this diagnostic separate from the post-failure mismatch: after a
+    ! recoverable ISTATE=-1 return, y has advanced while mbin is intentionally
+    ! frozen for the duration of the ODE solve.
+    warm_start_mismatch=0._wp
+    if (count(parcel1%npart > 1.e-9_wp) > 0) then
+        warm_start_mismatch=maxval(abs( &
+            parcel1%y(1:parcel1%n_bin_modew)- &
+            parcel1%mbin(1:parcel1%n_bin_modew,n_comps+1)), &
+            mask=parcel1%npart > 1.e-9_wp)
+    endif
+
+    parcel1%istate=1
+    warm_continuations=0
+    do
         call dvode(func1,parcel1%neq,parcel1%y,parcel1%tt,parcel1%tout,&
                    parcel1%itol,parcel1%rtol,parcel1%atol,&
                    parcel1%itask,parcel1%istate,parcel1%iopt,&
                    parcel1%rwork,parcel1%lrw,&
                    parcel1%iwork,parcel1%liw,jparcelwarm, &
                    parcel1%mf,parcel1%rpar,parcel1%ipar)
+
+        ! ISTATE=-1 is DVODE's recoverable "excess work on this call" return.
+        ! The state y and time tt are valid at the last accepted internal step.
+        ! Continue that SAME problem with ISTATE=2; never restart it with
+        ! ISTATE=1, which would throw away solver history and can repeat the
+        ! same expensive interval indefinitely.  Keep a finite outer cap so a
+        ! genuinely pathological step still fails visibly.
+        if (parcel1%istate.eq.-1 .and. parcel1%tt.lt.parcel1%tout) then
+            warm_continuations=warm_continuations+1
+            if (warm_continuations.gt.max_dvode_continuations) exit
+            ! Recoverable MXSTEP continuation: remain quiet unless the
+            ! bounded continuation ultimately fails below.
+            parcel1%istate=2
+            cycle
+        endif
+        exit
     enddo
+
+    if (parcel1%istate < 0) then
+        print *,'DVODE warm failure: ISTATE = ',parcel1%istate
+        print *,'t, tout, dt = ',parcel1%tt,parcel1%tout,parcel1%dt
+        print *,'min/max liquid mass = ', &
+            minval(parcel1%y(1:parcel1%n_bin_modew)), &
+            maxval(parcel1%y(1:parcel1%n_bin_modew))
+        print *,'dry occupied bins at step start = ', &
+            count(parcel1%mbin(1:parcel1%n_bin_modew,n_comps+1) <= 0._wp .and. &
+                  parcel1%npart(1:parcel1%n_bin_modew) > 1.e-9_wp)
+        print *,'PRE-DVODE max occupied |y-mbin_water| = ',warm_start_mismatch
+        print *,'DVODE continuation chunks attempted = ',warm_continuations
+        if (count(parcel1%npart(1:parcel1%n_bin_modew) > 1.e-9_wp) > 0) then
+            print *,'min/max OCCUPIED liquid mass = ', &
+                minval(parcel1%y(1:parcel1%n_bin_modew), &
+                    mask=parcel1%npart(1:parcel1%n_bin_modew) > 1.e-9_wp), &
+                maxval(parcel1%y(1:parcel1%n_bin_modew), &
+                    mask=parcel1%npart(1:parcel1%n_bin_modew) > 1.e-9_wp)
+            print *,'max occupied |y-mbin_water| = ', &
+                maxval(abs(parcel1%y(1:parcel1%n_bin_modew)- &
+                    parcel1%mbin(1:parcel1%n_bin_modew,n_comps+1)), &
+                    mask=parcel1%npart(1:parcel1%n_bin_modew) > 1.e-9_wp)
+        endif
+        print *,'DVODE NST,NFE,NJE,NQU = ', parcel1%iwork(11), &
+            parcel1%iwork(12), parcel1%iwork(13), parcel1%iwork(14)
+        print *,'DVODE HU,HCUR,TCUR,TOLSF = ', parcel1%rwork(11), &
+            parcel1%rwork(12), parcel1%rwork(13), parcel1%rwork(14)
+        error stop 'DVODE warm integration failed'
+    endif
+
+    ! DVODE does not enforce non-negativity.  During the final evaporation of a
+    ! very small category it can accept a small negative representative mass
+    ! even though the RHS suppresses further evaporation once y<=0.  Project
+    ! that accepted state onto the physical absorbing boundary before any bin
+    ! remapping or downstream microphysics sees it.
+    ! Complete evaporation is a valid boundary crossing; project quietly.
+    where (parcel1%y(1:parcel1%n_bin_modew) < 0._wp)
+        parcel1%y(1:parcel1%n_bin_modew)=0._wp
+    end where
+
+    call assert_warm_state_finite('warm DVODE accepted, before growth remap')
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 	! =====================================================================
@@ -6601,6 +6869,7 @@
 		parcel1%yold(1:parcel1%n_bin_modew), &
 		parcel1%y(1:parcel1%n_bin_modew), &
 		parcel1%moments(1:parcel1%n_bin_modew,:), parcel1%mbin)
+	call assert_warm_state_finite('after warm growth remap')
 	
 	if (parcel1%ice_flag.eq.1) then	
 		! For liquid particles both of these mass moments are
@@ -6689,6 +6958,8 @@
         endif
     endif
 
+    call assert_warm_state_finite('after entrainment/moving-centre processing')
+
     if(ice_flag .eq. 1) then
         ! ice part of the parcel model
         
@@ -6743,15 +7014,58 @@
         
         
         
-        do while (parcel1%ttice .lt. parcel1%toutice)
-            parcel1%istateice=1
+        ice_start_mismatch=0._wp
+        if (count(parcel1%npartice > 1.e-9_wp) > 0) then
+            ice_start_mismatch=maxval(abs( &
+                parcel1%yice(1:parcel1%n_bin_modew)- &
+                parcel1%mbinice(1:parcel1%n_bin_modew,n_comps+1)), &
+                mask=parcel1%npartice > 1.e-9_wp)
+        endif
+
+        parcel1%istateice=1
+        ice_continuations=0
+        do
             call dvode(func2,parcel1%neqice,parcel1%yice,parcel1%ttice,parcel1%toutice,&
                            parcel1%itolice,parcel1%rtolice,parcel1%atolice,&
                            parcel1%itaskice,parcel1%istateice,parcel1%ioptice,&
                            parcel1%rworkice,parcel1%lrwice,&
                            parcel1%iworkice,parcel1%liwice,jparcelwarm, &
                            parcel1%mfice,parcel1%rparice,parcel1%iparice)
+
+            if (parcel1%istateice.eq.-1 .and. parcel1%ttice.lt.parcel1%toutice) then
+                ice_continuations=ice_continuations+1
+                if (ice_continuations.gt.max_dvode_continuations) exit
+                ! Recoverable MXSTEP continuation: remain quiet unless the
+                ! bounded continuation ultimately fails below.
+                parcel1%istateice=2
+                cycle
+            endif
+            exit
         enddo
+
+        if (parcel1%istateice < 0) then
+            print *,'DVODE ice failure: ISTATE = ',parcel1%istateice
+            print *,'t, tout, dt = ',parcel1%ttice,parcel1%toutice,parcel1%dt
+            print *,'min/max ice mass = ', &
+                minval(parcel1%yice(1:parcel1%n_bin_modew)), &
+                maxval(parcel1%yice(1:parcel1%n_bin_modew))
+            print *,'PRE-DVODE max occupied |yice-mbinice| = ',ice_start_mismatch
+            print *,'DVODE ice continuation chunks attempted = ',ice_continuations
+            print *,'DVODE ice NST,NFE,NJE,NQU = ', parcel1%iworkice(11), &
+                parcel1%iworkice(12), parcel1%iworkice(13), parcel1%iworkice(14)
+            print *,'DVODE ice HU,HCUR,TCUR,TOLSF = ', parcel1%rworkice(11), &
+                parcel1%rworkice(12), parcel1%rworkice(13), parcel1%rworkice(14)
+            error stop 'DVODE ice integration failed'
+        endif
+
+        ! As for liquid water, DVODE can cross the non-negative ice-mass
+        ! boundary by a small amount on the final sublimation step.  Project
+        ! immediately, before rime/shape diagnostics use yice.
+        ! Complete sublimation is a valid boundary crossing; project quietly.
+        where (parcel1%yice(1:parcel1%n_bin_modew) < 0._wp)
+            parcel1%yice(1:parcel1%n_bin_modew)=0._wp
+        end where
+
         ! rime also evaporates off
         call reduce_rime(parcel1%n_bin_modew,parcel1%yice(1:parcel1%n_bin_modew), &
             parcel1%yoldice(1:parcel1%n_bin_modew), &
@@ -8379,6 +8693,7 @@
 
         n=parcel1%n_bin_modew
         dq_actual=0._wp
+        call assert_warm_state_finite('homogeneous BL evaporation entry')
         if (dq_target.le.tiny(1._wp)) return
         allocate(mold(n),mnew(n),active(n))
         mold=parcel1%y(1:n)
@@ -8434,10 +8749,22 @@
         endif
 
         dq_actual=sum(parcel1%npart*max(mold-mnew,0._wp))
-        parcel1%y(1:n)=mnew
 
+        ! Remap the post-evaporation masses first.  apply_growth_bin_scheme may
+        ! move number/moments between fixed bins and, crucially, it updates the
+        ! representative mass vector mnew to the remapped destination means.
+        !
+        ! Do NOT copy the pre-remap mnew into parcel1%y and then leave it there:
+        ! that makes y inconsistent with npart/moments/mbin after Chen-Lamb
+        ! transfer and can present DVODE with an occupied bin carrying the wrong
+        ! (often extremely small) water mass on the next timestep.
         call apply_growth_bin_scheme(parcel1%npart,mold,mnew, &
             parcel1%moments(1:n,:),parcel1%mbin)
+
+        ! Synchronize the prognostic ODE masses with the REMAPPED representative
+        ! masses returned in mnew.
+        parcel1%y(1:n)=mnew
+
         if (parcel1%ice_flag.eq.1) then
             parcel1%moments(1:n,parcel1%n_comps+4)=parcel1%npart*parcel1%y(1:n)
             parcel1%moments(1:n,parcel1%n_comps+5)=parcel1%npart*parcel1%y(1:n)
@@ -8445,6 +8772,7 @@
         do i=1,n
             parcel1%mbin(i,parcel1%n_comps+1)=parcel1%y(i)
         enddo
+        call assert_warm_state_finite('homogeneous BL evaporation/remap exit')
         deallocate(mold,mnew,active)
     end subroutine apply_chamber_bl_homogeneous_evaporation
 
@@ -9095,10 +9423,10 @@
     real(wp) :: m0_ice,m1_ice,m2_ice,dmean_ice,dsigma_ice,rel_disp_ice
     real(wp) :: svp1,qv,rm,rhod,beta_ext, beta_abs,beta_ext_ice, beta_abs_ice
 	real(wp) :: phi_mean,nmon_mean,rhoi_mean, nact, test, &
-		mcrit
-	real(wp) :: denom
-	real(wp) :: fallrate_liq,fallrate_ice
-	integer(i4b) :: i
+        mcrit,mlower,mupper,fracact,activated_mass_width
+    real(wp) :: denom
+    real(wp) :: fallrate_liq,fallrate_ice
+    integer(i4b) :: i,ibin_diag,imode_diag
     
     ! output to netcdf file
     if(new_file) then
@@ -9212,7 +9540,16 @@
         call check( nf90_put_att(io1%ncid, io1%a_dimid, &
                    "units", "m-1") )
                    
-        ! define variable: number > 2.5 microns (8.1812e-15 kg)
+        ! Numerical bin treatment used for this run.  Written as a time-series
+        ! scalar and as a global attribute for post-processing.
+        call check( nf90_def_var(io1%ncid, "bin_scheme_flag", NF90_INT, &
+                    (/io1%x_dimid/), io1%varid) )
+        call check( nf90_put_att(io1%ncid,io1%varid,"long_name", &
+                   "BMM bin scheme: 0 full-moving, 1 moving-centre, 2 Chen-Lamb") )
+        call check( nf90_put_att(io1%ncid,NF90_GLOBAL,"bin_scheme_flag", &
+                   parcel1%bin_scheme_flag) )
+
+        ! define variable: activated liquid-drop number
         call check( nf90_def_var(io1%ncid, "ndrop", NF90_DOUBLE, &
                     (/io1%x_dimid/), io1%varid) )
         ! get id to a_dimid
@@ -9220,6 +9557,12 @@
         ! units
         call check( nf90_put_att(io1%ncid, io1%a_dimid, &
                    "units", "#/kg") )
+        call check( nf90_put_att(io1%ncid,io1%a_dimid,"long_name", &
+                   "activated liquid-drop number mixing ratio") )
+        call check( nf90_put_att(io1%ncid,io1%a_dimid,"comment", &
+                   "For bin schemes 1 and 2, if the Koehler critical water "// &
+                   "mass lies inside a fixed mass bin, only the fraction "// &
+                   "(mupper-mcrit)/(mupper-mlower) of that bin is activated.") )
                    
         ! Liquid-drop bulk size diagnostics. These are calculated from the
         ! same activated population used for ndrop and from the instantaneous
@@ -9267,6 +9610,9 @@
         call check( nf90_put_att(io1%ncid,io1%varid,"units","kg-1") )
         call check( nf90_put_att(io1%ncid,io1%varid,"long_name", &
                    "activated liquid-drop number mixing ratio in each native bin") )
+        call check( nf90_put_att(io1%ncid,io1%varid,"comment", &
+                   "For fixed-bin schemes 1 and 2 this may be a fractional "// &
+                   "portion of nwat when the activation threshold cuts a bin.") )
 
         ! define variable: mwat
         call check( nf90_def_var(io1%ncid, "mwat", NF90_DOUBLE, &
@@ -9651,13 +9997,56 @@
 
     ! Diagnose activated drops once and use exactly the same population for
     ! ndrop, bulk size moments, relative dispersion and the native nliq PSD.
+    !
+    ! Full-moving particles are point representatives.  For fixed-bin schemes
+    ! 1 and 2, if the critical water mass cuts a bin, assume uniform number per
+    ! unit water mass within that fixed interval and count only the portion
+    ! above the activation threshold.
     parcel1%ndrop=0._wp
-    do i=1,parcel1%n_bin_modew
-        if (parcel1%npart(i) <= 0._wp) cycle
-        if (particle_is_activated(i,parcel1%y(i), &
-            parcel1%y(parcel1%ite))) parcel1%ndrop(i)=parcel1%npart(i)
-    enddo
+    select case(parcel1%bin_scheme_flag)
+    case(BIN_FULL_MOVING)
+        do i=1,parcel1%n_bin_modew
+            if (parcel1%npart(i) <= 0._wp) cycle
+            if (particle_is_activated(i,parcel1%y(i), &
+                parcel1%y(parcel1%ite))) parcel1%ndrop(i)=parcel1%npart(i)
+        enddo
+
+    case(BIN_MOVING_CENTRE,BIN_CHEN_LAMB)
+        do i=1,parcel1%n_bin_modew
+            if (parcel1%npart(i) <= 0._wp) cycle
+            if (parcel1%y(i) <= tiny(1._wp)) cycle
+
+            ibin_diag=mod(i-1,parcel1%n_bins1)+1
+            imode_diag=(i-1)/parcel1%n_bins1+1
+            mlower=parcel1%mbinedges(ibin_diag,imode_diag)
+            mupper=parcel1%mbinedges(ibin_diag+1,imode_diag)
+            if (mupper <= mlower) then
+                print *,'Invalid water-mass bin in ndrop diagnostic'
+                print *,'mode/bin/lower/upper = ',imode_diag,ibin_diag,mlower,mupper
+                error stop 'non-positive ndrop diagnostic bin width'
+            endif
+
+            mcrit=particle_activation_water_mass(i,parcel1%y(parcel1%ite))
+            if (mcrit <= mlower) then
+                fracact=1._wp
+            elseif (mcrit >= mupper) then
+                fracact=0._wp
+            else
+                activated_mass_width=mupper-mcrit
+                fracact=activated_mass_width/(mupper-mlower)
+            endif
+            fracact=min(max(fracact,0._wp),1._wp)
+            parcel1%ndrop(i)=fracact*parcel1%npart(i)
+        enddo
+
+    case default
+        error stop 'Unknown bin_scheme_flag in ndrop diagnostic'
+    end select
     nact=sum(parcel1%ndrop)
+
+    call check( nf90_inq_varid(io1%ncid, "bin_scheme_flag", io1%varid ) )
+    call check( nf90_put_var(io1%ncid,io1%varid,parcel1%bin_scheme_flag, &
+        start=(/io1%icur/)))
 
     call check( nf90_inq_varid(io1%ncid, "ndrop", io1%varid ) )
     call check( nf90_put_var(io1%ncid,io1%varid,nact,start=(/io1%icur/)))
@@ -9957,6 +10346,42 @@
 
 
 	! ============================================================================
+	! assert_warm_state_finite
+	! ============================================================================
+	!>Diagnostic invariant: stop at the first operator that creates a non-finite
+	!>warm-bin state, instead of allowing NaN/Inf to reach the next DVODE call.
+	subroutine assert_warm_state_finite(context)
+		use, intrinsic :: ieee_arithmetic, only : ieee_is_finite
+		implicit none
+		character(len=*), intent(in) :: context
+		integer(i4b) :: i,n,imode,ibin
+
+		n=parcel1%n_bin_modew
+		do i=1,n
+			if ((.not.ieee_is_finite(parcel1%npart(i))).or. &
+			    (.not.ieee_is_finite(parcel1%y(i))).or. &
+			    any(.not.ieee_is_finite(parcel1%mbin(i,:))).or. &
+			    any(.not.ieee_is_finite(parcel1%moments(i,:)))) then
+				imode=(i-1)/parcel1%n_bins1+1
+				ibin=mod(i-1,parcel1%n_bins1)+1
+				print *,'NON-FINITE WARM STATE after: ',trim(context)
+				print *,'time/source/mode/bin = ',parcel1%tt,i,imode,ibin
+				print *,'npart,y,mbin_water = ',parcel1%npart(i), &
+				    parcel1%y(i),parcel1%mbin(i,parcel1%n_comps+1)
+				print *,'mbin = ',parcel1%mbin(i,:)
+				print *,'moments = ',parcel1%moments(i,:)
+				if (ibin >= 1 .and. ibin <= parcel1%n_bins1) then
+					print *,'fixed water-mass edges = ', &
+					    parcel1%mbinedges(ibin,imode), &
+					    parcel1%mbinedges(ibin+1,imode)
+				endif
+				error stop 'non-finite warm-bin state'
+			endif
+		enddo
+	end subroutine assert_warm_state_finite
+
+
+	! ============================================================================
 	! map_to_sce
 	! ============================================================================
 	!>@author
@@ -10196,14 +10621,30 @@
     integer(i4b), intent(in) :: sce_flag
     logical, intent(in) :: hm_flag, mode1_flag, mode2_flag
     integer(i4b), intent(in) :: break_flag
-    integer(i4b) :: i, j, nt
-    real(wp) :: rhoa
+    integer(i4b) :: i, j, nt, imode_sce, ibin_sce
+    real(wp) :: rhoa, sce_mass_coord, sce_wet_number, sce_wet_mass, dry_tol
+    logical, allocatable :: sce_dry_mask(:)
+    real(wp), allocatable :: sce_dry_npart(:)
+    real(wp), allocatable :: sce_dry_moments(:,:)
     
+	! ----------------------------------------------------------------------
+	! Dry aerosol residuals are valid BMM states after complete evaporation,
+	! but the SCE hydrometeor solver assumes a strictly positive hydrometeor
+	! mass coordinate. Scratch arrays preserve such residuals while they are
+	! temporarily excluded from hydrometeor collection.
+	! ----------------------------------------------------------------------
+	if (sce_flag.gt.0) then
+		allocate(sce_dry_mask(parcel1%n_bin_modew))
+		allocate(sce_dry_npart(parcel1%n_bin_modew))
+		allocate(sce_dry_moments(parcel1%n_bin_modew,size(parcel1%moments,2)))
+	endif
+
 	! calculate terminal velocities (needed because of the output call on 1st time-step)
 	call update_terminal_velocities()
 
     nt=ceiling(runtime / real(dt,kind=wp))
     do i=1,nt
+        call assert_warm_state_finite('driver timestep entry')
         ! Output state left by previous timestep
         call output(io1%new_file,outputfile)
         
@@ -10215,11 +10656,13 @@
 		! when ventilation is required.
         call bin_microphysics(fparcelwarm, fparcelcold, & 
             icenucleation, noncollisional_iceformation)
+        call assert_warm_state_finite('after bin_microphysics')
 
         ! Optional chamber boundary-layer recirculation.  Both BL modes use
         ! the same external total-water exchange; only the phase response differs.
         if (chamber_bl_mix.gt.0) then
             call apply_chamber_bl_exchange()
+            call assert_warm_state_finite('after chamber BL exchange')
         endif
 
 		! Particle masses/shapes have now changed.  BIN_FULL_MOVING is
@@ -10234,7 +10677,44 @@
             
             ! Map the BMM variables to the SCE variables
             call map_to_sce(ice_flag)
-			! Build the collision kernel from the CURRENT BMM state
+
+            ! --------------------------------------------------------------
+            ! Exclude completely evaporated warm aerosol residuals from SCE.
+            ! Chen-Lamb can legitimately leave an occupied population at the
+            ! zero-water edge. These are dry aerosol residuals, not droplets.
+            ! Preserve number and all moments, remove them from SCE, and give
+            ! the now-empty SCE category a strictly positive coordinate.
+            ! --------------------------------------------------------------
+            sce_dry_mask=.false.
+            sce_dry_npart=0._wp
+            sce_dry_moments=0._wp
+            do j=1,parcel1%n_bin_modew
+                imode_sce=(j-1)/parcel1%n_bins1+1
+                ibin_sce=mod(j-1,parcel1%n_bins1)+1
+                dry_tol=1000._wp*epsilon(1._wp)*max( &
+                    parcel1%mbinedges(ibin_sce+1,imode_sce),tiny(1._wp))
+
+                if (parcel1%npartall(j)>qsmall2 .and. &
+                    parcel1%mbinall(j,parcel1%n_comps+1)<=dry_tol) then
+                    sce_dry_mask(j)=.true.
+                    sce_dry_npart(j)=parcel1%npartall(j)
+                    sce_dry_moments(j,:)=parcel1%moments(j,:)
+
+                    parcel1%npartall(j)=0._wp
+                    parcel1%moments(j,:)=0._wp
+                    parcel1%mbinall(j,1:parcel1%n_comps)=0._wp
+                    sce_mass_coord=0.5_wp*( &
+                        parcel1%mbinedges(ibin_sce,imode_sce)+ &
+                        parcel1%mbinedges(ibin_sce+1,imode_sce))
+                    parcel1%mbinall(j,parcel1%n_comps+1)=max( &
+                        sce_mass_coord,tiny(1._wp))
+                endif
+            enddo
+
+            if (any(sce_dry_mask)) then
+            endif
+
+			! Build the collision kernel from the CURRENT SCE-active state
 			call update_collision_kernel()              
               
             ! One timestep of the selected SCE model.  Both the basic SCE
@@ -10261,6 +10741,33 @@
                             parcel1%bin_scheme_flag.eq.BIN_FULL_MOVING )
             endif
 
+            ! --------------------------------------------------------------
+            ! Merge saved dry residuals back before reconstructing per-particle
+            ! aerosol masses. SCE may have deposited a wet population into the
+            ! same fixed bin, so conserve number, water mass, and every moment.
+            ! --------------------------------------------------------------
+            do j=1,parcel1%n_bin_modew
+                if (.not.sce_dry_mask(j)) cycle
+
+                sce_wet_number=parcel1%npartall(j)
+                sce_wet_mass=sce_wet_number* &
+                    parcel1%mbinall(j,parcel1%n_comps+1)
+                parcel1%npartall(j)=sce_wet_number+sce_dry_npart(j)
+                parcel1%moments(j,:)=parcel1%moments(j,:)+ &
+                    sce_dry_moments(j,:)
+
+                if (parcel1%npartall(j)>qsmall2) then
+                    parcel1%mbinall(j,parcel1%n_comps+1)= &
+                        sce_wet_mass/parcel1%npartall(j)
+                else
+                    imode_sce=(j-1)/parcel1%n_bins1+1
+                    ibin_sce=mod(j-1,parcel1%n_bins1)+1
+                    parcel1%mbinall(j,parcel1%n_comps+1)=0.5_wp*( &
+                        parcel1%mbinedges(ibin_sce,imode_sce)+ &
+                        parcel1%mbinedges(ibin_sce+1,imode_sce))
+                endif
+            enddo
+
 			! latent heat of fusion
 			if(ice_flag.eq.1) then
 				if(.not.chamber_force_temperature) then
@@ -10279,6 +10786,7 @@
             enddo                                                         
             ! map SCE to BMM
             call map_to_bmm(ice_flag)
+            call assert_warm_state_finite('after SCE map_to_bmm')
 
 			! SCE has changed masses/numbers/composition, so update
 			! velocities again for the new accepted state.
@@ -10292,6 +10800,7 @@
         !--------------------------------------------------------------
         if (chamber_fan_loss.gt.0 .or. chamber_wall_loss.gt.0) then
             call apply_chamber_particle_losses()
+            call assert_warm_state_finite('after chamber particle losses')
         endif
 
         !--------------------------------------------------------------
@@ -10304,6 +10813,7 @@
         !--------------------------------------------------------------
         if(fallout_flag) then
             call apply_particle_fallout()
+            call assert_warm_state_finite('after fallout')
         endif
 
 
@@ -10328,6 +10838,10 @@
     call output(io1%new_file,outputfile)
     
     
+    if (allocated(sce_dry_mask)) deallocate(sce_dry_mask)
+    if (allocated(sce_dry_npart)) deallocate(sce_dry_npart)
+    if (allocated(sce_dry_moments)) deallocate(sce_dry_moments)
+
     end subroutine bmm_driver
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
