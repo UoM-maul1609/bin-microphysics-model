@@ -89,7 +89,8 @@
 			! wall by the BL saturation cap. Positive values denote loss.
 			! Fan and wall diagnostics are cumulative
             ! positive airborne hydrometeor/particle losses.
-            real(wp) :: qchamber_bl=0._wp, qchamber_bl_step=0._wp
+            real(wp) :: qchamber_bl=0._wp, qchamber_bl_step=0._wp, &
+                        qchamber_bl_evap=0._wp, qchamber_bl_evap_step=0._wp
             real(wp) :: qfan_liq=0._wp, qfan_ice=0._wp
             real(wp) :: nfan_liq=0._wp, nfan_ice=0._wp
             real(wp) :: qwall_liq=0._wp, qwall_ice=0._wp
@@ -200,9 +201,10 @@
         logical :: chamber_force_pressure=.false., &
                    chamber_force_temperature=.false., &
                    chamber_force_qtot=.false.
-        integer(i4b) :: chamber_bl_mix=0_i4b, chamber_bl_temp_mode=0_i4b, &
+        integer(i4b) :: chamber_bl_mix=0_i4b, chamber_bl_evap_mode=3_i4b, &
                         chamber_fan_loss=0_i4b, chamber_wall_loss=0_i4b
-        real(wp) :: chamber_bl_tau=60._wp, chamber_bl_temp_offset=0._wp, &
+        real(wp) :: chamber_bl_tau=60._wp, chamber_bl_alpha_t=1._wp, &
+                    chamber_bl_temp_offset=0._wp, &
                     chamber_fan_loss_kmax=0._wp, chamber_fan_loss_d50_ref=4.e-6_wp, &
                     chamber_fan_loss_exp=6._wp, chamber_fan_rpm=25000._wp, &
                     chamber_fan_rpm_ref=25000._wp, &
@@ -423,8 +425,8 @@
                     qtot_chamber
         namelist /chamber_options/ n_levels_c, &
                     chamber_force_pressure, chamber_force_temperature, chamber_force_qtot, &
-                    chamber_bl_mix, chamber_bl_tau, chamber_bl_temp_mode, &
-                    chamber_bl_temp_offset, &
+                    chamber_bl_mix, chamber_bl_tau, chamber_bl_evap_mode, &
+                    chamber_bl_alpha_t, chamber_bl_temp_offset, &
                     chamber_fan_loss, chamber_fan_loss_kmax, chamber_fan_loss_d50_ref, &
                     chamber_fan_loss_exp, chamber_fan_rpm, chamber_fan_rpm_ref, &
                     chamber_wall_loss, chamber_wall_ustar, chamber_diameter, chamber_height
@@ -460,7 +462,7 @@
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         ! read in namelists	and allocate arrays								   !
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        open(8,file=nmlfile,status='old', recl=80, delim='apostrophe')
+		open(unit=8,file=nmlfile,status='old',action='read',delim='apostrophe')
         rewind(8)
         read(8,nml=run_vars)
 
@@ -473,7 +475,8 @@
         chamber_force_qtot=.false.
         chamber_bl_mix=0_i4b
         chamber_bl_tau=60._wp
-        chamber_bl_temp_mode=0_i4b
+        chamber_bl_alpha_t=1._wp
+        chamber_bl_evap_mode=3_i4b
         chamber_bl_temp_offset=0._wp
         chamber_fan_loss=0_i4b
         chamber_fan_loss_kmax=0._wp
@@ -502,15 +505,17 @@
         if (n_levels_c.lt.0) error stop 'n_levels_c must be non-negative'
         if (chamber_forcing_active .and. n_levels_c.lt.2) error stop &
             'Measured chamber forcing requires n_levels_c >= 2'
-        if (chamber_bl_mix.lt.0 .or. chamber_bl_mix.gt.3) error stop &
-            'chamber_bl_mix must be 0 (off), 1 (homogeneous), ' // &
-            '2 (uniform extreme inhomogeneous), or 3 (D2-weighted extreme inhomogeneous)'
-        if (chamber_bl_mix.gt.0 .and. chamber_bl_tau.le.0._wp) error stop &
+        if (chamber_bl_mix.lt.0 .or. chamber_bl_mix.gt.1) error stop &
+            'chamber_bl_mix must be 0 (off) or 1 (coupled wall-BL processing)'
+        if (chamber_bl_mix.eq.1 .and. chamber_bl_tau.le.0._wp) error stop &
             'chamber_bl_tau must be > 0 when chamber_bl_mix is enabled'
-        if (chamber_bl_temp_mode.lt.0 .or. chamber_bl_temp_mode.gt.1) error stop &
-            'chamber_bl_temp_mode must be 0 (fixed gas-temperature offset) or 1 (wall time series)'
-        if (chamber_bl_mix.gt.0 .and. chamber_bl_temp_mode.eq.1 .and. n_levels_c.lt.2) error stop &
-            'Wall-temperature BL forcing requires n_levels_c >= 2'
+        if (chamber_bl_alpha_t.lt.0._wp) error stop &
+            'chamber_bl_alpha_t must be >= 0'
+        if (chamber_bl_evap_mode.lt.1 .or. chamber_bl_evap_mode.gt.3) error stop &
+            'chamber_bl_evap_mode must be 1 (homogeneous D2), 2 (uniform extreme), or 3 (D2-weighted extreme)'
+        if (chamber_bl_mix.eq.1 .and. chamber_bl_alpha_t.gt.0._wp .and. &
+            n_levels_c.lt.2) error stop &
+            'Coupled chamber BL with chamber_bl_alpha_t > 0 requires wall_temp_chamber data'
         if (chamber_fan_loss.lt.0 .or. chamber_fan_loss.gt.1) error stop &
             'chamber_fan_loss must be 0 (off) or 1 (sigmoid inertial collection)'
         if (chamber_fan_loss.eq.1) then
@@ -635,9 +640,9 @@
         if(n_levels_c.gt.0) then
             rewind(8)
             read(8,nml=chamber_spec)
-            if (chamber_bl_mix.gt.0 .and. chamber_bl_temp_mode.eq.1) then
+            if (chamber_bl_mix.eq.1 .and. chamber_bl_alpha_t.gt.0._wp) then
                 if (any(wall_temp_chamber.lt.150._wp) .or. any(wall_temp_chamber.gt.400._wp)) &
-                    error stop 'chamber_bl_temp_mode=1 requires valid wall_temp_chamber values [K]'
+                    error stop 'Wall-coupled BL temperature mode requires valid wall_temp_chamber values [K]'
             endif
         endif
         if(chamber_force_pressure .or. chamber_force_temperature) then
@@ -989,6 +994,7 @@
 	! Chamber diagnostics
 	parcel1%qchamber_bl=0._wp
 	parcel1%qchamber_bl_step=0._wp
+	parcel1%qchamber_bl_evap_step=0._wp
 	parcel1%qfan_liq=0._wp
 	parcel1%qfan_ice=0._wp
 	parcel1%nfan_liq=0._wp
@@ -1519,7 +1525,7 @@
 
     ! Temporary warm population used for aerosol residuals released by either
     ! atmospheric extreme-inhomogeneous mixing or chamber BL modes 2/3.
-    if ((.not.adiabatic_prof) .or. chamber_bl_mix.eq.2 .or. chamber_bl_mix.eq.3) then
+    if ((.not.adiabatic_prof) .or. chamber_bl_mix.eq.1) then
         allocate( parcel1%mbinedges_temp(1:parcel1%n_bins1+1,1:parcel1%n_modes), &
             STAT = AllocateStatus)
         if (AllocateStatus /= 0) STOP "*** Not enough memory ***"
@@ -5497,6 +5503,39 @@
 				! --------------------------------------------------------------
 				Mtarget=Nsrc*xmean_new
 				! --------------------------------------------------------------
+				! Degenerate edge state.
+				!
+				! A finite positive linear Chen-Lamb distribution cannot
+				! represent a population whose mean lies exactly on one of its
+				! support boundaries: the positive-support correction collapses
+				! to zero width.  This state is physically possible during strong
+				! evaporation, especially for the homogeneous D^2 BL closure when
+				! the smallest droplets reach zero water mass.
+				!
+				! In that limit the correct representation is a point population
+				! at xmean_new.  Deposit the complete source population directly
+				! into the fixed destination bin containing that mass.  Number,
+				! hydrometeor mass and every carried extensive moment are then
+				! conserved exactly, without trying to construct a zero-width
+				! linear distribution.
+				! --------------------------------------------------------------
+				tolM=1000._wp*epsilon(1._wp)*max(abs(x1_new),abs(x2_new), &
+					abs(xmean_new),abs(x2_new-x1_new),tiny(1._wp))
+				if ((abs(xmean_new-x1_new) <= tolM).or. &
+					(abs(xmean_new-x2_new) <= tolM)) then
+					idbin=1
+					do while (idbin < n_binst)
+						if (xmean_new <= mbinedges(idbin+1,imode)+tolM) exit
+						idbin=idbin+1
+					enddo
+					idest=(imode-1)*n_binst+idbin
+					npart_tmp(idest)=npart_tmp(idest)+Nsrc
+					mass_tmp(idest)=mass_tmp(idest)+Mtarget
+					moments_tmp(idest,:)=moments_tmp(idest,:)+moments(isrc,:)
+					cycle
+				endif
+
+				! --------------------------------------------------------------
 				! Reconstruct the POSTGROWTH linear distribution from:
 				!
 				!       N = Nsrc
@@ -7824,8 +7863,10 @@
     ! chamber_bl_d2_liquid_fractions
     ! ============================================================================
     !>@brief
-    !>Constructs the size-dependent complete-evaporation fractions used by
-    !>chamber_bl_mix=3.  The weighting is motivated by the classical D^2
+    !>Constructs size-dependent complete-evaporation fractions using the
+    !>classical D^2 weighting.  This helper is retained for legacy/internal
+    !>sensitivity routines; the preferred coupled wall mode uses
+    !>chamber_bl_d2_target_fractions instead.  The weighting is motivated by the classical D^2
     !>evaporation lifetime, tau_evap ~ D^2 ~ m_w^(2/3): particles with shorter
     !>lifetimes receive a larger complete-evaporation probability.  The
     !>smallest activated liquid-water mass is used only to nondimensionalise
@@ -7918,7 +7959,8 @@
     ! diagnose_chamber_bl_d2_state
     ! ============================================================================
     !>@brief
-    !>Thermodynamic diagnosis for chamber_bl_mix=3.  fracliq(i) is the fraction
+    !>Legacy D2 thermodynamic diagnosis retained for backward/internal use.
+    !>fracliq(i) is the fraction
     !>of activated warm bin i that disappears completely.  Surviving particles
     !>are unchanged.  Thus the closure is extreme-inhomogeneous, but the
     !>complete-evaporation probability is biased toward the shortest D^2-law
@@ -8185,33 +8227,358 @@
 
 
     ! ============================================================================
+    ! diagnose_coupled_chamber_bl_state
+    ! ============================================================================
+    !>@brief
+    !>Diagnoses the local thermodynamic state of air that visits the chamber
+    !>wall when chamber_bl_mix=1.  The caller supplies the effective sensible
+    !>BL temperature T_sens = Tgas + alpha_T*(Twall-Tgas) + dT_offset.  The
+    !>incoming BL parcel initially
+    !>has the bulk vapour mixing ratio and available activated liquid water.
+    !>
+    !>If the sensible wall contact makes the BL supersaturated (normally a
+    !>colder wall), vapour condenses to the wall.  The condensation amount and
+    !>latent warming are solved together from
+    !>
+    !>    qv - dq_wall = qsat(Tsens + Lv*dq_wall/cp_m).
+    !>
+    !>If the sensible wall contact makes the BL subsaturated (normally a warmer
+    !>wall), activated liquid evaporates.  Evaporation and latent cooling are
+    !>solved together from
+    !>
+    !>    qv + dq_evap = qsat(Tsens - Lv*dq_evap/cp_m),
+    !>
+    !>subject to the available activated-liquid reservoir.  Thus both warm- and
+    !>cold-wall cases are energy- and water-consistent locally.  Internal
+    !>evaporation does not count as chamber water loss; only dq_wall does.
+    !>
+    !>With alpha_T=1 and zero offset, equal wall and gas temperatures recover
+    !>the zero sensible-perturbation limit.  A non-zero offset intentionally
+    !>allows unresolved BL forcing even when the measured wall-gas difference
+    !>is small.  Phase change is controlled by saturation at T_sens.
+    subroutine diagnose_coupled_chamber_bl_state(tsens,qv,ql_available,p, &
+        tbl,qv_bl,dq_wall_local,dq_evap_local)
+        implicit none
+        real(wp), intent(in) :: tsens,qv,ql_available,p
+        real(wp), intent(out) :: tbl,qv_bl,dq_wall_local,dq_evap_local
+        integer(i4b) :: iter
+        real(wp) :: cpm,qvs,lo,hi,mid,ttry,qtry,res
+
+        ! tsens is the unresolved BL sensible-temperature state before latent
+        ! phase change.  For chamber_bl_mix=1 it is diagnosed outside as
+        !
+        !   tsens = Tgas + alpha_T*(Twall-Tgas) + dT_offset.
+        !
+        ! The branch is determined solely by saturation at tsens, not by the
+        ! sign of Twall-Tgas.  This is essential when alpha_T /= 1 or a
+        ! non-zero offset is used.
+        tbl=tsens
+        qv_bl=max(qv,0._wp)
+        dq_wall_local=0._wp
+        dq_evap_local=0._wp
+
+        cpm=max(cp+max(qv,0._wp)*cpv+max(ql_available,0._wp)*cpw,0.5_wp*cp)
+        qvs=eps1*svp_liq(tsens)/max(p-svp_liq(tsens),tiny(1._wp))
+
+        if (qv.gt.qvs) then
+            ! Supersaturated BL: solve condensation of vapour to the wall and
+            ! the associated latent warming.  This is a true loss of airborne
+            ! chamber total water.
+            lo=0._wp
+            hi=max(qv,0._wp)
+            mid=0._wp
+            do iter=1,80
+                mid=0.5_wp*(lo+hi)
+                ttry=tsens+lv*mid/cpm
+                qtry=max(qv-mid,0._wp)
+                qvs=eps1*svp_liq(ttry)/max(p-svp_liq(ttry),tiny(1._wp))
+                res=qtry-qvs
+                if (abs(res).le.1.e-12_wp) exit
+                if (res.gt.0._wp) then
+                    lo=mid
+                else
+                    hi=mid
+                endif
+            enddo
+            dq_wall_local=max(0._wp,min(mid,qv))
+            tbl=tsens+lv*dq_wall_local/cpm
+            qv_bl=max(qv-dq_wall_local,0._wp)
+
+        elseif (qv.lt.qvs .and. ql_available.gt.tiny(1._wp)) then
+            ! Subsaturated BL: solve direct activated-liquid evaporation and
+            ! latent cooling.  This is an internal ql -> qv transfer and does
+            ! NOT remove total water from the chamber.
+            lo=0._wp
+            hi=max(ql_available,0._wp)
+            mid=0._wp
+
+            ! If complete evaporation still leaves the BL subsaturated, use all
+            ! available activated liquid rather than manufacture water.
+            ttry=tsens-lv*hi/cpm
+            qtry=qv+hi
+            qvs=eps1*svp_liq(ttry)/max(p-svp_liq(ttry),tiny(1._wp))
+            if (qtry.lt.qvs) then
+                mid=hi
+            else
+                do iter=1,80
+                    mid=0.5_wp*(lo+hi)
+                    ttry=tsens-lv*mid/cpm
+                    qtry=qv+mid
+                    qvs=eps1*svp_liq(ttry)/max(p-svp_liq(ttry),tiny(1._wp))
+                    res=qtry-qvs
+                    if (abs(res).le.1.e-12_wp) exit
+                    if (res.lt.0._wp) then
+                        lo=mid
+                    else
+                        hi=mid
+                    endif
+                enddo
+            endif
+            dq_evap_local=max(0._wp,min(mid,ql_available))
+            tbl=tsens-lv*dq_evap_local/cpm
+            qv_bl=qv+dq_evap_local
+        else
+            ! At saturation (or with no activated liquid available) there is no
+            ! wall-driven phase change.  Retain the sensible BL temperature.
+            tbl=tsens
+            qv_bl=qv
+        endif
+
+        if (tbl.le.150._wp .or. tbl.ge.400._wp) error stop &
+            'Unphysical temperature in coupled chamber BL thermodynamics'
+    end subroutine diagnose_coupled_chamber_bl_state
+
+
+    ! ============================================================================
+    ! apply_chamber_bl_homogeneous_evaporation
+    ! ============================================================================
+    !>@brief
+    !>Applies homogeneous diffusional evaporation to all currently activated
+    !>warm particles for a prescribed chamber-mean liquid-water target.
+    !>
+    !>Homogeneous here means every activated droplet experiences the same D^2
+    !>decrement.  Since liquid-water mass m_w is proportional to D_w^3, the
+    !>finite D^2-law mapping can be written
+    !>
+    !>  m_w,new = [max(m_w,old^(2/3) - ds, 0)]^(3/2),
+    !>
+    !>with one common ds for all activated bins.  ds is solved by bisection so
+    !>that sum_i N_i (m_w,old-m_w,new) equals dq_target, limited only by the
+    !>available activated liquid.  Small droplets may therefore evaporate
+    !>completely naturally under the common D^2 exposure; larger droplets
+    !>shrink but retain their number.  The ordinary moving-bin remapping is
+    !>applied afterwards so all carried extensive moments remain consistent.
+    subroutine apply_chamber_bl_homogeneous_evaporation(dq_target,dq_actual)
+        implicit none
+        real(wp), intent(in) :: dq_target
+        real(wp), intent(out) :: dq_actual
+        integer(i4b) :: i,n,iter
+        real(wp) :: qavail,lo,hi,mid,qmid,sold,snew
+        logical, allocatable :: active(:)
+        real(wp), allocatable :: mold(:),mnew(:)
+
+        n=parcel1%n_bin_modew
+        dq_actual=0._wp
+        if (dq_target.le.tiny(1._wp)) return
+        allocate(mold(n),mnew(n),active(n))
+        mold=parcel1%y(1:n)
+        mnew=mold
+        active=.false.
+
+        qavail=0._wp
+        hi=0._wp
+        do i=1,n
+            if (parcel1%npart(i).le.tiny(1._wp)) cycle
+            if (.not.particle_is_activated(i,mold(i),parcel1%y(parcel1%ite))) cycle
+            if (mold(i).le.tiny(1._wp)) cycle
+            active(i)=.true.
+            qavail=qavail+parcel1%npart(i)*mold(i)
+            hi=max(hi,mold(i)**twothirds)
+        enddo
+        if (qavail.le.tiny(1._wp)) then
+            deallocate(mold,mnew,active)
+            return
+        endif
+
+        ! Complete evaporation of all activated liquid is the natural upper
+        ! bound.  If the thermodynamic target exceeds this reservoir, use all
+        ! available liquid rather than manufacturing water.
+        if (dq_target.ge.qavail*(1._wp-1.e-12_wp)) then
+            do i=1,n
+                if (active(i)) mnew(i)=0._wp
+            enddo
+        else
+            lo=0._wp
+            do iter=1,80
+                mid=0.5_wp*(lo+hi)
+                qmid=0._wp
+                do i=1,n
+                    if (.not.active(i)) cycle
+                    sold=mold(i)**twothirds
+                    snew=max(sold-mid,0._wp)
+                    qmid=qmid+parcel1%npart(i)*(mold(i)-snew**1.5_wp)
+                enddo
+                if (abs(qmid-dq_target).le.max(1.e-14_wp,1.e-10_wp*dq_target)) exit
+                if (qmid.lt.dq_target) then
+                    lo=mid
+                else
+                    hi=mid
+                endif
+            enddo
+            do i=1,n
+                if (.not.active(i)) cycle
+                sold=mold(i)**twothirds
+                snew=max(sold-mid,0._wp)
+                mnew(i)=snew**1.5_wp
+            enddo
+        endif
+
+        dq_actual=sum(parcel1%npart*max(mold-mnew,0._wp))
+        parcel1%y(1:n)=mnew
+
+        call apply_growth_bin_scheme(parcel1%npart,mold,mnew, &
+            parcel1%moments(1:n,:),parcel1%mbin)
+        if (parcel1%ice_flag.eq.1) then
+            parcel1%moments(1:n,parcel1%n_comps+4)=parcel1%npart*parcel1%y(1:n)
+            parcel1%moments(1:n,parcel1%n_comps+5)=parcel1%npart*parcel1%y(1:n)
+        endif
+        do i=1,n
+            parcel1%mbin(i,parcel1%n_comps+1)=parcel1%y(i)
+        enddo
+        deallocate(mold,mnew,active)
+    end subroutine apply_chamber_bl_homogeneous_evaporation
+
+
+    ! ============================================================================
+    ! chamber_bl_d2_target_fractions
+    ! ============================================================================
+    !>@brief
+    !>Constructs D2-law-weighted complete-evaporation fractions for a prescribed
+    !>gross liquid-water removal target.  Fractions scale as m_w^(-2/3), are
+    !>capped by fmax (the fraction of chamber air that visited the BL this
+    !>timestep), and a single coefficient is solved by bisection.  This retains
+    !>the previous size-selective extreme-inhomogeneous idea while separating it
+    !>from the new wall thermodynamics.
+    subroutine chamber_bl_d2_target_fractions(dq_target,fmax,fracliq)
+        implicit none
+        real(wp), intent(in) :: dq_target,fmax
+        real(wp), dimension(:), intent(out) :: fracliq
+        integer(i4b) :: i,iter,n
+        real(wp) :: mmin,mw,lo,hi,mid,qmid,weight
+
+        n=parcel1%n_bin_modew
+        if (size(fracliq).ne.n) error stop &
+            'fracliq has wrong size in chamber_bl_d2_target_fractions'
+        fracliq=0._wp
+        if (dq_target.le.tiny(1._wp) .or. fmax.le.tiny(1._wp)) return
+
+        mmin=huge(1._wp)
+        do i=1,n
+            if (parcel1%npart(i).le.tiny(1._wp)) cycle
+            if (.not.particle_is_activated(i,parcel1%y(i), &
+                parcel1%y(parcel1%ite))) cycle
+            if (parcel1%y(i).gt.tiny(1._wp)) mmin=min(mmin,parcel1%y(i))
+        enddo
+        if (mmin.eq.huge(1._wp)) return
+
+        ! Increase hi until either the target is bracketed or every eligible bin
+        ! has reached the processed-air cap fmax.
+        lo=0._wp
+        hi=1._wp
+        do iter=1,80
+            qmid=0._wp
+            do i=1,n
+                if (parcel1%npart(i).le.tiny(1._wp)) cycle
+                if (.not.particle_is_activated(i,parcel1%y(i), &
+                    parcel1%y(parcel1%ite))) cycle
+                mw=max(parcel1%y(i),tiny(1._wp))
+                weight=(mmin/mw)**twothirds
+                qmid=qmid+min(fmax,hi*weight)*parcel1%npart(i)*mw
+            enddo
+            if (qmid.ge.dq_target .or. hi.ge.1.e12_wp) exit
+            hi=2._wp*hi
+        enddo
+
+        do iter=1,80
+            mid=0.5_wp*(lo+hi)
+            qmid=0._wp
+            do i=1,n
+                if (parcel1%npart(i).le.tiny(1._wp)) cycle
+                if (.not.particle_is_activated(i,parcel1%y(i), &
+                    parcel1%y(parcel1%ite))) cycle
+                mw=max(parcel1%y(i),tiny(1._wp))
+                weight=(mmin/mw)**twothirds
+                qmid=qmid+min(fmax,mid*weight)*parcel1%npart(i)*mw
+            enddo
+            if (abs(qmid-dq_target).le.1.e-10_wp*max(dq_target,1.e-20_wp)) exit
+            if (qmid.lt.dq_target) then
+                lo=mid
+            else
+                hi=mid
+            endif
+        enddo
+
+        do i=1,n
+            if (parcel1%npart(i).le.tiny(1._wp)) cycle
+            if (.not.particle_is_activated(i,parcel1%y(i), &
+                parcel1%y(parcel1%ite))) cycle
+            mw=max(parcel1%y(i),tiny(1._wp))
+            weight=(mmin/mw)**twothirds
+            fracliq(i)=min(fmax,max(0._wp,mid*weight))
+        enddo
+    end subroutine chamber_bl_d2_target_fractions
+
+
+    ! ============================================================================
     ! apply_chamber_bl_exchange
     ! ============================================================================
     !>@brief
-    !>Applies one chamber boundary-layer recirculation operator.  Modes 1--3
-    !>use the SAME external total-water exchange
+    !>Applies the optional coupled chamber boundary-layer processing operator.
     !>
-    !>  dq_BL = (qv_BL-qv) [1-exp(-dt/tau_BL)] .
+    !>chamber_bl_mix is deliberately only an on/off switch:
+    !>  0 = off
+    !>  1 = on, using the coupled wall-BL thermodynamics below.
     !>
-    !>Mode 1 leaves the resulting humidity deficit to the ordinary diffusional
-    !>microphysics (homogeneous response).  Mode 2 applies a uniform complete-
-    !>evaporation fraction to activated hydrometeors.  Mode 3 is also extreme
-    !>inhomogeneous, but weights liquid complete evaporation by inverse D2-law
-    !>lifetime (~m_w^-2/3), clipping each bin fraction at one.  Internal phase changes are
-    !>water-conserving, and a final budget closure enforces identical total-water
-    !>change in the two modes to roundoff.
+    !>The effective sensible BL temperature before latent phase change is
+    !>
+    !>  T_sens = T_gas + chamber_bl_alpha_t*(T_wall-T_gas)
+    !>                    + chamber_bl_temp_offset.
+    !>
+    !>Thus alpha_T=0, offset=0 follows the measured gas temperature, while
+    !>alpha_T=1, offset=0 follows the measured wall temperature.  A non-zero
+    !>offset is an explicit unresolved BL-temperature sensitivity.
+    !>
+    !>At T_sens, supersaturated air condenses vapour to the wall (a true chamber
+    !>total-water loss) with latent warming.  Subsaturated air evaporates
+    !>activated liquid into vapour (an internal phase transfer) with latent
+    !>cooling.  If wall condensation dries the air, the subsequent remixing
+    !>into the bulk can require additional droplet evaporation to recover the
+    !>pre-BL bulk RH.  Both direct and remixing evaporation are accumulated into
+    !>one thermodynamic target.
+    !>
+    !>chamber_bl_evap_mode controls only how that target is represented in the
+    !>liquid PSD:
+    !>  1 = homogeneous D^2-law shrinkage (common Delta D^2),
+    !>  2 = uniform extreme inhomogeneous complete evaporation,
+    !>  3 = D^2-lifetime-weighted extreme inhomogeneous complete evaporation.
+    !>
+    !>qchamber_bl is cumulative true water loss to the wall.  The separate
+    !>qchamber_bl_evap diagnostic is cumulative liquid->vapour phase transfer
+    !>caused by BL processing and must not be interpreted as chamber water loss.
     subroutine apply_chamber_bl_exchange()
         use numerics, only : find_pos, poly_int
         implicit none
         integer(i4b) :: i,n,iloc
-        real(wp) :: p,t0,rh0,svp0,qv0,qv_bl,t_bl,qvs_bl,fmix,dq_wall,qv_air,t_air, &
-            ql_total,ql_act,qi0,qtot_target,rh_target,fliq,fice,tnew,qv_new, &
-            rhw_new,rhi_new,qh_l,qh_i,qcond_new,qv_budget,svp_new,factor,var,dummy, &
-            tquery
+        real(wp) :: p,t0,rh0,svp0,qv0,qv_bl,t_bl,t_wall,t_sens,fmix,dq_wall,qv_air,t_air, &
+            ql_total,ql_act,qi0,qtot_target,fliq,tnew,qv_new,qcond_new,qv_budget,svp_new, &
+            factor,var,dummy,tquery,dq_wall_local,dq_evap_local,dq_evap_target, &
+            dq_evap_cold,dq_actual,qsw_target,qv_target,cpm,rhw_new
         real(wp), allocatable :: fracliq(:)
 
         parcel1%qchamber_bl_step=0._wp
+        parcel1%qchamber_bl_evap_step=0._wp
         if (chamber_bl_mix.eq.0) return
+        if (chamber_bl_mix.ne.1) error stop 'chamber_bl_mix must be 0 or 1'
         if (chamber_bl_tau.le.0._wp) error stop 'chamber_bl_tau must be > 0'
 
         n=parcel1%n_bin_modew
@@ -8226,83 +8593,84 @@
         qi0=0._wp
         if (parcel1%ice_flag.eq.1) qi0=sum(parcel1%npartice*parcel1%yice(1:n))
 
-        ! Fraction of chamber air that completes a BL excursion during dt.
+        ! Chamber-scale fraction of air completing one wall-BL excursion during dt.
         fmix=1._wp-exp(-parcel1%dt/chamber_bl_tau)
         fmix=max(0._wp,min(fmix,1._wp))
 
-        ! Air enters the BL carrying the bulk vapour mixing ratio.  The BL
-        ! temperature is either a fixed offset from the evolving gas temperature
-        ! or the measured wall-temperature time series.  There is deliberately
-        ! no prescribed BL RH reservoir.
-        select case(chamber_bl_temp_mode)
-        case(0)
-            t_bl=t0+chamber_bl_temp_offset
-        case(1)
-            if (n_levels_c.lt.2) error stop 'Wall-temperature BL mode requires chamber data'
+        ! Interpolate measured wall temperature only when alpha_T actually uses it.
+        ! For alpha_T=0 the result is independent of Twall, so a wall series is not
+        ! required and T_wall is set equal to Tgas for numerical clarity.
+        if (chamber_bl_alpha_t.gt.0._wp) then
+            if (n_levels_c.lt.2) error stop &
+                'chamber_bl_alpha_t > 0 requires wall_temp_chamber observations'
             tquery=min(max(parcel1%tt,time_chamber(1)),time_chamber(n_levels_c))
             iloc=find_pos(time_chamber(1:n_levels_c),tquery)
             iloc=max(1,min(iloc,n_levels_c-1))
             call poly_int(time_chamber(iloc:iloc+1),wall_temp_chamber(iloc:iloc+1), &
                 tquery,var,dummy)
-            t_bl=var
-        case default
-            error stop 'Invalid chamber_bl_temp_mode'
-        end select
+            t_wall=var
+        else
+            t_wall=t0
+        endif
 
-        ! Conserve qv during the BL temperature excursion unless the air would
-        ! exceed liquid saturation at T_bl.  In that case excess vapour is
-        ! assumed to condense on the wall and is removed from airborne total
-        ! water.  The wall is not an infinite source of vapour, so dq_wall <= 0.
-        qvs_bl=eps1*svp_liq(t_bl)/max(p-svp_liq(t_bl),tiny(1._wp))
-        qv_bl=min(qv0,qvs_bl)
-        dq_wall=fmix*(qv_bl-qv0)
+        t_sens=t0+chamber_bl_alpha_t*(t_wall-t0)+chamber_bl_temp_offset
+        call diagnose_coupled_chamber_bl_state(t_sens,qv0,ql_act,p, &
+            t_bl,qv_bl,dq_wall_local,dq_evap_local)
+
+        ! Convert local BL changes to chamber-mean changes.  dq_wall is negative
+        ! internally for true airborne-water loss; qchamber_bl stores positive loss.
+        dq_wall=-fmix*max(dq_wall_local,0._wp)
         dq_wall=max(dq_wall,-qv0)
         qv_air=max(qv0+dq_wall,0._wp)
+        dq_evap_target=fmix*max(dq_evap_local,0._wp)
 
-        ! If gas temperature is observationally forced, do not add a second
-        ! bulk sensible-heat tendency.  Otherwise mix the BL temperature back
-        ! into the well-mixed chamber in proportion to fmix.
+        ! Cold/supersaturated BL processing can remove vapour to the wall.  After
+        ! returning to the measured bulk temperature, diagnose the liquid amount
+        ! needed to restore the pre-BL RH.  This phase transfer is not an extra
+        ! total-water loss: the external loss already occurred in dq_wall.
+        dq_evap_cold=0._wp
+        if (dq_wall.lt.0._wp) then
+            qsw_target=eps1*svp_liq(t0)/max(p-svp_liq(t0),tiny(1._wp))
+            qv_target=min(max(rh0,0._wp),1._wp)*qsw_target
+            dq_evap_cold=max(qv_target-qv_air,0._wp)
+            dq_evap_target=dq_evap_target+dq_evap_cold
+        endif
+        dq_evap_target=min(max(dq_evap_target,0._wp),max(ql_act,0._wp))
+
+        ! With measured T forcing active, BL processing is a subgrid water/PSD
+        ! operator and the observed gas temperature is retained.  Otherwise the
+        ! local processed temperature is mixed back at the same chamber-scale rate.
         if (chamber_force_temperature) then
             t_air=t0
         else
             t_air=t0+fmix*(t_bl-t0)
         endif
+        tnew=t_air
 
         qtot_target=qv0+ql_total+qi0+dq_wall
         parcel1%qchamber_bl_step=-dq_wall
         parcel1%qchamber_bl=parcel1%qchamber_bl-dq_wall
 
-        fliq=0._wp
-        fice=0._wp
-        tnew=t_air
-        qv_new=qv_air
+        ! Distribute exactly the thermodynamically required liquid evaporation.
+        dq_actual=0._wp
+        select case(chamber_bl_evap_mode)
+        case(1)
+            ! Homogeneous diffusional evaporation: same finite D^2 decrement for
+            ! every activated droplet.  Small droplets may naturally reach zero.
+            call apply_chamber_bl_homogeneous_evaporation(dq_evap_target,dq_actual)
 
-        if (chamber_bl_mix.eq.2) then
-            ! Extreme-inhomogeneous response: no more than the recirculated
-            ! fraction fmix of hydrometeors can completely evaporate/sublimate.
-            ! Whether completely evaporated/sublimated hydrometeors return their
-            ! residual aerosol to the warm population is controlled by the
-            ! release_aerosol namelist switch, consistently with atmospheric
-            ! inhomogeneous mixing.
-            rh_target=min(max(rh0,0._wp),1._wp)
-            call diagnose_chamber_bl_inhomogeneous_state(0._wp,0._wp, &
-                ql_act,ql_total,qi0,qv_air,t_air,p,tnew,qv_new,rhw_new,rhi_new, &
-                qh_l,qh_i)
-
-            if (rhw_new.lt.rh_target) then
-                call solve_chamber_bl_liquid_fraction(ql_act,ql_total,qi0, &
-                    qv_air,t_air,p,rh_target,fmix,fliq,tnew,qv_new,rhw_new,rhi_new)
-
-                if (parcel1%ice_flag.eq.1 .and. tnew.lt.ttr .and. &
-                    qi0.gt.tiny(1._wp) .and. rhi_new.lt.1._wp .and. &
-                    (ql_act.le.tiny(1._wp) .or. fliq.ge.fmix-1.e-10_wp)) then
-                    call solve_chamber_bl_ice_fraction(fliq,ql_act,ql_total,qi0, &
-                        qv_air,t_air,p,fmix,fice,tnew,qv_new,rhw_new,rhi_new)
-                endif
+        case(2)
+            ! Uniform extreme inhomogeneous: the same fraction of every activated
+            ! bin disappears completely; survivors keep their original size.
+            if (ql_act.gt.tiny(1._wp) .and. dq_evap_target.gt.tiny(1._wp)) then
+                fliq=min(fmix,max(0._wp,dq_evap_target/ql_act))
+            else
+                fliq=0._wp
             endif
-
-            call prepare_released_hydrometeor_aerosol(fliq,fice,tnew,rhw_new)
-
+            dq_actual=fliq*ql_act
+            qsw_target=eps1*svp_liq(tnew)/max(p-svp_liq(tnew),tiny(1._wp))
+            rhw_new=(qv_air+dq_actual)/max(qsw_target,tiny(1._wp))
+            call prepare_released_hydrometeor_aerosol(fliq,0._wp,tnew,rhw_new)
             do i=1,n
                 factor=1._wp
                 if (parcel1%npart(i).gt.tiny(1._wp)) then
@@ -8311,66 +8679,50 @@
                 parcel1%npart(i)=parcel1%npart(i)*factor
                 parcel1%moments(i,:)=parcel1%moments(i,:)*factor
             enddo
-            if (parcel1%ice_flag.eq.1) then
-                factor=1._wp-fice
-                parcel1%npartice=parcel1%npartice*factor
-                parcel1%moments(n+1:2*n,:)=parcel1%moments(n+1:2*n,:)*factor
-            endif
-
             call merge_released_aerosol_into_warm()
-        elseif (chamber_bl_mix.eq.3) then
-            ! D2-law-weighted extreme-inhomogeneous response.  Droplets still
-            ! disappear completely (survivors are unchanged), but the removal
-            ! fraction varies as the inverse D2 evaporation lifetime,
-            ! F_i ~ m_w^(-2/3), and is clipped at one.  A single coefficient is
-            ! solved so the same thermodynamic RH deficit is met; if even
-            ! complete evaporation of every activated droplet is insufficient,
-            ! the parcel remains below the target RH rather than creating water.
-            rh_target=min(max(rh0,0._wp),1._wp)
+
+        case(3)
+            ! Extreme inhomogeneous with inverse D^2 evaporation-lifetime
+            ! weighting.  Selected droplets disappear completely; survivors do
+            ! not shrink.  Small droplets are preferentially selected.
             allocate(fracliq(n))
-            fracliq=0._wp
-            call diagnose_chamber_bl_d2_state(fracliq,0._wp,ql_total,qi0, &
-                qv_air,t_air,p,tnew,qv_new,rhw_new,rhi_new,qh_l,qh_i)
-
-            if (rhw_new.lt.rh_target) then
-                call solve_chamber_bl_d2_liquid(ql_total,qi0,qv_air,t_air,p, &
-                    rh_target,fracliq,tnew,qv_new,rhw_new,rhi_new)
-
-                if (parcel1%ice_flag.eq.1 .and. tnew.lt.ttr .and. &
-                    qi0.gt.tiny(1._wp) .and. rhi_new.lt.1._wp .and. &
-                    sum(fracliq*parcel1%npart*parcel1%y(1:n)).ge. &
-                    ql_act*(1._wp-1.e-10_wp)) then
-                    call solve_chamber_bl_d2_ice(fracliq,ql_total,qi0,qv_air, &
-                        t_air,p,fmix,fice,tnew,qv_new,rhw_new,rhi_new)
-                endif
-            endif
-
-            call prepare_released_hydrometeor_aerosol(0._wp,fice,tnew,rhw_new, &
+            call chamber_bl_d2_target_fractions(dq_evap_target,fmix,fracliq)
+            dq_actual=sum(fracliq*parcel1%npart*parcel1%y(1:n))
+            qsw_target=eps1*svp_liq(tnew)/max(p-svp_liq(tnew),tiny(1._wp))
+            rhw_new=(qv_air+dq_actual)/max(qsw_target,tiny(1._wp))
+            call prepare_released_hydrometeor_aerosol(0._wp,0._wp,tnew,rhw_new, &
                 liq_factors=fracliq)
-
             do i=1,n
                 factor=1._wp
                 if (parcel1%npart(i).gt.tiny(1._wp)) then
                     if (particle_is_activated(i,parcel1%y(i),t0)) &
-                        factor=1._wp-max(0._wp,min(fracliq(i),1._wp))
+                        factor=1._wp-max(0._wp,min(fracliq(i),fmix))
                 endif
                 parcel1%npart(i)=parcel1%npart(i)*factor
                 parcel1%moments(i,:)=parcel1%moments(i,:)*factor
             enddo
-            if (parcel1%ice_flag.eq.1) then
-                factor=1._wp-fice
-                parcel1%npartice=parcel1%npartice*factor
-                parcel1%moments(n+1:2*n,:)=parcel1%moments(n+1:2*n,:)*factor
-            endif
             call merge_released_aerosol_into_warm()
             deallocate(fracliq)
-        elseif (chamber_bl_mix.ne.1) then
-            error stop 'Invalid chamber_bl_mix in apply_chamber_bl_exchange'
+
+        case default
+            error stop 'Invalid chamber_bl_evap_mode'
+        end select
+
+        parcel1%qchamber_bl_evap_step=max(dq_actual,0._wp)
+        parcel1%qchamber_bl_evap=parcel1%qchamber_bl_evap+ &
+            parcel1%qchamber_bl_evap_step
+
+        ! If gas temperature is prognostic, include the latent cooling associated
+        ! with the cold-wall remixing evaporation.  Direct local evaporation was
+        ! already included in t_bl by the coupled BL solve.
+        if (.not.chamber_force_temperature .and. dq_wall.lt.0._wp) then
+            cpm=max(cp+qv0*cpv+ql_total*cpw+qi0*cpi,0.5_wp*cp)
+            tnew=tnew-lv*min(dq_evap_cold,dq_actual)/cpm
         endif
 
-        ! Internal evaporation/condensation only redistributes airborne water.
-        ! Close the budget exactly to the external wall sink dq_wall, ensuring
-        ! homogeneous and inhomogeneous modes have the same total-water change.
+        ! Internal evaporation redistributes airborne water only.  Close total
+        ! water exactly to the true external wall sink so modes 1-3 conserve the
+        ! same qtot to roundoff for a given thermodynamic BL event.
         qcond_new=sum(parcel1%npart*parcel1%y(1:n))
         if (parcel1%ice_flag.eq.1) qcond_new=qcond_new+ &
             sum(parcel1%npartice*parcel1%yice(1:n))
@@ -8998,12 +9350,24 @@
                 (/io1%x_dimid/),io1%varid))
             call check(nf90_put_att(io1%ncid,io1%varid,"units","kg kg-1"))
             call check(nf90_put_att(io1%ncid,io1%varid,"long_name", &
-                "cumulative airborne water transferred to wall by BL saturation cap"))
+                "cumulative airborne water lost by chamber BL condensation to the wall"))
+            call check(nf90_def_var(io1%ncid,"qchamber_bl_evap",NF90_DOUBLE, &
+                (/io1%x_dimid/),io1%varid))
+            call check(nf90_put_att(io1%ncid,io1%varid,"long_name", &
+                "cumulative liquid evaporated by chamber BL processing"))
+            call check(nf90_put_att(io1%ncid,io1%varid,"units","kg kg-1"))
+            call check(nf90_put_att(io1%ncid,io1%varid,"comment", &
+                "internal liquid-to-vapour phase transfer; not a total-water loss"))
+            call check(nf90_def_var(io1%ncid,"qchamber_bl_evap_step",NF90_DOUBLE, &
+                (/io1%x_dimid/),io1%varid))
+            call check(nf90_put_att(io1%ncid,io1%varid,"long_name", &
+                "liquid evaporated by chamber BL processing this timestep"))
+            call check(nf90_put_att(io1%ncid,io1%varid,"units","kg kg-1"))
             call check(nf90_def_var(io1%ncid,"qchamber_bl_step",NF90_DOUBLE, &
                 (/io1%x_dimid/),io1%varid))
             call check(nf90_put_att(io1%ncid,io1%varid,"units","kg kg-1"))
             call check(nf90_put_att(io1%ncid,io1%varid,"long_name", &
-                "airborne water transferred to wall by BL saturation cap in previous timestep"))
+                "airborne water lost by chamber BL condensation to wall in previous timestep"))
         endif
 
         if (chamber_fan_loss.gt.0) then
@@ -9387,6 +9751,12 @@
         call check(nf90_inq_varid(io1%ncid,"qchamber_bl",io1%varid))
         call check(nf90_put_var(io1%ncid,io1%varid, &
             parcel1%qchamber_bl,start=(/io1%icur/)))
+        call check(nf90_inq_varid(io1%ncid,"qchamber_bl_evap",io1%varid))
+        call check(nf90_put_var(io1%ncid,io1%varid, &
+            parcel1%qchamber_bl_evap,start=(/io1%icur/)))
+        call check(nf90_inq_varid(io1%ncid,"qchamber_bl_evap_step",io1%varid))
+        call check(nf90_put_var(io1%ncid,io1%varid, &
+            parcel1%qchamber_bl_evap_step,start=(/io1%icur/)))
         call check(nf90_inq_varid(io1%ncid,"qchamber_bl_step",io1%varid))
         call check(nf90_put_var(io1%ncid,io1%varid, &
             parcel1%qchamber_bl_step,start=(/io1%icur/)))

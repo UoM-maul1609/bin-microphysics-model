@@ -97,16 +97,27 @@
     !> Leave false when qtot is uncertain or is used only as a diagnostic.
     chamber_force_qtot = .false.,
 
-    !> Boundary-layer interaction: 0=off, 1=homogeneous, 2=uniform extreme inhomogeneous.
-    !> 3=D2-law-weighted extreme inhomogeneous: smaller activated droplets have a
-    !> larger complete-evaporation fraction, proportional to m_w^(-2/3), capped at 1.
+    !> Chamber boundary-layer treatment:
+    !> 0=off.
+    !> 1=on: coupled measured-wall BL thermodynamics. A cold/effectively
+    !>   cold BL can condense vapour to the wall and subsequently drive
+    !>   droplet evaporation after remixing; an effectively warm BL can
+    !>   evaporate droplets directly. Latent
+    !>   heating/cooling is included.  Only wall condensation removes qtot.
     chamber_bl_mix = 1,
     !> E-folding timescale for bulk-air recirculation through the wall BL [s].
     chamber_bl_tau = 60.0,
-    !> BL temperature: 0=fixed offset from evolving gas T; 1=wall_temp_chamber(t).
-    chamber_bl_temp_mode = 0,
-    !> Used only for chamber_bl_temp_mode=0: T_BL - T_gas [K].
-    chamber_bl_temp_offset = 0.01,
+    !> Effective sensible BL state before latent phase change:
+    !> T_sens=T_gas+chamber_bl_alpha_t*(T_wall-T_gas)+chamber_bl_temp_offset.
+    !> 1.0 gives full measured wall-gas contrast; 0.0 ignores that contrast.
+    chamber_bl_alpha_t = 1.0,
+    !> When BL processing is on, distribute diagnosed liquid evaporation as
+    !> 1=homogeneous common-D2 shrinkage, 2=uniform extreme inhomogeneous complete
+    !> evaporation, or 3=D2-weighted extreme inhomogeneous complete evaporation.
+    chamber_bl_evap_mode = 3,
+    !> Optional unresolved sensible BL temperature offset [K]; added after
+    !> the alpha_T-scaled measured wall-gas contrast.
+    chamber_bl_temp_offset = 0.0,
 
     !> Drone-fan blade loss: 0=off, 1=saturating sigmoid in current particle diameter.
     chamber_fan_loss = 1,
