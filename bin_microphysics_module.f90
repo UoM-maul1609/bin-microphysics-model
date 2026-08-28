@@ -7510,14 +7510,15 @@
 	!>ice-only/current-ice state, including n_demott, is reset.  If
 	!>release_aerosol=.false. the residual population is intentionally discarded.
     subroutine prepare_released_hydrometeor_aerosol(liq_factor,ice_factor, &
-        t_resid,rh_resid,force_release,liq_factors)
+        t_resid,rh_resid,force_release,liq_factors,all_warm_liquid)
         implicit none
         real(wp), intent(in) :: liq_factor,ice_factor,t_resid,rh_resid
         logical, intent(in), optional :: force_release
         real(wp), dimension(:), intent(in), optional :: liq_factors
+        logical, intent(in), optional :: all_warm_liquid
         integer(i4b) :: i,j,ii,n
         real(wp) :: residual_water,liq_factor_i
-        logical :: do_release
+        logical :: do_release,include_all_warm
 
         n=parcel1%n_bin_modew
         parcel1%npart_temp=0._wp
@@ -7528,8 +7529,10 @@
         do_release=release_aerosol
         if (present(force_release)) do_release=force_release
         if (.not.do_release) return
+        include_all_warm=.false.
+        if (present(all_warm_liquid)) include_all_warm=all_warm_liquid
 
-        ! A fraction of each ACTIVATED old warm-bin population belongs to the
+        ! A fraction of each eligible old warm-bin population belongs to the
         ! part of the cloud whose droplets evaporate completely.  Interstitial
         ! aerosol is not part of this residual source.  Returning the activated
         ! residual population conserves aerosol number and nonvolatile mass.
@@ -7546,11 +7549,17 @@
                 endif
                 if (liq_factor_i.le.tiny(1._wp)) cycle
                 if (parcel1%npart(i).le.tiny(1._wp)) cycle
-                ! Only activated cloud droplets can be completely evaporated
-                ! by the extreme-inhomogeneous closure.  Interstitial aerosol
-                ! is merely diluted by D and must not be removed by fliq.
-                if (.not.particle_is_activated(i,parcel1%y(i), &
-                    parcel1%y(parcel1%ite))) cycle
+                if (include_all_warm) then
+                    ! Wall-BL evaporation may completely evaporate any wet warm
+                    ! particle.  The released nonvolatile core is then returned
+                    ! as haze/aerosol and will diagnose as deactivated naturally.
+                    if (parcel1%y(i).le.tiny(1._wp)) cycle
+                else
+                    ! Retain the historical activated-only behaviour for callers
+                    ! such as the entrainment/cloud-mixing closure.
+                    if (.not.particle_is_activated(i,parcel1%y(i), &
+                        parcel1%y(parcel1%ite))) cycle
+                endif
                 parcel1%npart_temp(i)=parcel1%npart_temp(i)+ &
                     liq_factor_i*parcel1%npart(i)
                 parcel1%moments_temp(i,1:parcel1%n_comps)= &
@@ -7967,6 +7976,7 @@
         n=parcel1%n_bin_modew
         qhaze_liq=0._wp
         qhaze_ice=0._wp
+        if (.not.release_aerosol) return
 
         if (fliq.gt.tiny(1._wp)) then
             do i=1,n
@@ -8670,15 +8680,15 @@
     !>Applies homogeneous diffusional evaporation to all currently activated
     !>warm particles for a prescribed chamber-mean liquid-water target.
     !>
-    !>Homogeneous here means every activated droplet experiences the same D^2
+    !>Homogeneous here means every wet warm particle experiences the same D^2
     !>decrement.  Since liquid-water mass m_w is proportional to D_w^3, the
     !>finite D^2-law mapping can be written
     !>
     !>  m_w,new = [max(m_w,old^(2/3) - ds, 0)]^(3/2),
     !>
-    !>with one common ds for all activated bins.  ds is solved by bisection so
+    !>with one common ds for all wet warm bins.  ds is solved by bisection so
     !>that sum_i N_i (m_w,old-m_w,new) equals dq_target, limited only by the
-    !>available activated liquid.  Small droplets may therefore evaporate
+    !>available warm liquid.  Small droplets may therefore evaporate
     !>completely naturally under the common D^2 exposure; larger droplets
     !>shrink but retain their number.  The ordinary moving-bin remapping is
     !>applied afterwards so all carried extensive moments remain consistent.
@@ -8704,7 +8714,6 @@
         hi=0._wp
         do i=1,n
             if (parcel1%npart(i).le.tiny(1._wp)) cycle
-            if (.not.particle_is_activated(i,mold(i),parcel1%y(parcel1%ite))) cycle
             if (mold(i).le.tiny(1._wp)) cycle
             active(i)=.true.
             qavail=qavail+parcel1%npart(i)*mold(i)
@@ -8715,7 +8724,7 @@
             return
         endif
 
-        ! Complete evaporation of all activated liquid is the natural upper
+        ! Complete evaporation of all warm liquid is the natural upper
         ! bound.  If the thermodynamic target exceeds this reservoir, use all
         ! available liquid rather than manufacturing water.
         if (dq_target.ge.qavail*(1._wp-1.e-12_wp)) then
@@ -8803,9 +8812,8 @@
         mmin=huge(1._wp)
         do i=1,n
             if (parcel1%npart(i).le.tiny(1._wp)) cycle
-            if (.not.particle_is_activated(i,parcel1%y(i), &
-                parcel1%y(parcel1%ite))) cycle
-            if (parcel1%y(i).gt.tiny(1._wp)) mmin=min(mmin,parcel1%y(i))
+            if (parcel1%y(i).le.tiny(1._wp)) cycle
+            mmin=min(mmin,parcel1%y(i))
         enddo
         if (mmin.eq.huge(1._wp)) return
 
@@ -8817,9 +8825,8 @@
             qmid=0._wp
             do i=1,n
                 if (parcel1%npart(i).le.tiny(1._wp)) cycle
-                if (.not.particle_is_activated(i,parcel1%y(i), &
-                    parcel1%y(parcel1%ite))) cycle
-                mw=max(parcel1%y(i),tiny(1._wp))
+                if (parcel1%y(i).le.tiny(1._wp)) cycle
+                mw=parcel1%y(i)
                 weight=(mmin/mw)**twothirds
                 qmid=qmid+min(fmax,hi*weight)*parcel1%npart(i)*mw
             enddo
@@ -8832,9 +8839,8 @@
             qmid=0._wp
             do i=1,n
                 if (parcel1%npart(i).le.tiny(1._wp)) cycle
-                if (.not.particle_is_activated(i,parcel1%y(i), &
-                    parcel1%y(parcel1%ite))) cycle
-                mw=max(parcel1%y(i),tiny(1._wp))
+                if (parcel1%y(i).le.tiny(1._wp)) cycle
+                mw=parcel1%y(i)
                 weight=(mmin/mw)**twothirds
                 qmid=qmid+min(fmax,mid*weight)*parcel1%npart(i)*mw
             enddo
@@ -8848,9 +8854,8 @@
 
         do i=1,n
             if (parcel1%npart(i).le.tiny(1._wp)) cycle
-            if (.not.particle_is_activated(i,parcel1%y(i), &
-                parcel1%y(parcel1%ite))) cycle
-            mw=max(parcel1%y(i),tiny(1._wp))
+            if (parcel1%y(i).le.tiny(1._wp)) cycle
+            mw=parcel1%y(i)
             weight=(mmin/mw)**twothirds
             fracliq(i)=min(fmax,max(0._wp,mid*weight))
         enddo
@@ -8884,24 +8889,88 @@
     !>pre-BL bulk RH.  Both direct and remixing evaporation are accumulated into
     !>one thermodynamic target.
     !>
-    !>chamber_bl_evap_mode controls only how that target is represented in the
-    !>liquid PSD:
+    !>chamber_bl_evap_mode controls how the liquid part of that target is
+    !>represented in the warm PSD:
     !>  1 = homogeneous D^2-law shrinkage (common Delta D^2),
     !>  2 = uniform extreme inhomogeneous complete evaporation,
     !>  3 = D^2-lifetime-weighted extreme inhomogeneous complete evaporation.
     !>
+    !>As in the entrainment closure, warm liquid is always used first.  Only
+    !>when the liquid reservoir available to this BL event is exhausted and the
+    !>post-liquid state is still subsaturated with respect to ice is ice allowed
+    !>to sublimate.  The ice fraction is solved to RHi=1, capped by fmix; if the
+    !>available processed ice is insufficient the remaining ice-subsaturation is
+    !>retained.  Completely sublimated ice releases its aerosol/INP residual.
+    !>
     !>qchamber_bl is cumulative true water loss to the wall.  The separate
     !>qchamber_bl_evap diagnostic is cumulative liquid->vapour phase transfer
     !>caused by BL processing and must not be interpreted as chamber water loss.
+    ! ============================================================================
+    ! apply_chamber_bl_exchange
+    ! ============================================================================
+    !>Timestep-independent wrapper for the nonlinear chamber wall-BL operator.
+    !>
+    !>The BL physics contains thresholds (complete liquid evaporation, aerosol
+    !>release, liquid-to-ice switching) and is therefore not equivalent to one
+    !>large exchange event when dt >> tau.  Subcycle only this inexpensive
+    !>operator so each internal event processes at most about 9.5% of the
+    !>chamber for the tau-controlled part:
+    !>
+    !>    dt_bl <= 0.1*tau  =>  fmix <= 1-exp(-0.1) ~= 0.0952.
+    !>
+    !>A 1-s absolute cap also prevents a long tau from producing unnecessarily
+    !>coarse nonlinear BL events.  This does not subcycle DVODE/SCE.
     subroutine apply_chamber_bl_exchange()
+        implicit none
+        integer(i4b) :: isub,nsub
+        real(wp) :: dt_bl_max,dt_bl,qwall_step_sum,qevap_step_sum
+
+        parcel1%qchamber_bl_step=0._wp
+        parcel1%qchamber_bl_evap_step=0._wp
+        if (chamber_bl_mix.eq.0) return
+        if (chamber_bl_mix.ne.1) error stop 'chamber_bl_mix must be 0 or 1'
+        if (chamber_bl_tau.le.0._wp) error stop 'chamber_bl_tau must be > 0'
+
+        ! Hard-wired numerical BL substep for convergence testing.
+        ! For tau=2.5 s this gives dt_bl_max=0.25 s.
+        dt_bl_max=min(1._wp,0.1_wp*chamber_bl_tau)
+        dt_bl_max=max(dt_bl_max,100._wp*epsilon(1._wp))
+
+        nsub=max(1_i4b,ceiling(parcel1%dt/dt_bl_max,kind=i4b))
+        dt_bl=parcel1%dt/real(nsub,kind=wp)
+
+        qwall_step_sum=0._wp
+        qevap_step_sum=0._wp
+        do isub=1,nsub
+            call apply_chamber_bl_exchange_once(dt_bl)
+            qwall_step_sum=qwall_step_sum+parcel1%qchamber_bl_step
+            qevap_step_sum=qevap_step_sum+parcel1%qchamber_bl_evap_step
+        enddo
+
+        ! The cumulative diagnostics were incremented within each substep.
+        ! Restore the per-outer-step diagnostics as the sum of all BL substeps.
+        parcel1%qchamber_bl_step=qwall_step_sum
+        parcel1%qchamber_bl_evap_step=qevap_step_sum
+    end subroutine apply_chamber_bl_exchange
+
+
+    ! ============================================================================
+    ! apply_chamber_bl_exchange_once
+    ! ============================================================================
+    !>One nonlinear wall-BL exchange event over dt_bl.  Always called through
+    !>apply_chamber_bl_exchange(), which controls numerical subcycling.
+    subroutine apply_chamber_bl_exchange_once(dt_bl)
         use numerics, only : find_pos, poly_int
         implicit none
+        real(wp), intent(in) :: dt_bl
         integer(i4b) :: i,n,iloc
         real(wp) :: p,t0,rh0,svp0,qv0,qv_bl,t_bl,t_wall,t_sens,fmix,dq_wall,qv_air,t_air, &
-            ql_total,ql_act,qi0,qtot_target,fliq,tnew,qv_new,qcond_new,qv_budget,svp_new, &
-            factor,var,dummy,tquery,dq_wall_local,dq_evap_local,dq_evap_target, &
-            dq_evap_cold,dq_actual,qsw_target,qv_target,cpm,rhw_new
+            ql_total,ql_warm,qi0,qtot_target,fliq,fice,tnew,qv_new,qcond_new,qv_budget, &
+            svp_new,factor,var,dummy,tquery,dq_wall_local,dq_evap_local,dq_evap_target, &
+            dq_evap_cold,dq_actual,qsw_target,qv_target,cpm,rhw_new,ql_after,qi_before, &
+            qv_after_liq,tice_new,qvice_new,rhw_ice,rhi_ice,liq_event_capacity
         real(wp), allocatable :: fracliq(:)
+        logical :: liquid_exhausted
 
         parcel1%qchamber_bl_step=0._wp
         parcel1%qchamber_bl_evap_step=0._wp
@@ -8917,12 +8986,15 @@
         qv0=eps1*rh0*svp0/max(p-svp0,tiny(1._wp))
 
         ql_total=sum(parcel1%npart*parcel1%y(1:n))
-        call inhomogeneous_liquid_reservoir(ql_act)
+        ! Wall-BL evaporation acts on every warm particle carrying liquid water,
+        ! irrespective of its current Koehler/FHH activation classification.
+        ! Activation is a diagnostic state, not an eligibility condition here.
+        ql_warm=ql_total
         qi0=0._wp
         if (parcel1%ice_flag.eq.1) qi0=sum(parcel1%npartice*parcel1%yice(1:n))
 
         ! Chamber-scale fraction of air completing one wall-BL excursion during dt.
-        fmix=1._wp-exp(-parcel1%dt/chamber_bl_tau)
+        fmix=1._wp-exp(-dt_bl/chamber_bl_tau)
         fmix=max(0._wp,min(fmix,1._wp))
 
         ! Interpolate measured wall temperature only when alpha_T actually uses it.
@@ -8942,7 +9014,7 @@
         endif
 
         t_sens=t0+chamber_bl_alpha_t*(t_wall-t0)+chamber_bl_temp_offset
-        call diagnose_coupled_chamber_bl_state(t_sens,qv0,ql_act,p, &
+        call diagnose_coupled_chamber_bl_state(t_sens,qv0,ql_warm,p, &
             t_bl,qv_bl,dq_wall_local,dq_evap_local)
 
         ! Convert local BL changes to chamber-mean changes.  dq_wall is negative
@@ -8963,7 +9035,7 @@
             dq_evap_cold=max(qv_target-qv_air,0._wp)
             dq_evap_target=dq_evap_target+dq_evap_cold
         endif
-        dq_evap_target=min(max(dq_evap_target,0._wp),max(ql_act,0._wp))
+        dq_evap_target=min(max(dq_evap_target,0._wp),max(ql_warm,0._wp))
 
         ! With measured T forcing active, BL processing is a subgrid water/PSD
         ! operator and the observed gas temperature is retained.  Otherwise the
@@ -8980,34 +9052,45 @@
         parcel1%qchamber_bl=parcel1%qchamber_bl-dq_wall
 
         ! Distribute exactly the thermodynamically required liquid evaporation.
+        ! Ice is deliberately excluded here: as in entrainment, liquid must be
+        ! exhausted first before ice is allowed to sublimate.
         dq_actual=0._wp
+        fice=0._wp
+        liquid_exhausted=.false.
+        liq_event_capacity=0._wp
         select case(chamber_bl_evap_mode)
         case(1)
             ! Homogeneous diffusional evaporation: same finite D^2 decrement for
-            ! every activated droplet.  Small droplets may naturally reach zero.
+            ! every wet warm particle.  Small particles may naturally reach zero.
             call apply_chamber_bl_homogeneous_evaporation(dq_evap_target,dq_actual)
+            liq_event_capacity=max(ql_warm,0._wp)
+            liquid_exhausted=(liq_event_capacity.le.tiny(1._wp)) .or. &
+                (dq_actual.ge.(1._wp-1.e-10_wp)*liq_event_capacity)
 
         case(2)
-            ! Uniform extreme inhomogeneous: the same fraction of every activated
+            ! Uniform extreme inhomogeneous: the same fraction of every wet warm
             ! bin disappears completely; survivors keep their original size.
-            if (ql_act.gt.tiny(1._wp) .and. dq_evap_target.gt.tiny(1._wp)) then
-                fliq=min(fmix,max(0._wp,dq_evap_target/ql_act))
+            if (ql_warm.gt.tiny(1._wp) .and. dq_evap_target.gt.tiny(1._wp)) then
+                fliq=min(fmix,max(0._wp,dq_evap_target/ql_warm))
             else
                 fliq=0._wp
             endif
-            dq_actual=fliq*ql_act
+            dq_actual=fliq*ql_warm
             qsw_target=eps1*svp_liq(tnew)/max(p-svp_liq(tnew),tiny(1._wp))
             rhw_new=(qv_air+dq_actual)/max(qsw_target,tiny(1._wp))
-            call prepare_released_hydrometeor_aerosol(fliq,0._wp,tnew,rhw_new)
+            call prepare_released_hydrometeor_aerosol(fliq,0._wp,tnew,rhw_new, &
+                all_warm_liquid=.true.)
             do i=1,n
                 factor=1._wp
-                if (parcel1%npart(i).gt.tiny(1._wp)) then
-                    if (particle_is_activated(i,parcel1%y(i),t0)) factor=1._wp-fliq
-                endif
+                if (parcel1%npart(i).gt.tiny(1._wp) .and. &
+                    parcel1%y(i).gt.tiny(1._wp)) factor=1._wp-fliq
                 parcel1%npart(i)=parcel1%npart(i)*factor
                 parcel1%moments(i,:)=parcel1%moments(i,:)*factor
             enddo
             call merge_released_aerosol_into_warm()
+            liq_event_capacity=fmix*max(ql_warm,0._wp)
+            liquid_exhausted=(liq_event_capacity.le.tiny(1._wp)) .or. &
+                (dq_actual.ge.(1._wp-1.e-10_wp)*liq_event_capacity)
 
         case(3)
             ! Extreme inhomogeneous with inverse D^2 evaporation-lifetime
@@ -9019,17 +9102,19 @@
             qsw_target=eps1*svp_liq(tnew)/max(p-svp_liq(tnew),tiny(1._wp))
             rhw_new=(qv_air+dq_actual)/max(qsw_target,tiny(1._wp))
             call prepare_released_hydrometeor_aerosol(0._wp,0._wp,tnew,rhw_new, &
-                liq_factors=fracliq)
+                liq_factors=fracliq,all_warm_liquid=.true.)
             do i=1,n
                 factor=1._wp
-                if (parcel1%npart(i).gt.tiny(1._wp)) then
-                    if (particle_is_activated(i,parcel1%y(i),t0)) &
-                        factor=1._wp-max(0._wp,min(fracliq(i),fmix))
-                endif
+                if (parcel1%npart(i).gt.tiny(1._wp) .and. &
+                    parcel1%y(i).gt.tiny(1._wp)) &
+                    factor=1._wp-max(0._wp,min(fracliq(i),fmix))
                 parcel1%npart(i)=parcel1%npart(i)*factor
                 parcel1%moments(i,:)=parcel1%moments(i,:)*factor
             enddo
             call merge_released_aerosol_into_warm()
+            liq_event_capacity=fmix*max(ql_warm,0._wp)
+            liquid_exhausted=(liq_event_capacity.le.tiny(1._wp)) .or. &
+                (dq_actual.ge.(1._wp-1.e-10_wp)*liq_event_capacity)
             deallocate(fracliq)
 
         case default
@@ -9047,6 +9132,46 @@
             cpm=max(cp+qv0*cpv+ql_total*cpw+qi0*cpi,0.5_wp*cp)
             tnew=tnew-lv*min(dq_evap_cold,dq_actual)/cpm
         endif
+
+        ! ------------------------------------------------------------------
+        ! Ice sublimation: same ordering rule as extreme-inhomogeneous
+        ! entrainment.  First close the post-liquid water budget.  Only if the
+        ! liquid reservoir available to this BL event has been exhausted do we
+        ! test RHi and, if needed, sublimate ice toward RHi=1.
+        !
+        ! solve_chamber_bl_ice_fraction is called with no further liquid
+        ! removal (fliq=0, ql_act=0) because the warm phase has already been
+        ! processed above.  ql_after may contain equilibrium haze water on
+        ! released aerosol residuals; that does not block ice sublimation.
+        ! ------------------------------------------------------------------
+        if (parcel1%ice_flag.eq.1 .and. liquid_exhausted) then
+            ql_after=sum(parcel1%npart*parcel1%y(1:n))
+            qi_before=sum(parcel1%npartice*parcel1%yice(1:n))
+            qcond_new=ql_after+qi_before
+            qv_after_liq=qtot_target-qcond_new
+            if (qv_after_liq.lt.-1.e-12_wp) error stop &
+                'Chamber BL liquid adjustment exceeded available total water before ice'
+            qv_after_liq=max(qv_after_liq,0._wp)
+
+            call solve_chamber_bl_ice_fraction(0._wp,0._wp,ql_after,qi_before, &
+                qv_after_liq,tnew,p,fmix,fice,tice_new,qvice_new,rhw_ice,rhi_ice)
+
+            if (fice.gt.tiny(1._wp)) then
+                ! Build the aerosol/INP residual before changing the ice
+                ! population, exactly as in the entrainment closure.
+                call prepare_released_hydrometeor_aerosol(0._wp,fice, &
+                    tice_new,rhw_ice)
+
+                factor=max(0._wp,1._wp-fice)
+                parcel1%npartice=parcel1%npartice*factor
+                parcel1%moments(n+1:2*n,:)= &
+                    parcel1%moments(n+1:2*n,:)*factor
+
+                call merge_released_aerosol_into_warm()
+                tnew=tice_new
+            endif
+        endif
+
 
         ! Internal evaporation redistributes airborne water only.  Close total
         ! water exactly to the true external wall sink so modes 1-3 conserve the
@@ -9067,10 +9192,13 @@
         parcel1%qtot=qtot_target
 
         if (parcel1%ice_flag.eq.1) then
+            ! Surviving ice keeps its representative mass/shape; only the
+            ! completely sublimated fraction was removed above.  Synchronise
+            ! the shared thermodynamic coordinates after the final budget close.
             parcel1%yice(parcel1%itei)=parcel1%y(parcel1%ite)
             parcel1%yice(parcel1%irhi)=parcel1%y(parcel1%irh)
         endif
-    end subroutine apply_chamber_bl_exchange
+    end subroutine apply_chamber_bl_exchange_once
 
 
     ! ============================================================================
