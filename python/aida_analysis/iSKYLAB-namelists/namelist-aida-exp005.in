@@ -30,6 +30,9 @@
 	microphysics_flag=1,
     !> Ice microphysics switch: 0=liquid only; 1=enable ice bins/processes.
 	ice_flag=0,
+    !> Primary ice mechanisms: Koop, IASD/INAS, DeMott, Daily/DCMEX.
+    !> The iSKYLAB generator switches dust experiments to Koop+IASD.
+    ice_nucleation_mech(1:4) = .true., .false., .true., .false.,
     !> Bin-remapping scheme: 0=full moving, 1=moving-centre, 2=Chen-Lamb mass-conserving remap.
 	bin_scheme_flag=2,
     !> Collision/SCE switch: 0=off, 1=SCE collection, 2=SCE plus secondary-ice processes.
@@ -139,7 +142,10 @@
     !> Number of aerosol/liquid size bins per external mode.
     n_bins            = 60,
     !> Number of nonvolatile aerosol composition components.
-    n_comps           = 4/
+    n_comps           = 4,
+    !> Number of cumulative IASD temperature classes.
+    n_inp_classes     = 16,
+/
 &sounding_spec  ! environmental sounding parameters
     !> Surface/reference pressure for sounding construction [Pa].
  	psurf=96500.,
@@ -187,6 +193,13 @@
  	                        3,                      
     !> Component hygroscopicity kappa used when kappa_flag=1.
  	kappa_core1(1:4)      = 0.61,1.28,0.3,0.3,
+    !> FHH adsorption A/B coefficients by component; A=0 disables FHH.
+    afhh_core1(1:4)      = 0.0, 0.0, 0.0, 0.0,
+    bfhh_core1(1:4)      = 0.0, 0.0, 0.0, 0.0,
+    !> Cumulative IASD thresholds [deg C], corresponding to 255--240 K at 1 K spacing.
+    inp_temp(1:16) = -18.15, -19.15, -20.15, -21.15, -22.15, -23.15, -24.15, -25.15, -26.15, -27.15, -28.15, -29.15, -30.15, -31.15, -32.15, -33.15,
+    !> Component IASD category; dust runs overwrite these with sdsa01/atd03.
+    inp_category(1:4) = 'none', 'none', 'none', 'none',
     !> Organic-content/abundance specification for the semivolatile bins.
  	org_content1(1:10)  = 0.005,0.01,0.02,0.03,0.06,0.08,0.16,0.3,0.42,0.8,
     !> Molar mass of each semivolatile organic bin [kg mol-1].

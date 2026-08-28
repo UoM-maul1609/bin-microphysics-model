@@ -56,6 +56,8 @@
         integer(i4b), parameter :: INP_KAOLINITE_M11 = 3_i4b
         integer(i4b), parameter :: INP_KFELDSPAR_A13 = 4_i4b
         integer(i4b), parameter :: INP_DAILY25       = 5_i4b
+        integer(i4b), parameter :: INP_SDSA01        = 6_i4b
+        integer(i4b), parameter :: INP_ATD03         = 7_i4b
         						
         ! l_inhom describes the mixing MODE used by the warm ODE on the
         ! current timestep.  l_inhom_event is true only when a discrete
@@ -604,6 +606,10 @@
                 inp_kind(k)=INP_KFELDSPAR_A13
             case('daily25','daily2025','daly25','dcmex_daily25','dcmex_daly25')
                 inp_kind(k)=INP_DAILY25
+            case('sdsa01','soil_dust_south_africa','soil-dust-south-africa')
+                inp_kind(k)=INP_SDSA01
+            case('atd03','atd','arizona_test_dust','arizona-test-dust')
+                inp_kind(k)=INP_ATD03
             case default
                 print *,'Unknown inp_category(',k,'): ',trim(inp_category(k))
                 error stop 'Unknown inp_category'
@@ -619,7 +625,9 @@
             enddo
             if (.not.any(inp_kind.eq.INP_NIEMAND12 .or. &
                          inp_kind.eq.INP_KAOLINITE_M11 .or. &
-                         inp_kind.eq.INP_KFELDSPAR_A13)) then
+                         inp_kind.eq.INP_KFELDSPAR_A13 .or. &
+                         inp_kind.eq.INP_SDSA01 .or. &
+                         inp_kind.eq.INP_ATD03)) then
                 print *,'Warning: INAS enabled but no component has an INAS category'
             endif
         endif
@@ -650,7 +658,9 @@
 
         is_explicit_inas = kind.eq.INP_NIEMAND12 .or. &
                            kind.eq.INP_KAOLINITE_M11 .or. &
-                           kind.eq.INP_KFELDSPAR_A13
+                           kind.eq.INP_KFELDSPAR_A13 .or. &
+                           kind.eq.INP_SDSA01 .or. &
+                           kind.eq.INP_ATD03
     end function is_explicit_inas
 
 
@@ -693,6 +703,29 @@
             if (tk.gt.268._wp) return
             teval=max(tk,248._wp)
             ns_site=3.5_wp*1.e4_wp*exp(-1.038_wp*teval+275.26_wp)
+
+        case(INP_SDSA01)
+            ! Soil Dust South Africa (SDSA01), AIDAd dust category.
+            ! No standalone SDSA01 analytical fit is published with the AIDAd
+            ! comparison data, so use the Niemand et al. (2012) natural-desert-
+            ! dust INAS fit as the default proxy.  Bazo et al. (2026) show that
+            ! the AIDAd SDSA01 ns(T) spectrum follows the same general slope and
+            ! is close to the mineral-dust parameterisations over the measured
+            ! range.  Tc is in deg C and ns is geometric-area m-2.
+            ! ns = exp(-0.517 Tc + 8.934), valid here over -12 to -36 C.
+            if (tc.gt.-12._wp) return
+            teval=max(tc,-36._wp)
+            ns_site=exp(-0.517_wp*teval+8.934_wp)
+
+        case(INP_ATD03)
+            ! Arizona Test Dust (ATD03), AIDAd dust category.
+            ! Niemand et al. (2012) ATD-specific geometric-area INAS fit, as
+            ! reported by Hiranuma et al. (2015):
+            ! ns = exp(-0.380 Tc + 13.918) m-2, -17.7 >= Tc >= -26.7 C.
+            ! Hold the cold-end value fixed rather than extrapolating.
+            if (tc.gt.-17.7_wp) return
+            teval=max(tc,-26.7_wp)
+            ns_site=exp(-0.380_wp*teval+13.918_wp)
 
         case default
             ns_site=0._wp
