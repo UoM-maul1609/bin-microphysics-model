@@ -6612,7 +6612,7 @@
     	ql, qtot_m,qtot, eps2=1.e-4_wp,hmin=0.0_wp,htry=1.e-1_wp
     real(wp), dimension(parcel1%n_bin_modew) :: stk, vd, impaction_time, loss_rate
     integer(i4b) :: iloc, i, warm_continuations, ice_continuations
-    integer(i4b), parameter :: max_dvode_restarts=100_i4b
+    integer(i4b), parameter :: max_dvode_restarts=0_i4b  ! 0 => unlimited
     real(wp) :: warm_start_mismatch, ice_start_mismatch
     
 	! ============================================================================
@@ -6814,7 +6814,9 @@
         if ((parcel1%istate.eq.-1 .or. parcel1%istate.eq.-5) .and. &
             parcel1%tt.lt.parcel1%tout) then
             warm_continuations=warm_continuations+1
-            if (warm_continuations.gt.max_dvode_restarts) exit
+            if (max_dvode_restarts.gt.0_i4b) then
+                if (warm_continuations.gt.max_dvode_restarts) exit
+            endif
 
             ! DVODE is not positivity preserving.  Project only numerical
             ! water-mass undershoots before making the accepted state a new IVP.
@@ -7051,7 +7053,9 @@
             if ((parcel1%istateice.eq.-1 .or. parcel1%istateice.eq.-5) .and. &
                 parcel1%ttice.lt.parcel1%toutice) then
                 ice_continuations=ice_continuations+1
-                if (ice_continuations.gt.max_dvode_restarts) exit
+                if (max_dvode_restarts.gt.0_i4b) then
+                    if (ice_continuations.gt.max_dvode_restarts) exit
+                endif
 
                 where (parcel1%yice(1:parcel1%n_bin_modew) < 0._wp)
                     parcel1%yice(1:parcel1%n_bin_modew)=0._wp
