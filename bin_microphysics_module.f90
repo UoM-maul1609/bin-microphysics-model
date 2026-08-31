@@ -1497,10 +1497,10 @@
     ! extra input variables:
     parcel1%iwork=0
     parcel1%rwork=0._wp
-    ! DVODE MXSTEP: 100 was too small for strongly evaporating near-edge bins.
-    ! The solver can legitimately require >100 internal BDF steps over one
-    ! external microphysics timestep, especially as liquid mass approaches 0.
-    parcel1%iwork(6) = 1000 ! max internal steps per DVODE call
+    ! Keep each DVODE call short.  If DVODE hits MXSTEP or repeated
+    ! convergence failure, bin_microphysics restarts it from the last accepted
+    ! state (ISTATE=1), reproducing the robust legacy recovery behaviour.
+    parcel1%iwork(6) = 100 ! max internal steps per DVODE call
     parcel1%iwork(7) = 10 ! max message printed per problem
     parcel1%iwork(5) = 5 ! order
     parcel1%rwork(5) = 0._wp !1.e-3_wp ! initial time-step
@@ -1670,8 +1670,8 @@
         ! extra input variables:
         parcel1%iworkice=0
         parcel1%rworkice=0._wp
-        ! Keep the ice solver consistent with the warm solver MXSTEP allowance.
-        parcel1%iworkice(6) = 1000 ! max internal steps per DVODE call
+        ! Use the same short-call/restart recovery policy as warm DVODE.
+        parcel1%iworkice(6) = 100 ! max internal steps per DVODE call
         parcel1%iworkice(7) = 10 ! max message printed per problem
         parcel1%iworkice(5) = 5 ! order
         parcel1%rworkice(5) = 0._wp !1.e-3_wp ! initial time-step
@@ -3830,10 +3830,18 @@
         iz =parcel1%iz
         iw =parcel1%iw
         ira = parcel1%ira
+        
+        ! Every DVODE RHS component must be assigned on every call.
+		ydot(:)=0._wp
+
         if(.not.adiabatic_prof) ydot(ira)=0._wp
 
+        ! Prescribed oscillatory-updraft mode: never modify DVODE's state y
+        ! inside the RHS callback.  Integrate the analytic derivative instead.
+        ! This is continuous provided w(t_thresh)=winit2.
         if ((updraft_type==3).and.(tt>t_thresh)) then
-            y(iw)=winit2*cos(2._wp*pi*(tt-t_thresh)/tau2)
+            ydot(iw)=-winit2*(2._wp*pi/tau2)* &
+                sin(2._wp*pi*(tt-t_thresh)/tau2)
         endif
 
         rh=y(irh)
@@ -6604,7 +6612,7 @@
     	ql, qtot_m,qtot, eps2=1.e-4_wp,hmin=0.0_wp,htry=1.e-1_wp
     real(wp), dimension(parcel1%n_bin_modew) :: stk, vd, impaction_time, loss_rate
     integer(i4b) :: iloc, i, warm_continuations, ice_continuations
-    integer(i4b), parameter :: max_dvode_continuations=10_i4b
+    integer(i4b), parameter :: max_dvode_restarts=100_i4b
     real(wp) :: warm_start_mismatch, ice_start_mismatch
     
 	! ============================================================================
@@ -6798,18 +6806,23 @@
                    parcel1%iwork,parcel1%liw,jparcelwarm, &
                    parcel1%mf,parcel1%rpar,parcel1%ipar)
 
-        ! ISTATE=-1 is DVODE's recoverable "excess work on this call" return.
-        ! The state y and time tt are valid at the last accepted internal step.
-        ! Continue that SAME problem with ISTATE=2; never restart it with
-        ! ISTATE=1, which would throw away solver history and can repeat the
-        ! same expensive interval indefinitely.  Keep a finite outer cap so a
-        ! genuinely pathological step still fails visibly.
-        if (parcel1%istate.eq.-1 .and. parcel1%tt.lt.parcel1%tout) then
+        ! Legacy recovery strategy: after excess work (ISTATE=-1) or
+        ! repeated convergence failure (ISTATE=-5), retain DVODE's last
+        ! accepted (tt,y) state but deliberately discard the solver history.
+        ! Reinitialising with ISTATE=1 allows DVODE to choose a new initial
+        ! step/Jacobian rather than remaining trapped at a sub-microsecond HCUR.
+        if ((parcel1%istate.eq.-1 .or. parcel1%istate.eq.-5) .and. &
+            parcel1%tt.lt.parcel1%tout) then
             warm_continuations=warm_continuations+1
-            if (warm_continuations.gt.max_dvode_continuations) exit
-            ! Recoverable MXSTEP continuation: remain quiet unless the
-            ! bounded continuation ultimately fails below.
-            parcel1%istate=2
+            if (warm_continuations.gt.max_dvode_restarts) exit
+
+            ! DVODE is not positivity preserving.  Project only numerical
+            ! water-mass undershoots before making the accepted state a new IVP.
+            where (parcel1%y(1:parcel1%n_bin_modew) < 0._wp)
+                parcel1%y(1:parcel1%n_bin_modew)=0._wp
+            end where
+
+            parcel1%istate=1
             cycle
         endif
         exit
@@ -6825,7 +6838,7 @@
             count(parcel1%mbin(1:parcel1%n_bin_modew,n_comps+1) <= 0._wp .and. &
                   parcel1%npart(1:parcel1%n_bin_modew) > 1.e-9_wp)
         print *,'PRE-DVODE max occupied |y-mbin_water| = ',warm_start_mismatch
-        print *,'DVODE continuation chunks attempted = ',warm_continuations
+        print *,'DVODE warm restarts attempted = ',warm_continuations
         if (count(parcel1%npart(1:parcel1%n_bin_modew) > 1.e-9_wp) > 0) then
             print *,'min/max OCCUPIED liquid mass = ', &
                 minval(parcel1%y(1:parcel1%n_bin_modew), &
@@ -7032,12 +7045,19 @@
                            parcel1%iworkice,parcel1%liwice,jparcelwarm, &
                            parcel1%mfice,parcel1%rparice,parcel1%iparice)
 
-            if (parcel1%istateice.eq.-1 .and. parcel1%ttice.lt.parcel1%toutice) then
+            ! Apply the same robust restart policy to depositional/sublimational
+            ! ice growth.  Keep the last accepted state, but reinitialise DVODE
+            ! after either excess work (-1) or repeated convergence failure (-5).
+            if ((parcel1%istateice.eq.-1 .or. parcel1%istateice.eq.-5) .and. &
+                parcel1%ttice.lt.parcel1%toutice) then
                 ice_continuations=ice_continuations+1
-                if (ice_continuations.gt.max_dvode_continuations) exit
-                ! Recoverable MXSTEP continuation: remain quiet unless the
-                ! bounded continuation ultimately fails below.
-                parcel1%istateice=2
+                if (ice_continuations.gt.max_dvode_restarts) exit
+
+                where (parcel1%yice(1:parcel1%n_bin_modew) < 0._wp)
+                    parcel1%yice(1:parcel1%n_bin_modew)=0._wp
+                end where
+
+                parcel1%istateice=1
                 cycle
             endif
             exit
@@ -7050,7 +7070,7 @@
                 minval(parcel1%yice(1:parcel1%n_bin_modew)), &
                 maxval(parcel1%yice(1:parcel1%n_bin_modew))
             print *,'PRE-DVODE max occupied |yice-mbinice| = ',ice_start_mismatch
-            print *,'DVODE ice continuation chunks attempted = ',ice_continuations
+            print *,'DVODE ice restarts attempted = ',ice_continuations
             print *,'DVODE ice NST,NFE,NJE,NQU = ', parcel1%iworkice(11), &
                 parcel1%iworkice(12), parcel1%iworkice(13), parcel1%iworkice(14)
             print *,'DVODE ice HU,HCUR,TCUR,TOLSF = ', parcel1%rworkice(11), &
