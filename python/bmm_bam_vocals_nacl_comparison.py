@@ -421,6 +421,7 @@ def write_bmm_namelist(
         "rhinit": f"{BMM_RHINIT:.16e}",
         "ice_flag": "0",
         "bin_scheme_flag": "2",
+        "full_moving_release_mode": "0",
         "sce_flag": "0",
         "kappa_flag": "0",
         "updraft_type": "1",

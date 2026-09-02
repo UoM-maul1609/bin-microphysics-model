@@ -36,6 +36,12 @@
 		integer(i4b), parameter :: BIN_MOVING_CENTRE = 1_i4b
 		integer(i4b), parameter :: BIN_CHEN_LAMB     = 2_i4b
 
+        ! Full-moving insertion policy for aerosol residuals released by complete
+        ! evaporation/sublimation. SAME_INDEX is the default; PARTITION inserts
+        ! by the current water-mass pivots.
+        integer(i4b), parameter :: FULL_MOVING_RELEASE_SAME_INDEX = 0_i4b
+        integer(i4b), parameter :: FULL_MOVING_RELEASE_PARTITION  = 1_i4b
+
         ! Fixed-grid initialisation used by moving-centre and Chen-Lamb.
         integer(i4b), parameter :: FIXED_GRID_LEGACY = 0_i4b
         integer(i4b), parameter :: FIXED_GRID_HYBRID = 1_i4b
@@ -72,7 +78,7 @@
             ! variables for bin model
             integer(i4b) :: n_bins1,n_modes,n_comps, n_bin_mode, n_bin_modew, n_bin_mode1, &
                             n_sound, n_chamber, ice_flag, sce_flag,bin_scheme_flag, &
-                            n_inp_classes, iinp_start, idemott
+                            n_inp_classes, iinp_start, idemott, iaer05
             real(wp) :: dt
 			! Cumulative hydrometeor mass removed by fallout
 			! kg hydrometeor / kg dry air
@@ -221,7 +227,8 @@
         logical :: chamber_forcing_active=.false.
 
         integer(i4b) :: microphysics_flag=0, kappa_flag,updraft_type, vent_flag, &
-                        sce_flag=0,ice_flag=0, bin_scheme_flag=1, entrain_period=0
+                        sce_flag=0,ice_flag=0, bin_scheme_flag=1, entrain_period=0, &
+                        full_moving_release_mode=FULL_MOVING_RELEASE_SAME_INDEX
         logical :: use_prof_for_tprh, hm_flag, mode1_flag, mode2_flag, &
         	bubble_flag, release_aerosol, entrain_aerosol
         integer(i4b) :: break_flag
@@ -444,7 +451,7 @@
                     use_adt_optics, optics_wavelength, vent_flag, &
                     kappa_flag, updraft_type,t_thresh, adiabatic_prof, &
                     entrain_period, thresh_to_start_hom_mix, release_aerosol, &
-                    entrain_aerosol, vert_ent, &
+                    full_moving_release_mode, entrain_aerosol, vert_ent, &
                     z_ctop, ent_rate,n_levels_s, &
                     fallout_flag,residence_depth, &
                     alpha_therm,alpha_cond,alpha_therm_ice,alpha_dep
@@ -504,6 +511,10 @@
         ! Derived indicator used internally; not a namelist control.
         chamber_forcing_active=chamber_force_pressure .or. chamber_force_temperature .or. &
                          chamber_force_qtot
+
+        if (full_moving_release_mode.lt.FULL_MOVING_RELEASE_SAME_INDEX .or. &
+            full_moving_release_mode.gt.FULL_MOVING_RELEASE_PARTITION) error stop &
+            'full_moving_release_mode must be 0 (same source index) or 1 (water-mass partition)'
 
         if (vert_ent) error stop &
             'vert_ent/Sanchez cloud-top entrainment has been removed; use lateral entrainment'
@@ -982,8 +993,9 @@
     real(wp) :: num, ntot, number_per_bin, test, var1, &
                 eps2, z1, z2, htry, hmin, var, dummy
     real(wp), dimension(1) :: p1, z11
-    real(wp) :: p11, p22, rm, cpm
+    real(wp) :: p11, p22, rm, cpm, dlo_init, dhi_init, frac05_init
     integer(i4b) :: i,j,k, AllocateStatus, iloc
+    logical :: has_inas_init,has_demott_init,has_daily_init
 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! set variables and allocate arrays in parcel                                  !
@@ -999,6 +1011,7 @@
     parcel1%n_inp_classes=n_inp_classes
     parcel1%iinp_start=n_comps+6
     parcel1%idemott=parcel1%iinp_start+n_inp_classes
+    parcel1%iaer05=parcel1%idemott+1
     parcel1%n_bin_modew=n_bins*n_mode
     parcel1%n_bin_mode1=(n_bins+1)*n_mode
     parcel1%z=zinit
@@ -1035,7 +1048,7 @@
     parcel1%ice_flag=ice_flag
     parcel1%n_bin_mode=&
         parcel1%n_bins1*n_mode*(1+parcel1%ice_flag)     ! for all the liquid and ice    
-    parcel1%imoms=ice_flag*(6+n_inp_classes)            ! phi, nmon, vol, rim, unf, cumulative Nin, n_demott
+    parcel1%imoms=ice_flag*(7+n_inp_classes)            ! phi, nmon, vol, rim, unf, cumulative Nin, n_demott, n_aer05
     
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! validate bin_scheme_flag					                                   !
@@ -1801,6 +1814,55 @@
         ! This is extensive through aggregation and is zero in fresh liquid.
         parcel1%momenttype(parcel1%idemott)=MOMENT_EXTENSIVE
         parcel1%moments(:,parcel1%idemott)=0._wp
+
+        ! Prognostic count of DeMott-eligible dry aerosol cores with Ddry >
+        ! 0.5 micron carried by each hydrometeor population.  It is an
+        ! extensive number moment: collision sums it, freezing transfers it
+        ! to ice, and complete evaporation/sublimation returns it to warm haze.
+        parcel1%momenttype(parcel1%iaer05)=MOMENT_EXTENSIVE
+        parcel1%moments(:,parcel1%iaer05)=0._wp
+        do j=1,parcel1%n_modes
+            do k=1,n_bins_init
+                i=k+(j-1)*n_bins
+                iloc=k+(j-1)*(n_bins+1)
+                call get_inp_control(parcel1%mbin(i,1:n_comps), &
+                    has_inas_init,has_demott_init,has_daily_init)
+                if (.not.has_demott_init) cycle
+                dlo_init=parcel1%d(iloc)
+                dhi_init=parcel1%d(iloc+1)
+                if (dhi_init.le.0.5e-6_wp) then
+                    frac05_init=0._wp
+                elseif (dlo_init.ge.0.5e-6_wp) then
+                    frac05_init=1._wp
+                elseif (dhi_init.gt.dlo_init) then
+                    ! Preserve the existing flat-within-dry-bin DeMott
+                    ! threshold convention when initialising the prognostic.
+                    frac05_init=(dhi_init-0.5e-6_wp)/(dhi_init-dlo_init)
+                else
+                    frac05_init=0._wp
+                endif
+                parcel1%moments(i,parcel1%iaer05)= &
+                    parcel1%npart(i)*max(0._wp,min(frac05_init,1._wp))
+            enddo
+        enddo
+
+    endif
+
+    ! Environmental aerosol is an immutable copy of the initial aerosol
+    ! population.  Initialise it after all intrinsic moments exist so
+    ! entrainment works for every bin scheme, with n_aer05/IN moments included
+    ! automatically when ice microphysics is enabled.
+    if (.not.adiabatic_prof) then
+        parcel1%npart_ent=parcel1%npart
+        parcel1%mbin_ent=parcel1%mbin
+        parcel1%moments_ent=0._wp
+        parcel1%moments_ent(1:parcel1%n_bin_modew,:)= &
+            parcel1%moments(1:parcel1%n_bin_modew,:)
+        parcel1%mbinedges_ent=parcel1%mbinedges
+        parcel1%npart_ent0=parcel1%npart_ent
+        parcel1%mbin_ent0=parcel1%mbin_ent
+        parcel1%moments_ent0=parcel1%moments_ent
+        parcel1%mbinedges_ent0=parcel1%mbinedges_ent
     endif
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
@@ -1831,11 +1893,49 @@
 		integer(i4b), dimension(:,:), intent(in) :: indexc	
 		real(wp), dimension(:,:), intent(in) :: mbinedges
 
-		! Copy only fixed-grid information
+		integer(i4b) :: i,imode,ibin
+		real(wp) :: mref,mlow,mhigh
+
+		! Copy the collision receiving-mode map and reference water-mass grid.
 		parcel1%indexc = indexc
 		parcel1%mbinedges = mbinedges
-		! If these are intended to share the same fixed grid:
-		parcel1%mbinedges_ent = mbinedges	
+		if (allocated(parcel1%mbinedges_ent)) then
+			parcel1%mbinedges_ent = mbinedges
+			parcel1%mbinedges_ent0 = mbinedges
+		endif
+
+		! For full-moving + SCE, only the BMM aerosol bins are populated at
+		! initialisation; the appended n_binsc categories have zero number.
+		! Give every empty category a positive reference water-mass coordinate
+		! from the SCE grid.  It remains zero-number, but can subsequently receive
+		! collision products or added/released aerosol.  Occupied full-moving
+		! pivots are never overwritten here.
+		if (parcel1%bin_scheme_flag.eq.BIN_FULL_MOVING) then
+			do imode=1,parcel1%n_modes
+				do ibin=1,parcel1%n_bins1
+					i=(imode-1)*parcel1%n_bins1+ibin
+					if (parcel1%npart(i).gt.tiny(1._wp)) cycle
+					mlow=max(mbinedges(ibin,imode),0._wp)
+					mhigh=max(mbinedges(ibin+1,imode),mlow)
+					if (mlow.gt.0._wp .and. mhigh.gt.0._wp) then
+						mref=sqrt(mlow*mhigh)
+					else
+						mref=0.5_wp*(mlow+mhigh)
+					endif
+					mref=max(mref,tiny(1._wp))
+					parcel1%y(i)=mref
+					parcel1%mbin(i,parcel1%n_comps+1)=mref
+					if (allocated(parcel1%mbin_ent)) &
+						parcel1%mbin_ent(i,parcel1%n_comps+1)=mref
+					if (parcel1%ice_flag.eq.1) then
+						if (parcel1%npartice(i).le.tiny(1._wp)) then
+							parcel1%yice(i)=mref
+							parcel1%mbinice(i,parcel1%n_comps+1)=mref
+						endif
+					endif
+				enddo
+			enddo
+		endif
 	end subroutine write_sce_grid_to_bmm
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
@@ -4436,21 +4536,23 @@
     logical, dimension(N_INUC_MECH), intent(in) :: ice_nucleation_mech_in
 
     real(wp), dimension(nbinw) :: nw,aw,jw,dn01,dn_inas,dn_daily,dn_demott,dn_koop, &
-                                  nremain,m01,dw,dd,kappa,rhoat
+                                  nremain,m01,dw,dd,kappa,rhoat,aer05_freeze
     real(wp), dimension(nbinw,n_inp_classes) :: nin_freeze
     real(wp), dimension(nmoms) :: momtemp
 
     real(wp), intent(inout), dimension(nbinw) :: yice
     real(wp), intent(inout) :: rh
 
-    integer(i4b) :: i,j,k,kk,im,inew,it,ib,jl,jh,imode,ibin,iedge
-    real(wp) :: fracinliq,naer05,naer_daily,nprimary,nprimary_existing, &
+    integer(i4b) :: i,j,k,kk,im,inew,it,ib,jl,jh
+    real(wp) :: fracinliq,naer05,naer05_basis,naer_daily,nprimary,nprimary_existing, &
                 ndaily_target,ndaily_existing,avail, &
                 n,nt,nb,mt,mb,mnew,nleft,mttot,mbtot,mleft,mall, &
-                dprimary,dn,frac,dcin,tc,dlo,dhi,frac05
+                dprimary,dn,frac,dcin,tc, &
+                aer05_total,aer05_demott,aer05_other,aer05_remaining, &
+                n_before,n_after_demott,other_freeze
     logical :: has_inas,has_demott,has_daily,full_moving
     logical, dimension(nbinw) :: activated_mask
-    integer(i4b) :: idemott
+    integer(i4b) :: idemott,iaer05
 
     ! Non-collisional freezing is only relevant below the melting point.
     if(t.gt.ttr) return
@@ -4462,8 +4564,10 @@
     dn_demott=0._wp
     dn_koop=0._wp
     dn01=0._wp
+    aer05_freeze=0._wp
     nin_freeze=0._wp
     idemott=ncomps+6+n_inp_classes
+    iaer05=idemott+1
     full_moving=(parcel1%bin_scheme_flag.eq.BIN_FULL_MOVING)
 
     ! Evaluate the expensive Koehler/FHH activation test once per warm bin and
@@ -4528,90 +4632,43 @@
     ! so aggregation with other ice types does not erase DeMott provenance.
     ! -------------------------------------------------------------------------
     if(ice_nucleation_mech_in(INUC_DEMOTT)) then
-        dd(:)=((sum(mbin2(:,:)/rhobin(:,:),2))*6._wp/pi)**onethird
         naer05=0._wp
 
+        ! n_aer05 is now a prognostic extensive moment rather than a diagnostic
+        ! reconstructed from the current bin index.  It therefore remains valid
+        ! after collision/coalescence, remapping, entrainment and aerosol release.
         do i=1,nbinw
+            if(npart(i).le.qsmall2) cycle
             if(mwat(i).le.tiny(1._wp)) cycle
             if(.not.activated_mask(i)) cycle
             call get_inp_control(mbin2(i,:),has_inas,has_demott,has_daily)
             if((has_inas .and. ice_nucleation_mech_in(INUC_INAS)) .or. .not.has_demott) cycle
-
-			if (full_moving) then
-				! Full-moving bins retain their original dry-aerosol-bin identity.
-				! Integrate a flat number distribution across the original dry bin
-				! when it straddles the DeMott 0.5 micron threshold.
-				imode=(i-1)/nbins1+1
-				ibin=i-(imode-1)*nbins1
-				iedge=ibin+(imode-1)*(nbins1+1)
-			
-				dlo=parcel1%d(iedge)
-				dhi=parcel1%d(iedge+1)
-			
-				if (dhi.le.0.5e-6_wp) then
-					frac05=0._wp
-				elseif (dlo.ge.0.5e-6_wp) then
-					frac05=1._wp
-				elseif (dhi.gt.dlo) then
-					frac05=(dhi-0.5e-6_wp)/(dhi-dlo)
-				else
-					frac05=0._wp
-				endif
-			else
-				! Moving-centre and Chen-Lamb remap particles between numerical bins,
-				! so the original parcel1%d interval is no longer associated with bin i.
-				! Classify using the representative dry-equivalent diameter reconstructed
-				! from the aerosol component masses carried by the remapped population.
-				frac05=merge(1._wp,0._wp,dd(i).gt.0.5e-6_wp)
-			endif
-           naer05=naer05+frac05*max(npart(i)-dn_inas(i),0._wp)
+            naer05=naer05+max(moments(i,iaer05),0._wp)
         enddo
 
-        nprimary=min(naer05,demott_2010(t,naer05))
-
-        ! Existing DeMott primary monomers are tracked explicitly.
+        ! Existing DeMott primary ice remains part of the cumulative DeMott
+        ! target.  Adding it back to the aerosol basis prevents the target from
+        ! spuriously falling solely because earlier DeMott freezing moved an
+        ! eligible aerosol core out of the liquid-drop population.
         nprimary_existing=sum(max(moments(nbinw+1:2*nbinw,idemott),0._wp))
+        naer05_basis=naer05+nprimary_existing
+        nprimary=min(naer05_basis,demott_2010(t,naer05_basis))
         nprimary=max(nprimary-nprimary_existing,0._wp)
 
-        ! Deplete eligible aerosol from the large end, retaining the existing
-        ! BMM ordering used by the DeMott implementation.
+        ! Deplete eligible droplets from the large end, retaining the existing
+        ! BMM ordering.  A drop can freeze at most once, while n_aer05 may exceed
+        ! drop number after coalescence because one drop can carry several
+        ! >0.5-micron aerosol cores.
         do i=nbinw,1,-1
             if(nprimary.le.qsmall2) exit
-            if(mwat(i).le.tiny(1._wp)) cycle
+            if(npart(i).le.qsmall2 .or. mwat(i).le.tiny(1._wp)) cycle
             if(.not.activated_mask(i)) cycle
 
             call get_inp_control(mbin2(i,:),has_inas,has_demott,has_daily)
             if((has_inas .and. ice_nucleation_mech_in(INUC_INAS)) .or. .not.has_demott) cycle
 
-			if (full_moving) then
-				! Full-moving bins retain their original dry-aerosol-bin identity.
-				! Integrate a flat number distribution across the original dry bin
-				! when it straddles the DeMott 0.5 micron threshold.
-				imode=(i-1)/nbins1+1
-				ibin=i-(imode-1)*nbins1
-				iedge=ibin+(imode-1)*(nbins1+1)
-			
-				dlo=parcel1%d(iedge)
-				dhi=parcel1%d(iedge+1)
-			
-				if (dhi.le.0.5e-6_wp) then
-					frac05=0._wp
-				elseif (dlo.ge.0.5e-6_wp) then
-					frac05=1._wp
-				elseif (dhi.gt.dlo) then
-					frac05=(dhi-0.5e-6_wp)/(dhi-dlo)
-				else
-					frac05=0._wp
-				endif
-			else
-				! Moving-centre and Chen-Lamb remap particles between numerical bins,
-				! so the original parcel1%d interval is no longer associated with bin i.
-				! Classify using the representative dry-equivalent diameter reconstructed
-				! from the aerosol component masses carried by the remapped population.
-				frac05=merge(1._wp,0._wp,dd(i).gt.0.5e-6_wp)
-			endif
-
-            avail=max(frac05*max(npart(i)-dn_inas(i),0._wp)-dn_demott(i),0._wp)
+            avail=min(max(npart(i)-dn_inas(i),0._wp), &
+                      max(moments(i,iaer05),0._wp))
             dprimary=min(nprimary,avail)
             dn_demott(i)=dn_demott(i)+dprimary
             nprimary=nprimary-dprimary
@@ -4755,6 +4812,35 @@
             mbtot=mb*nb
             mleft=nleft*mnew
 
+            ! Prognostic >0.5-micron aerosol cores follow the frozen
+            ! droplets.  DeMott-selected droplets must remove at least one
+            ! eligible core each when the mean core count is below one; once
+            ! coalescence gives more than one core per drop, use the mean core
+            ! loading of the selected drops.  Any additional (e.g. Koop)
+            ! freezing samples the remaining core population proportionally.
+            n_before=max(npart(k),0._wp)
+            aer05_total=max(moments(k,iaer05),0._wp)
+            aer05_demott=0._wp
+            if (dn_demott(k).gt.qsmall2 .and. n_before.gt.qsmall2 .and. &
+                aer05_total.gt.qsmall2) then
+                if (aer05_total.le.n_before) then
+                    aer05_demott=min(aer05_total,dn_demott(k))
+                else
+                    aer05_demott=min(aer05_total, &
+                        dn_demott(k)*aer05_total/n_before)
+                endif
+            endif
+            aer05_remaining=max(aer05_total-aer05_demott,0._wp)
+            n_after_demott=max(n_before-dn_demott(k),0._wp)
+            other_freeze=max(dn01(k)-dn_demott(k),0._wp)
+            aer05_other=0._wp
+            if (other_freeze.gt.qsmall2 .and. n_after_demott.gt.qsmall2) then
+                aer05_other=min(aer05_remaining, &
+                    aer05_remaining*min(other_freeze/n_after_demott,1._wp))
+            endif
+            aer05_freeze(k)=min(aer05_total,aer05_demott+aer05_other)
+            moments(k,iaer05)=max(aer05_total-aer05_freeze(k),0._wp)
+
             ! Number concentration remaining in the liquid bin.
             npart(k)=npart(k)-dn01(k)
             fracinliq=npart(k)/max(npart(k)+dn01(k),1.e-30_wp)
@@ -4827,6 +4913,15 @@
                     dn_demott(k)*mttot/mall
                 moments(ib+nbinw,idemott)=moments(ib+nbinw,idemott)+ &
                     dn_demott(k)*mbtot/mall
+
+                ! The conserved >0.5-micron aerosol-core count follows the
+                ! same non-cloning fragment partition as the aerosol/IN moments.
+                moments(inew+nbinw,iaer05)=moments(inew+nbinw,iaer05)+ &
+                    aer05_freeze(k)*mleft/mall
+                moments(it+nbinw,iaer05)=moments(it+nbinw,iaer05)+ &
+                    aer05_freeze(k)*mttot/mall
+                moments(ib+nbinw,iaer05)=moments(ib+nbinw,iaer05)+ &
+                    aer05_freeze(k)*mbtot/mall
             endif
 
             m01(inew)=m01(inew)+mleft
@@ -4962,7 +5057,7 @@
         ! This ensures that both callbacks use the same:
         !   * Koehler/FHH activated-particle criterion;
         !   * INAS, DeMott, Daily/DCMEX and Koop mechanisms;
-        !   * flat-within-dry-bin treatment of the DeMott >0.5 um reservoir;
+        !   * prognostic conserved DeMott >0.5 um aerosol-core reservoir;
         !   * IN/provenance-moment depletion and transfer;
         !   * full-moving versus fixed-grid ice receiving-bin treatment;
         !   * aerosol, number, ice-mass, morphology and latent-heat updates.
@@ -5142,6 +5237,173 @@
         enddo   
     end subroutine moving_centre
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+	! ============================================================================
+	! full_moving_water_bracket
+	! ============================================================================
+	!>@brief
+	!>Finds the two current full-moving water-mass pivots that bracket a source
+	!>water mass within the same external aerosol mode.  The pivots need not be
+	!>ordered in array index after collection; lower and upper are diagnosed by
+	!>mass.  At an end of the represented range both indices collapse to the
+	!>nearest endpoint.
+	subroutine full_moving_water_bracket(isrc,mwater,ilo,ihi,wlo,whi)
+		implicit none
+		integer(i4b), intent(in) :: isrc
+		real(wp), intent(in) :: mwater
+		integer(i4b), intent(out) :: ilo,ihi
+		real(wp), intent(out) :: wlo,whi
+		integer(i4b) :: imode,j,jlo,jhi,ilower,iupper
+		real(wp) :: m,mlower,mupper,denom
+
+		imode=(isrc-1)/parcel1%n_bins1+1
+		jlo=(imode-1)*parcel1%n_bins1+1
+		jhi=imode*parcel1%n_bins1
+		mlower=-huge(1._wp)
+		mupper= huge(1._wp)
+		ilower=jlo
+		iupper=jlo
+
+		do j=jlo,jhi
+			m=max(parcel1%y(j),0._wp)
+			if (m.le.mwater .and. m.gt.mlower) then
+				mlower=m
+				ilower=j
+			endif
+			if (m.ge.mwater .and. m.lt.mupper) then
+				mupper=m
+				iupper=j
+			endif
+		enddo
+
+		! Outside the represented pivot range: use the nearest endpoint.  The
+		! receiving pivot is subsequently moved by exact number/water averaging,
+		! so number and water remain conserved even for an endpoint source.
+		if (mlower.eq.-huge(1._wp)) then
+			ilo=iupper
+			ihi=iupper
+			wlo=1._wp
+			whi=0._wp
+			return
+		elseif (mupper.eq.huge(1._wp)) then
+			ilo=ilower
+			ihi=ilower
+			wlo=1._wp
+			whi=0._wp
+			return
+		endif
+
+		ilo=ilower
+		ihi=iupper
+		if (ilo.eq.ihi) then
+			wlo=1._wp
+			whi=0._wp
+			return
+		endif
+
+		denom=mupper-mlower
+		if (denom.le.tiny(1._wp)) then
+			wlo=1._wp
+			whi=0._wp
+			ihi=ilo
+		else
+			whi=max(0._wp,min((mwater-mlower)/denom,1._wp))
+			wlo=1._wp-whi
+		endif
+	end subroutine full_moving_water_bracket
+
+
+	! ============================================================================
+	! merge_full_moving_warm_source
+	! ============================================================================
+	!>@brief
+	!>Conservatively adds fresh/entrained or released aerosol to a full-moving
+	!>warm population.  insertion_mode=0 keeps each source in the same numerical
+	!>index (the default for hydrometeor residual release); insertion_mode=1
+	!>partitions source number and all extensive moments between the lower/upper
+	!>current water-mass pivots.  In both modes source water is accumulated
+	!>exactly and each receiving pivot is moved to the number-weighted mean, so
+	!>number, water and every prognostic moment are conserved to roundoff.
+	subroutine merge_full_moving_warm_source(npart_src,mwater_src,moments_src, &
+		source_scale,insertion_mode)
+		implicit none
+		real(wp), dimension(:), intent(in) :: npart_src,mwater_src
+		real(wp), dimension(:,:), intent(in) :: moments_src
+		real(wp), intent(in), optional :: source_scale
+		integer(i4b), intent(in), optional :: insertion_mode
+		integer(i4b) :: i,j,n,nmom,mode,ilo,ihi
+		real(wp) :: scale,nin,nold,nnew,water_total,wlo,whi
+		real(wp), allocatable :: nadd(:),wateradd(:),momadd(:,:)
+
+		if (parcel1%bin_scheme_flag.ne.BIN_FULL_MOVING) error stop &
+			'merge_full_moving_warm_source called for non-full-moving scheme'
+
+		n=parcel1%n_bin_modew
+		nmom=parcel1%n_comps+parcel1%imoms
+		if (size(npart_src).ne.n .or. size(mwater_src).ne.n) error stop &
+			'full-moving source has wrong warm-bin dimension'
+		if (size(moments_src,1).ne.n .or. size(moments_src,2).ne.nmom) error stop &
+			'full-moving source moments have wrong dimensions'
+
+		scale=1._wp
+		if (present(source_scale)) scale=max(source_scale,0._wp)
+		if (scale.le.tiny(1._wp)) return
+		mode=full_moving_release_mode
+		if (present(insertion_mode)) mode=insertion_mode
+		if (mode.ne.FULL_MOVING_RELEASE_SAME_INDEX .and. &
+			mode.ne.FULL_MOVING_RELEASE_PARTITION) error stop &
+			'unknown full-moving source insertion mode'
+
+		allocate(nadd(n),wateradd(n),momadd(n,nmom))
+		nadd=0._wp
+		wateradd=0._wp
+		momadd=0._wp
+
+		do i=1,n
+			nin=scale*npart_src(i)
+			if (nin.le.tiny(1._wp)) cycle
+			if (mwater_src(i).ne.mwater_src(i)) error stop &
+				'non-finite source water mass in full-moving merge'
+
+			if (mode.eq.FULL_MOVING_RELEASE_SAME_INDEX) then
+				ilo=i
+				ihi=i
+				wlo=1._wp
+				whi=0._wp
+			else
+				call full_moving_water_bracket(i,max(mwater_src(i),0._wp), &
+					ilo,ihi,wlo,whi)
+			endif
+
+			if (wlo.gt.0._wp) then
+				nadd(ilo)=nadd(ilo)+wlo*nin
+				wateradd(ilo)=wateradd(ilo)+wlo*nin*max(mwater_src(i),0._wp)
+				momadd(ilo,:)=momadd(ilo,:)+wlo*scale*moments_src(i,:)
+			endif
+			if (whi.gt.0._wp) then
+				nadd(ihi)=nadd(ihi)+whi*nin
+				wateradd(ihi)=wateradd(ihi)+whi*nin*max(mwater_src(i),0._wp)
+				momadd(ihi,:)=momadd(ihi,:)+whi*scale*moments_src(i,:)
+			endif
+		enddo
+
+		do i=1,n
+			if (nadd(i).le.tiny(1._wp)) cycle
+			nold=max(parcel1%npart(i),0._wp)
+			nnew=nold+nadd(i)
+			water_total=nold*max(parcel1%y(i),0._wp)+wateradd(i)
+			parcel1%npart(i)=nnew
+			parcel1%y(i)=water_total/max(nnew,tiny(1._wp))
+			parcel1%moments(i,:)=parcel1%moments(i,:)+momadd(i,:)
+			do j=1,parcel1%n_comps
+				parcel1%mbin(i,j)=parcel1%moments(i,j)/nnew
+			enddo
+			parcel1%mbin(i,parcel1%n_comps+1)=parcel1%y(i)
+		enddo
+
+		deallocate(nadd,wateradd,momadd)
+	end subroutine merge_full_moving_warm_source
 
 
 	! ============================================================================
@@ -7072,43 +7334,70 @@
         ! fraction.  Existing parcel particles have already been diluted by
         ! dilute_send inside entrainment(); the environmental contribution is
         ! therefore (1-dilute_send) times the fixed t=0 environmental PSD.
+        !
+        ! For full-moving, do NOT assume that environmental source index i is
+        ! still the correct parcel receiving index after condensation/SCE.
+        ! Hydrate the source in entrainment(), then conservatively partition it
+        ! between the bracketing current water-mass pivots in the same external
+        ! mode. Fixed-grid schemes retain their historical source-grid remap and
+        ! index-wise addition.
         if (entrain_aerosol) then
-            where ((parcel1%npart + (1._wp-dilute_send)*parcel1%npart_ent) > 0._wp)
-                parcel1%y(1:parcel1%n_bin_modew)= &
-                    parcel1%y(1:parcel1%n_bin_modew)*parcel1%npart + &
+            if (parcel1%bin_scheme_flag.eq.BIN_FULL_MOVING) then
+                call merge_full_moving_warm_source( &
+                    parcel1%npart_ent, &
+                    parcel1%mbin_ent(:,parcel1%n_comps+1), &
+                    parcel1%moments_ent(1:parcel1%n_bin_modew,:), &
+                    1._wp-dilute_send,FULL_MOVING_RELEASE_PARTITION)
+            else
+                where ((parcel1%npart + (1._wp-dilute_send)*parcel1%npart_ent) > 0._wp)
+                    parcel1%y(1:parcel1%n_bin_modew)= &
+                        parcel1%y(1:parcel1%n_bin_modew)*parcel1%npart + &
+                        (1._wp-dilute_send)* &
+                        parcel1%mbin_ent(1:parcel1%n_bin_modew,parcel1%n_comps+1) * &
+                        parcel1%npart_ent
+                    parcel1%y(1:parcel1%n_bin_modew)= &
+                        parcel1%y(1:parcel1%n_bin_modew)/ &
+                        (parcel1%npart + (1._wp-dilute_send)*parcel1%npart_ent)
+                end where
+                parcel1%moments(1:parcel1%n_bin_modew,:)= &
+                    parcel1%moments(1:parcel1%n_bin_modew,:) + &
                     (1._wp-dilute_send)* &
-                    parcel1%mbin_ent(1:parcel1%n_bin_modew,parcel1%n_comps+1) * &
-                    parcel1%npart_ent
-                parcel1%y(1:parcel1%n_bin_modew)= &
-                    parcel1%y(1:parcel1%n_bin_modew)/ &
-                    (parcel1%npart + (1._wp-dilute_send)*parcel1%npart_ent)
-            end where
-            parcel1%moments=parcel1%moments + &
-                (1._wp-dilute_send)*parcel1%moments_ent
-            parcel1%npart=parcel1%npart + &
-                (1._wp-dilute_send)*parcel1%npart_ent
+                    parcel1%moments_ent(1:parcel1%n_bin_modew,:)
+                parcel1%npart=parcel1%npart + &
+                    (1._wp-dilute_send)*parcel1%npart_ent
+            endif
         endif
 
         ! Add aerosol residuals produced by the discrete inhomogeneous event.
         ! This is independent of whether the next timestep has already switched
-        ! to homogeneous mixing.
+        ! to homogeneous mixing. Full-moving residuals use the configured
+        ! full_moving_release_mode (same source index by default, or conservative
+        ! water-mass partitioning). This includes aerosol from completely
+        ! sublimated ice and preserves its existing prognostic moments.
         if (l_inhom_event) then
-            where ((parcel1%npart + parcel1%npart_temp) .gt. 0._wp)
-                parcel1%y(1:parcel1%n_bin_modew)= &
-                    parcel1%y(1:parcel1%n_bin_modew)*parcel1%npart + &
-                    parcel1%mbin_temp(1:parcel1%n_bin_modew,parcel1%n_comps+1) * &
-                    parcel1%npart_temp
-                parcel1%y(1:parcel1%n_bin_modew)= &
-                    parcel1%y(1:parcel1%n_bin_modew)/ &
-                    max(parcel1%npart + parcel1%npart_temp,1.e-30_wp)
-            end where
-            parcel1%moments=parcel1%moments + parcel1%moments_temp
-            parcel1%npart=parcel1%npart + parcel1%npart_temp
+            if (parcel1%bin_scheme_flag.eq.BIN_FULL_MOVING) then
+                call merge_full_moving_warm_source( &
+                    parcel1%npart_temp, &
+                    parcel1%mbin_temp(:,parcel1%n_comps+1), &
+                    parcel1%moments_temp(1:parcel1%n_bin_modew,:))
+            else
+                where ((parcel1%npart + parcel1%npart_temp) .gt. 0._wp)
+                    parcel1%y(1:parcel1%n_bin_modew)= &
+                        parcel1%y(1:parcel1%n_bin_modew)*parcel1%npart + &
+                        parcel1%mbin_temp(1:parcel1%n_bin_modew,parcel1%n_comps+1) * &
+                        parcel1%npart_temp
+                    parcel1%y(1:parcel1%n_bin_modew)= &
+                        parcel1%y(1:parcel1%n_bin_modew)/ &
+                        max(parcel1%npart + parcel1%npart_temp,1.e-30_wp)
+                end where
+                parcel1%moments(1:parcel1%n_bin_modew,:)= &
+                    parcel1%moments(1:parcel1%n_bin_modew,:)+ &
+                    parcel1%moments_temp(1:parcel1%n_bin_modew,:)
+                parcel1%npart=parcel1%npart + parcel1%npart_temp
+            endif
         endif
 
-        ! Keep the per-particle component masses consistent even when the
-        ! full-moving scheme does not call moving_centre below.  Entrainment
-        ! changes number and extensive component masses independently.
+        ! Keep per-particle component masses synchronized after source addition.
         do i=1,parcel1%n_bin_modew
             if (parcel1%npart(i).gt.tiny(1._wp)) then
                 parcel1%mbin(i,1:parcel1%n_comps)= &
@@ -7752,6 +8041,11 @@
                         liq_factor_i*parcel1%moments(i,parcel1%iinp_start: &
                         parcel1%iinp_start+parcel1%n_inp_classes-1)
                 endif
+                if (parcel1%ice_flag.eq.1) then
+                    parcel1%moments_temp(i,parcel1%iaer05)= &
+                        parcel1%moments_temp(i,parcel1%iaer05)+ &
+                        liq_factor_i*parcel1%moments(i,parcel1%iaer05)
+                endif
             enddo
         endif
 
@@ -7775,6 +8069,9 @@
                         ice_factor*parcel1%moments(ii,parcel1%iinp_start: &
                         parcel1%iinp_start+parcel1%n_inp_classes-1)
                 endif
+                parcel1%moments_temp(i,parcel1%iaer05)= &
+                    parcel1%moments_temp(i,parcel1%iaer05)+ &
+                    ice_factor*parcel1%moments(ii,parcel1%iaer05)
             enddo
         endif
 
@@ -8697,25 +8994,41 @@
         n=parcel1%n_bin_modew
         if (sum(parcel1%npart_temp).le.tiny(1._wp)) return
 
-        do i=1,n
-            nnew=parcel1%npart(i)+parcel1%npart_temp(i)
-            if (nnew.gt.tiny(1._wp)) then
-                parcel1%y(i)=(parcel1%y(i)*parcel1%npart(i)+ &
-                    parcel1%mbin_temp(i,parcel1%n_comps+1)*parcel1%npart_temp(i))/nnew
-            endif
-        enddo
-        parcel1%moments(1:n,:)=parcel1%moments(1:n,:)+parcel1%moments_temp(1:n,:)
-        parcel1%npart=parcel1%npart+parcel1%npart_temp
-
-        do i=1,n
-            if (parcel1%npart(i).le.tiny(1._wp)) cycle
-            do j=1,parcel1%n_comps
-                parcel1%mbin(i,j)=parcel1%moments(i,j)/parcel1%npart(i)
+        if (parcel1%bin_scheme_flag.eq.BIN_FULL_MOVING) then
+            ! Chamber/entrainment residual aerosol is equilibrated at the diagnosed
+            ! local RH, then returned according to full_moving_release_mode:
+            ! same source index by default, or conservative water-mass bracketing.
+            ! This applies equally to liquid evaporation and complete ice
+            ! sublimation and transports all prognostic moments unchanged.
+            call merge_full_moving_warm_source( &
+                parcel1%npart_temp, &
+                parcel1%mbin_temp(:,parcel1%n_comps+1), &
+                parcel1%moments_temp(1:n,:))
+        else
+            ! Historical fixed-grid behaviour: temporary residuals have already
+            ! been projected onto the fixed water-mass grid, so index-wise
+            ! addition followed by the normal moving-centre consolidation is
+            ! appropriate.
+            do i=1,n
+                nnew=parcel1%npart(i)+parcel1%npart_temp(i)
+                if (nnew.gt.tiny(1._wp)) then
+                    parcel1%y(i)=(parcel1%y(i)*parcel1%npart(i)+ &
+                        parcel1%mbin_temp(i,parcel1%n_comps+1)* &
+                        parcel1%npart_temp(i))/nnew
+                endif
             enddo
-            parcel1%mbin(i,parcel1%n_comps+1)=parcel1%y(i)
-        enddo
+            parcel1%moments(1:n,:)=parcel1%moments(1:n,:)+ &
+                parcel1%moments_temp(1:n,:)
+            parcel1%npart=parcel1%npart+parcel1%npart_temp
 
-        if (parcel1%bin_scheme_flag.ne.BIN_FULL_MOVING) then
+            do i=1,n
+                if (parcel1%npart(i).le.tiny(1._wp)) cycle
+                do j=1,parcel1%n_comps
+                    parcel1%mbin(i,j)=parcel1%moments(i,j)/parcel1%npart(i)
+                enddo
+                parcel1%mbin(i,parcel1%n_comps+1)=parcel1%y(i)
+            enddo
+
             call moving_centre(parcel1%n_bin_mode,parcel1%n_bin_modew, &
                 parcel1%n_bins1,parcel1%n_modes,parcel1%n_comps, &
                 parcel1%imoms+parcel1%n_comps,parcel1%npart, &

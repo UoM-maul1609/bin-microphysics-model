@@ -56,6 +56,7 @@
  	thresh_to_start_hom_mix=-10.,
     !> Re-expose aerosol associated with evaporated liquid during inhomogeneous-mixing treatment when true.
  	release_aerosol=.true.,
+	full_moving_release_mode=0,
     !> Entrains environmental aerosol with entrained air when .true.
  	entrain_aerosol=.true.,
     !> Entrain vertically when .true.; use lateral entrainment when .false.

@@ -40,7 +40,11 @@
     !> For one mixed population, enabled heterogeneous precedence is INAS > DeMott > Daily.
 	ice_nucleation_mech = .true., .false., .true., .false.,
     !> Bin-remapping scheme: 0=full moving, 1=moving-centre, 2=Chen-Lamb mass-conserving remap.
-	bin_scheme_flag=2,
+    !> For full moving + SCE, only n_bins aerosol cohorts are populated initially;
+    !> the appended n_binsc categories start at zero number and remain available
+    !> as zero-number moving receiving categories on a geometric water-mass
+    !> continuation to dmaxc. Released aerosol uses full_moving_release_mode.
+	bin_scheme_flag=0,
     !> Fixed-grid construction for moving-centre/Chen-Lamb:
     !>   1 = default hybrid grid: n_bins equal-number aerosol bins from dmina to dmaxa,
     !>       followed by n_binsc geometric water-mass bins ending exactly at dmaxc.
@@ -63,9 +67,21 @@
  	entrain_period=0,
     !> Time at which inhomogeneous mixing switches to homogeneous mixing [s].
  	thresh_to_start_hom_mix=-10.,
-    !> Re-expose aerosol associated with evaporated liquid during inhomogeneous-mixing treatment when true.
+    !> Re-expose nonvolatile aerosol associated with completely evaporated liquid
+    !> or sublimated ice during the inhomogeneous entrainment/chamber closures.
+    !> Released aerosol is equilibrated at the diagnosed local RH before return.
  	release_aerosol=.true.,
-    !> Entrains environmental aerosol with entrained air when .true.
+    !> Full-moving (bin_scheme_flag=0) residual-aerosol insertion:
+    !>   0 = DEFAULT: return to the same numerical index the liquid/ice particle
+    !>       evaporated from; number is restored while the lower equilibrium haze
+    !>       water mass reduces that category's mean water mass.
+    !>   1 = insert by equilibrium water mass, partitioning number and every
+    !>       extensive moment between the bracketing current pivots.
+    !> Both modes conserve number, water mass, aerosol mass and prognostic moments.
+    full_moving_release_mode=0,
+    !> Entrains environmental aerosol with entrained air when .true. For full
+    !> moving, incoming aerosol is hydrated at environmental RH and inserted by
+    !> its water mass rather than by the original source-array index.
  	entrain_aerosol=.true.,
     !> Entrain vertically when .true.; use lateral entrainment when .false.
     vert_ent=.false.,
@@ -96,7 +112,7 @@
     !> Enable mode-1 freezing/collisional secondary-ice production.
  	mode1_flag=.false.,
     !> Enable mode-2 secondary-ice production.
- 	mode2_flag=.true.,
+ 	mode2_flag=.false.,
     !> Use anomalous-diffraction-theory optical properties when .true.; otherwise use geometric optics.
 	use_adt_optics=.true.,
     !> Optical wavelength used by ADT calculations [m].
@@ -111,8 +127,10 @@
     n_sv              = 10,
     !> Semivolatile-organic switch used by the BMM volatility treatment.
     sv_flag           = 0,
-    !> Number of initial aerosol bins per external mode. With fixed_grid_mode=1,
-    !> moving-centre/Chen-Lamb append n_binsc cloud bins from the SCE namelist.
+    !> Number of initially populated equal-number aerosol bins per external mode.
+    !> Moving-centre/Chen-Lamb with fixed_grid_mode=1 append n_binsc fixed cloud
+    !> bins. Full-moving + SCE also allocates n_binsc extra categories, but they
+    !> start with zero particle number rather than changing the aerosol resolution.
     n_bins            = 60,
     !> Number of nonvolatile aerosol composition components.
     n_comps           = 4,

@@ -57,6 +57,13 @@
  	thresh_to_start_hom_mix=100000.,
     !> Re-expose aerosol associated with evaporated liquid during inhomogeneous-mixing treatment when true.
  	release_aerosol=.false.,
+    !> Full-moving residual-aerosol placement after complete evaporation/sublimation:
+    !>   0 = DEFAULT: return equilibrated aerosol to the same numerical index the
+    !>       liquid/ice particle evaporated from.
+    !>   1 = insert by equilibrium water mass, partitioning number and all extensive
+    !>       moments between the lower/upper bracketing current pivots.
+    !> Modes conserve number, water mass, aerosol mass and prognostic moments.
+    full_moving_release_mode=0,
     !> Entrains environmental aerosol with entrained air when .true.
  	entrain_aerosol=.false.,
     !> Entrain vertically when .true.; use lateral entrainment when .false.

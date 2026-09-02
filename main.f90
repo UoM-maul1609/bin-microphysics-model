@@ -86,12 +86,17 @@
             ! note, this initialises parcel1 arrays in sce module
 			! For bin schemes 1 and 2 this may be used only to construct
 			! the common fixed mass grid; it does not imply SCE is run.
-            ! The new hybrid grid is used only by the two fixed-grid BMM
-            ! remappers.  Full-moving + SCE retains the historical SCE grid
-            ! construction because its collision gain treatment is moving.
-            sce_grid_mode=FIXED_GRID_LEGACY
-            if ((bin_scheme_flag.eq.BIN_MOVING_CENTRE) .or. &
-                (bin_scheme_flag.eq.BIN_CHEN_LAMB)) sce_grid_mode=fixed_grid_mode
+            ! Full-moving also uses the hybrid construction for the appended
+            ! zero-number receiving categories: the first n_bins aerosol cohorts
+            ! retain their equal-number initialisation, while bins n_bins+1 onward
+            ! continue geometrically in water mass to dmaxc.  The collision gain
+            ! treatment remains full-moving; this only supplies sensible empty-bin
+            ! reference pivots.
+            if (bin_scheme_flag.eq.BIN_FULL_MOVING) then
+                sce_grid_mode=FIXED_GRID_HYBRID
+            else
+                sce_grid_mode=fixed_grid_mode
+            endif
 
             call initialise_sce_arrays(n_bins_aerosol, n_binsc,n_mode, n_comps, n_intern, &
                     ice_flag, &
@@ -99,15 +104,25 @@
                     mass_frac_aer1,density_core1,nu_core1,molw_core1, kappa_core1, &
                     n_aer1,d_aer1,sig_aer1, sce_grid_mode, kappa_flag)
 
-            ! BMM arrays must span the complete fixed/SCE grid.  In hybrid mode
-            ! only the original n_bins_aerosol bins are populated initially;
-            ! the n_binsc appended cloud bins start empty.  Legacy mode retains
-            ! the historical behaviour of initialising n_binst equal-number
-            ! populations before projection.
+            ! BMM arrays must span the complete fixed/SCE grid.
+            !
+            ! Full-moving always starts from the aerosol resolution requested
+            ! in the BMM namelist.  Thus, for e.g. n_bins=60 and n_binsc=80,
+            ! bins 1:60 per mode contain the 60 equal-number aerosol cohorts
+            ! and bins 61:140 are initially zero-number receiving categories.
+            ! This makes the initial aerosol discretisation independent of
+            ! whether SCE is enabled.
+            !
+            ! Hybrid moving-centre/Chen-Lamb uses the same n_bins aerosol
+            ! populations followed by empty geometric cloud bins.  Legacy
+            ! fixed-grid mode retains its historical n_binst-population
+            ! initialisation for reproducibility.
             n_bins=n_binst
-            if (((bin_scheme_flag.eq.BIN_MOVING_CENTRE) .or. &
-                 (bin_scheme_flag.eq.BIN_CHEN_LAMB)) .and. &
-                (fixed_grid_mode.eq.FIXED_GRID_HYBRID)) then
+            if (bin_scheme_flag.eq.BIN_FULL_MOVING) then
+                n_bins_init=n_bins_aerosol
+            elseif (((bin_scheme_flag.eq.BIN_MOVING_CENTRE) .or. &
+                     (bin_scheme_flag.eq.BIN_CHEN_LAMB)) .and. &
+                    (fixed_grid_mode.eq.FIXED_GRID_HYBRID)) then
                 n_bins_init=n_bins_aerosol
             else
                 n_bins_init=n_bins
