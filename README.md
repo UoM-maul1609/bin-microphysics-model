@@ -595,3 +595,46 @@ make debug
 ```
 
 For changes to namelist interfaces, update the comments in **all** active example/experiment configurations or preserve a backwards-compatible default in the reader.
+
+
+## Fixed grid for moving-centre and Chen-Lamb
+
+`bin_scheme_flag=1` (moving-centre) and `bin_scheme_flag=2` (Chen-Lamb) use a
+fixed water-mass grid. The BMM namelist variable
+
+```text
+fixed_grid_mode = 1
+```
+
+selects the default hybrid construction:
+
+1. The first `n_bins` bins are generated from the aerosol PSD between `dmina`
+   and `dmaxa` with equal aerosol number in each dry-size interval. Their
+   representative dry aerosol masses use the exact third lognormal moment, as
+   in the full-moving BMM initialisation.
+2. Those aerosol quantile boundaries are mapped to equilibrium water-mass
+   boundaries at the initial BMM `T`, `P`, `RH` using the selected
+   `kappa_flag`.
+3. The next `n_binsc` bins begin at the upper water-mass edge corresponding to
+   `dmaxa` and are geometric in water mass. Their ratio is determined by
+   `n_binsc` and `dmaxc`, so the final edge is exactly the water mass of a
+   `dmaxc` drop. This is the default "Option A" grid.
+4. The appended cloud bins are initially empty unless `&cloud_spec` supplies
+   an initial cloud distribution.
+
+For example, `n_bins=60` and `n_binsc=80` gives 60 aerosol-adapted bins plus
+80 geometric cloud/collision bins per external mode.
+
+Set
+
+```text
+fixed_grid_mode = 0
+```
+
+to reproduce the historical fixed-grid construction. In legacy mode the old
+`kfac` spacing and initial projection are retained. `dminc` and `kfac` are
+legacy-grid controls; for `fixed_grid_mode=1`, `n_binsc` and `dmaxc` define the
+geometric cloud extension.
+
+The new grid is used only for moving-centre and Chen-Lamb. Full-moving runs
+retain their existing SCE behaviour.

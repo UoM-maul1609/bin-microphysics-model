@@ -420,7 +420,7 @@ def write_bmm_namelist(
         "pinit": f"{p_test:.16e}",
         "rhinit": f"{BMM_RHINIT:.16e}",
         "ice_flag": "0",
-        "bin_scheme_flag": "0",
+        "bin_scheme_flag": "2",
         "sce_flag": "0",
         "kappa_flag": "0",
         "updraft_type": "1",

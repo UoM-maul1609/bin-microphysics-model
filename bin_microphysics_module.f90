@@ -36,6 +36,10 @@
 		integer(i4b), parameter :: BIN_MOVING_CENTRE = 1_i4b
 		integer(i4b), parameter :: BIN_CHEN_LAMB     = 2_i4b
 
+        ! Fixed-grid initialisation used by moving-centre and Chen-Lamb.
+        integer(i4b), parameter :: FIXED_GRID_LEGACY = 0_i4b
+        integer(i4b), parameter :: FIXED_GRID_HYBRID = 1_i4b
+
         ! Conserved-moment semantics used by the collection solver.
         integer(i4b), parameter :: MOMENT_EXTENSIVE = 1_i4b
         integer(i4b), parameter :: MOMENT_NUMBER    = 2_i4b
@@ -236,7 +240,7 @@
         	wall_temp_chamber, qtot_chamber
         ! aerosol setup
         integer(i4b) :: n_intern, n_mode,n_sv,sv_flag,n_bins,n_comps, &
-                        n_inp_classes=0_i4b
+                        n_inp_classes=0_i4b, fixed_grid_mode=FIXED_GRID_HYBRID
         ! aerosol_spec
         real(wp), allocatable, dimension(:,:) :: n_aer1,d_aer1,sig_aer1, mass_frac_aer1
         real(wp), allocatable, dimension(:) ::  molw_core1,density_core1,nu_core1, &
@@ -434,7 +438,7 @@
         namelist /run_vars/ outputfile, scefile,runtime, dt, &
                     zinit,tpert,use_prof_for_tprh,winit,winit2,amplitude2, &
                     tinit,pinit,rhinit, radinit, bubble_flag, &
-                    microphysics_flag, ice_flag, bin_scheme_flag, sce_flag, &
+                    microphysics_flag, ice_flag, bin_scheme_flag, sce_flag, fixed_grid_mode, &
                     ice_nucleation_mech, &
                     hm_flag, break_flag, mode1_flag, mode2_flag, &
                     use_adt_optics, optics_wavelength, vent_flag, &
@@ -463,6 +467,7 @@
         ! read in namelists	and allocate arrays								   !
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 		open(unit=8,file=nmlfile,status='old',action='read',delim='apostrophe')
+        fixed_grid_mode=FIXED_GRID_HYBRID
         rewind(8)
         read(8,nml=run_vars)
 
@@ -564,6 +569,9 @@
             n_comps.lt.1) error stop 'Aerosol dimensions must be positive'
         if (dmina.le.0._wp .or. dmaxa.le.dmina) error stop &
             'Require 0 < dmina < dmaxa'
+        if (fixed_grid_mode.ne.FIXED_GRID_LEGACY .and. &
+            fixed_grid_mode.ne.FIXED_GRID_HYBRID) error stop &
+            'fixed_grid_mode must be 0 (legacy) or 1 (hybrid equal-number + geometric)'
         if (any(n_aer1.lt.0._wp)) error stop &
             'Aerosol number concentrations must be non-negative'
         do j=1,n_mode
@@ -825,13 +833,13 @@
     ! ============================================================================
     ! particle_is_activated
     ! ============================================================================
-    !>Return true when a warm BMM particle lies beyond the maximum of its
-    !>current Koehler/FHH equilibrium curve.  For full-moving bins this is
-    !>also the ndrop diagnostic criterion.  Fixed-bin schemes use the same
-    !>critical water mass but fractionally count a bin when that threshold
-    !>lies between its fixed water-mass edges.  For a fixed dry
-    !>composition this is equivalent to wet diameter being greater than the
-    !>critical wet diameter.
+    !>Return true when a warm BMM point-representative particle lies beyond
+    !>the maximum of its current Koehler/FHH equilibrium curve.  This is the
+    !>ndrop criterion for the full-moving and moving-centre schemes.  The
+    !>Chen-Lamb fixed-bin scheme uses the same critical water mass but
+    !>integrates its reconstructed within-bin number distribution above that
+    !>threshold.  For a fixed dry composition this is equivalent to wet
+    !>diameter being greater than the critical wet diameter.
     !>
     !>The minimisation helper functions use the module scratch variables
     !>n_sel, rh_act and mult, and historically read parcel1%t.  Save/restore
@@ -927,6 +935,8 @@
 	!>densities, van't Hoff factors and kappa values
 	!>@param[in] org_content1,molw_org1,kappa_org1,density_org1,delta_h_vap1,nu_org1,log_c_star1:
 	!>semivolatile-organic properties
+	!>@param[in] n_bins_init: number of initially populated equal-number aerosol bins per mode;
+    !>may be smaller than total n_bins when a hybrid fixed grid appends empty cloud bins
 	!>@param[in] sce_flag: stochastic-collection-equation switch
     subroutine initialise_bmm_arrays(psurf, tsurf, q_read, theta_read, rh_read, z_read, &
     				time_chamber, press_chamber, temp_chamber, qtot_chamber, &
@@ -937,7 +947,7 @@
                     kappa_flag, updraft_type, adiabatic_prof, vert_ent, z_ctop, &
                     ent_rate, n_levels_s, n_levels_c, &
                     alpha_therm, alpha_cond, alpha_therm_ice, &
-                    alpha_dep, n_intern, n_mode, n_sv, sv_flag, n_bins, n_comps, &
+                    alpha_dep, n_intern, n_mode, n_sv, sv_flag, n_bins, n_bins_init, n_comps, &
                     n_aer1,d_aer1,sig_aer1,dmina,dmaxa,mass_frac_aer1,molw_core1, &
                     density_core1, nu_core1, kappa_core1, org_content1, molw_org1, &
                     kappa_org1, density_org1, delta_h_vap1,nu_org1, log_c_star1, &
@@ -950,7 +960,7 @@
     integer(i4b), intent(in) :: microphysics_flag, ice_flag, bin_scheme_flag, vent_flag, &
                     kappa_flag, updraft_type, n_levels_s,n_levels_c, &
                     n_intern, n_mode, n_sv, &
-                    sv_flag, n_bins, n_comps, sce_flag
+                    sv_flag, n_bins, n_bins_init, n_comps, sce_flag
     real(wp), intent(in) :: psurf, radinit, &
                     tsurf, runtime, dt, zinit, tpert, winit, tinit, &
                     pinit, rhinit, alpha_therm, alpha_cond, alpha_therm_ice, &
@@ -978,6 +988,9 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! set variables and allocate arrays in parcel                                  !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    if (n_bins_init.lt.1 .or. n_bins_init.gt.n_bins) error stop &
+        'initialise_bmm_arrays: require 1 <= n_bins_init <= n_bins'
+
     parcel1%n_sound=n_levels_s   
     parcel1%n_chamber=n_levels_c
     parcel1%n_bins1=n_bins    
@@ -1096,6 +1109,28 @@
     allocate( parcel1%nre(1:parcel1%n_bin_mode), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
 
+    ! Explicitly initialise particle arrays.  This matters for the hybrid
+    ! fixed grid, where only the first n_bins_init bins contain aerosol at t=0
+    ! and the appended cloud bins are intentionally empty.
+    parcel1%d=0._wp
+    parcel1%mbinedges=0._wp
+    parcel1%maer=0._wp
+    parcel1%npart=0._wp
+    parcel1%npartall=0._wp
+    parcel1%mbin=0._wp
+    parcel1%mbinall=0._wp
+    parcel1%momtemp=0._wp
+    parcel1%moments=0._wp
+    parcel1%rhobin=0._wp
+    parcel1%nubin=0._wp
+    parcel1%molwbin=0._wp
+    parcel1%kappabin=0._wp
+    parcel1%rh_eq=0._wp
+    parcel1%rhoat=0._wp
+    parcel1%dw=0._wp
+    parcel1%da_dt=0._wp
+    parcel1%ndrop=0._wp
+
     allocate( parcel1%q_sound(1:parcel1%n_sound,1:nq), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
     allocate( parcel1%z_sound(1:parcel1%n_sound), STAT = AllocateStatus)
@@ -1156,18 +1191,22 @@
         !print *,num
         ! set up variables for parcel model
         ntot=num
-        number_per_bin=ntot/real(n_bins,wp)
+        number_per_bin=ntot/real(n_bins_init,wp)
 !         ! make sure it is zero if needed
 !         parcel1%npart(1+(k-1)*n_bins:(k)*n_bins)=min(number_per_bin, &
 !         		sum(n_aer1(:,k))/real(n_bins,wp))
+        ! Keep one dry-diameter edge array per total BMM bin.  Only the
+        ! first n_bins_init+1 entries are aerosol quantile boundaries; the
+        ! appended fixed-grid cloud bins have no dry-aerosol edge meaning.
+        parcel1%d(1+(k-1)*(n_bins+1):k*(n_bins+1))=dmaxa
         parcel1%d(1+(k-1)*(n_bins+1))=dmina
-        do i=1,n_bins
+        do i=1,n_bins_init
             d_dummy=parcel1%d(i+(k-1)*(n_bins+1))
             n_dummy=number_per_bin*(1._wp-1.e-5_wp)
             parcel1%d(i+1+(k-1)*(n_bins+1))= zeroin(&
                         d_dummy*0.9_wp,dmaxa*2._wp,find_upper_diameter, 1.e-30_wp)
         enddo
-        parcel1%d((k)*(n_bins+1))=dmaxa ! nail it to end point - round off
+        parcel1%d((k-1)*(n_bins+1)+n_bins_init+1)=dmaxa ! exact aerosol upper edge
     enddo
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
@@ -1181,7 +1220,7 @@
     ! mass in the bin. This conserves both aerosol number and dry aerosol mass.     !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     do k=1,parcel1%n_modes
-        do j=1,parcel1%n_bins1
+        do j=1,n_bins_init
             ! index of diameter edges
             i=j+(k-1)*(n_bins+1)
             ! actual number represented by this bin
@@ -1389,8 +1428,10 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     select case(kappa_flag)
         case(0)
-            do i=1,parcel1%n_bin_modew
-                n_sel=i
+            do j=1,parcel1%n_modes
+                do k=1,n_bins_init
+                    i=k+(j-1)*n_bins
+                    n_sel=i
                 rh_act=0._wp !min(parcel1%rh,0.999_wp)
                 mult=-1._wp
                 ! has to be less than the peak moles of water at activation
@@ -1398,7 +1439,8 @@
                 rh_act=min(parcel1%rh,0.999_wp)
                 mult=1._wp
                 d_dummy=zeroin(1.e-30_wp, test, koehler02,1.e-30_wp)*molw_water 
-                parcel1%mbin(i,n_comps+1)= d_dummy
+                    parcel1%mbin(i,n_comps+1)=d_dummy
+                enddo
             enddo
 !             call koehler01(parcel1%t,parcel1%mbin(:,n_comps+1),&
 !                 parcel1%mbin,parcel1%rhobin,&
@@ -1406,8 +1448,10 @@
 !                 parcel1%rh_eq,parcel1%rhoat,parcel1%dw) 
 !             print *,parcel1%rh_eq
         case(1)
-            do i=1,parcel1%n_bin_modew
-                n_sel=i
+            do j=1,parcel1%n_modes
+                do k=1,n_bins_init
+                    i=k+(j-1)*n_bins
+                    n_sel=i
                 rh_act=0._wp !min(parcel1%rh,0.999_wp)
                 mult=-1._wp
                 ! has to be less than the peak moles of water at activation
@@ -1415,7 +1459,8 @@
                 rh_act=min(parcel1%rh,0.999_wp)
                 mult=1._wp
                 d_dummy=zeroin(1.e-30_wp, test, kkoehler02,1.e-30_wp)*molw_water 
-                parcel1%mbin(i,n_comps+1)= d_dummy
+                    parcel1%mbin(i,n_comps+1)=d_dummy
+                enddo
             enddo
 !             call kkoehler01(parcel1%t,parcel1%mbin(:,n_comps+1),&
 !                 parcel1%mbin,parcel1%rhobin,&
@@ -5010,8 +5055,8 @@
         real(wp), dimension(n_bin_modew,n_moments), intent(inout) :: moments
         real(wp), dimension(n_bin_modew,n_comps+1), intent(inout) :: mbin
         
-        logical, dimension(n_bin_modew) :: moment_exists
         integer(i4b) :: i,j,thismode, thisbin,newplace
+        real(wp) :: mlower_mc,mupper_mc,tolmass_mc
         real(wp), dimension(n_bin_modew,n_moments) :: momtemp
         real(wp), dimension(n_bin_modew) :: nparttemp, totmass
         
@@ -5024,7 +5069,6 @@
             thismode=(i-1)/n_binst+1                ! this is the mode of i
             thisbin=modulo(i-1,n_binst)+1           ! this is the bin
             if(npart(i).gt.0._wp) then
-                moment_exists(i)=.true.
                 ! if the mass is in the right bin, just add it
                 if ((masses(i).gt.mbinedges(thisbin,thismode)).and. &
                     (masses(i).le.mbinedges(thisbin+1,thismode))) then
@@ -5062,13 +5106,30 @@
                 npart(i)=nparttemp(i)
                 masses(i)=totmass(i) / npart(i)
                 mbin(i,1:n_comps)=moments(i,1:n_comps)/npart(i)
-                if (.not.((masses(i).gt.mbinedges(thisbin,thismode)).and. &
-                    (masses(i).le.mbinedges(thisbin+1,thismode)))) then
-                    
-                    masses(i)=0.5_wp*(mbinedges(thisbin,thismode)+ &
-                                    mbinedges(thisbin+1,thismode))
-                    npart(i)=totmass(i) / masses(i)
-                endif                
+
+                ! A destination bin contains only source representatives whose
+                ! masses lie inside this fixed interval.  Their number-weighted
+                ! mean must therefore also lie inside the same interval.  The
+                ! historical fallback moved the representative mass to the bin
+                ! midpoint and then changed npart to preserve hydrometeor mass;
+                ! that breaks consistency with the already-conserved extensive
+                ! component moments.  Treat a genuine violation as an error and
+                ! clip only roundoff-sized excursions at a boundary.
+                mlower_mc=mbinedges(thisbin,thismode)
+                mupper_mc=mbinedges(thisbin+1,thismode)
+                tolmass_mc=1000._wp*epsilon(1._wp)* &
+                    max(abs(mlower_mc),abs(mupper_mc),abs(masses(i)), &
+                        abs(mupper_mc-mlower_mc),tiny(1._wp))
+                if ((masses(i) < mlower_mc-tolmass_mc).or. &
+                    (masses(i) > mupper_mc+tolmass_mc)) then
+                    print *,'Moving-centre representative mass outside destination bin'
+                    print *,'mode/bin/index = ',thismode,thisbin,i
+                    print *,'lower,mean,upper = ',mlower_mc,masses(i),mupper_mc
+                    print *,'npart,total hydrometeor mass = ',npart(i),totmass(i)
+                    print *,'tolerance = ',tolmass_mc
+                    error stop 'moving-centre destination mean outside bin'
+                endif
+                masses(i)=min(max(masses(i),mlower_mc),mupper_mc)
                 mbin(i,n_comps+1)=masses(i)
             else
                 moments(i,:)=0._wp
@@ -5348,6 +5409,100 @@
 	end subroutine chen_lamb_distribution
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
+
+    ! ============================================================================
+    ! chen_lamb_activated_number
+    ! ============================================================================
+    !>Return the number of activated particles represented by one occupied
+    !>Chen-Lamb fixed bin.  The current bin number and first water-mass moment
+    !>define the same positive linear within-bin distribution used by the
+    !>Chen-Lamb remapping scheme.  Only the portion with water mass greater
+    !>than the Koehler/FHH critical water mass is counted.
+    !>
+    !>If the bin mean lies at a boundary to within roundoff, the finite-width
+    !>linear reconstruction degenerates to a point population; in that limit
+    !>the point activation criterion is used directly.
+    real(wp) function chen_lamb_activated_number(ibin,t_current) result(nactivated)
+        implicit none
+        integer(i4b), intent(in) :: ibin
+        real(wp), intent(in) :: t_current
+        integer(i4b) :: ibin_local,imode_local
+        real(wp) :: nbin,mean_mass,total_mass,lower,upper,mcrit_local
+        real(wp) :: nref,xref,slope,xlo,xhi,a,tolmass,toln
+
+        nactivated=0._wp
+        if (ibin < 1 .or. ibin > parcel1%n_bin_modew) return
+
+        nbin=parcel1%npart(ibin)
+        if (nbin <= tiny(1._wp)) return
+
+        mean_mass=parcel1%y(ibin)
+        if (mean_mass <= tiny(1._wp)) return
+
+        ibin_local=mod(ibin-1,parcel1%n_bins1)+1
+        imode_local=(ibin-1)/parcel1%n_bins1+1
+        lower=parcel1%mbinedges(ibin_local,imode_local)
+        upper=parcel1%mbinedges(ibin_local+1,imode_local)
+        if (upper <= lower) then
+            print *,'Invalid water-mass bin in Chen-Lamb activation diagnostic'
+            print *,'mode/bin/index = ',imode_local,ibin_local,ibin
+            print *,'lower,upper = ',lower,upper
+            error stop 'non-positive Chen-Lamb diagnostic bin width'
+        endif
+
+        tolmass=1000._wp*epsilon(1._wp)* &
+            max(abs(lower),abs(upper),abs(mean_mass), &
+                abs(upper-lower),tiny(1._wp))
+        if ((mean_mass < lower-tolmass).or. &
+            (mean_mass > upper+tolmass)) then
+            print *,'Chen-Lamb diagnostic mean outside fixed bin'
+            print *,'mode/bin/index = ',imode_local,ibin_local,ibin
+            print *,'lower,mean,upper = ',lower,mean_mass,upper
+            print *,'npart,tolerance = ',nbin,tolmass
+            error stop 'Chen-Lamb diagnostic mean outside bin'
+        endif
+        mean_mass=min(max(mean_mass,lower),upper)
+
+        mcrit_local=particle_activation_water_mass(ibin,t_current)
+
+        ! A mean at either boundary corresponds to the limiting point-mass
+        ! representation for which chen_lamb_distribution has zero support.
+        if ((mean_mass-lower <= tolmass).or. &
+            (upper-mean_mass <= tolmass)) then
+            if (mean_mass > mcrit_local) nactivated=nbin
+            return
+        endif
+
+        total_mass=nbin*mean_mass
+        call chen_lamb_distribution(lower,upper,nbin,total_mass, &
+            nref,xref,slope,xlo,xhi)
+
+        if (mcrit_local < xlo) then
+            nactivated=nbin
+        elseif (mcrit_local >= xhi) then
+            nactivated=0._wp
+        else
+            ! particle_is_activated uses mwat > mcrit.  A single boundary
+            ! point has zero measure in the continuous Chen-Lamb distribution,
+            ! so integrating from mcrit or just above it is equivalent.
+            a=max(mcrit_local,xlo)
+            nactivated=chen_lamb_int_number(nref,xref,slope,a,xhi)
+        endif
+
+        ! Protect only against integration-level roundoff; a material failure
+        ! of the reconstructed number integral should not be silently hidden.
+        toln=1.e-10_wp*max(abs(nbin),1.e-300_wp)
+        if ((nactivated < -toln).or.(nactivated > nbin+toln)) then
+            print *,'Invalid Chen-Lamb activated number'
+            print *,'mode/bin/index = ',imode_local,ibin_local,ibin
+            print *,'Nbin,Nactivated = ',nbin,nactivated
+            print *,'support/mcrit = ',xlo,xhi,mcrit_local
+            print *,'mean mass = ',mean_mass
+            error stop 'Chen-Lamb activated-number integration failure'
+        endif
+        nactivated=min(max(nactivated,0._wp),nbin)
+    end function chen_lamb_activated_number
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
 	! ============================================================================
@@ -9574,11 +9729,10 @@
         dsigma_liq,rel_disp_liq
     real(wp) :: m0_ice,m1_ice,m2_ice,dmean_ice,dsigma_ice,rel_disp_ice
     real(wp) :: svp1,qv,rm,rhod,beta_ext, beta_abs,beta_ext_ice, beta_abs_ice
-	real(wp) :: phi_mean,nmon_mean,rhoi_mean, nact, test, &
-        mcrit,mlower,mupper,fracact,activated_mass_width
+	real(wp) :: phi_mean,nmon_mean,rhoi_mean, nact, test
     real(wp) :: denom
     real(wp) :: fallrate_liq,fallrate_ice
-    integer(i4b) :: i,ibin_diag,imode_diag
+    integer(i4b) :: i
     
     ! output to netcdf file
     if(new_file) then
@@ -9700,6 +9854,10 @@
                    "BMM bin scheme: 0 full-moving, 1 moving-centre, 2 Chen-Lamb") )
         call check( nf90_put_att(io1%ncid,NF90_GLOBAL,"bin_scheme_flag", &
                    parcel1%bin_scheme_flag) )
+        call check( nf90_put_att(io1%ncid,NF90_GLOBAL,"fixed_grid_mode", &
+                   fixed_grid_mode) )
+        call check( nf90_put_att(io1%ncid,NF90_GLOBAL,"fixed_grid_mode_description", &
+                   "0 legacy; 1 equal-number aerosol bins to dmaxa + geometric cloud bins to dmaxc") )
 
         ! define variable: activated liquid-drop number
         call check( nf90_def_var(io1%ncid, "ndrop", NF90_DOUBLE, &
@@ -9712,9 +9870,10 @@
         call check( nf90_put_att(io1%ncid,io1%a_dimid,"long_name", &
                    "activated liquid-drop number mixing ratio") )
         call check( nf90_put_att(io1%ncid,io1%a_dimid,"comment", &
-                   "For bin schemes 1 and 2, if the Koehler critical water "// &
-                   "mass lies inside a fixed mass bin, only the fraction "// &
-                   "(mupper-mcrit)/(mupper-mlower) of that bin is activated.") )
+                   "Full-moving and moving-centre bins use the point "// &
+                   "representative activation criterion. Chen-Lamb integrates "// &
+                   "its reconstructed within-bin number distribution above "// &
+                   "the Koehler/FHH critical water mass.") )
                    
         ! Liquid-drop bulk size diagnostics. These are calculated from the
         ! same activated population used for ndrop and from the instantaneous
@@ -9763,8 +9922,9 @@
         call check( nf90_put_att(io1%ncid,io1%varid,"long_name", &
                    "activated liquid-drop number mixing ratio in each native bin") )
         call check( nf90_put_att(io1%ncid,io1%varid,"comment", &
-                   "For fixed-bin schemes 1 and 2 this may be a fractional "// &
-                   "portion of nwat when the activation threshold cuts a bin.") )
+                   "For Chen-Lamb this may be a fractional portion of nwat "// &
+                   "from the reconstructed within-bin distribution. "// &
+                   "Moving-centre bins are point populations.") )
 
         ! define variable: mwat
         call check( nf90_def_var(io1%ncid, "mwat", NF90_DOUBLE, &
@@ -10150,45 +10310,25 @@
     ! Diagnose activated drops once and use exactly the same population for
     ! ndrop, bulk size moments, relative dispersion and the native nliq PSD.
     !
-    ! Full-moving particles are point representatives.  For fixed-bin schemes
-    ! 1 and 2, if the critical water mass cuts a bin, assume uniform number per
-    ! unit water mass within that fixed interval and count only the portion
-    ! above the activation threshold.
+    ! Full-moving and moving-centre bins are point populations at their current
+    ! representative water mass, so activation is all-or-nothing for each
+    ! occupied numerical bin.  Chen-Lamb explicitly represents a finite-width
+    ! linear number distribution inside each fixed mass interval; for that
+    ! scheme integrate the reconstructed distribution above the same critical
+    ! Koehler/FHH water mass used by particle_is_activated.
     parcel1%ndrop=0._wp
     select case(parcel1%bin_scheme_flag)
-    case(BIN_FULL_MOVING)
+    case(BIN_FULL_MOVING,BIN_MOVING_CENTRE)
         do i=1,parcel1%n_bin_modew
             if (parcel1%npart(i) <= 0._wp) cycle
             if (particle_is_activated(i,parcel1%y(i), &
                 parcel1%y(parcel1%ite))) parcel1%ndrop(i)=parcel1%npart(i)
         enddo
 
-    case(BIN_MOVING_CENTRE,BIN_CHEN_LAMB)
+    case(BIN_CHEN_LAMB)
         do i=1,parcel1%n_bin_modew
-            if (parcel1%npart(i) <= 0._wp) cycle
-            if (parcel1%y(i) <= tiny(1._wp)) cycle
-
-            ibin_diag=mod(i-1,parcel1%n_bins1)+1
-            imode_diag=(i-1)/parcel1%n_bins1+1
-            mlower=parcel1%mbinedges(ibin_diag,imode_diag)
-            mupper=parcel1%mbinedges(ibin_diag+1,imode_diag)
-            if (mupper <= mlower) then
-                print *,'Invalid water-mass bin in ndrop diagnostic'
-                print *,'mode/bin/lower/upper = ',imode_diag,ibin_diag,mlower,mupper
-                error stop 'non-positive ndrop diagnostic bin width'
-            endif
-
-            mcrit=particle_activation_water_mass(i,parcel1%y(parcel1%ite))
-            if (mcrit <= mlower) then
-                fracact=1._wp
-            elseif (mcrit >= mupper) then
-                fracact=0._wp
-            else
-                activated_mass_width=mupper-mcrit
-                fracact=activated_mass_width/(mupper-mlower)
-            endif
-            fracact=min(max(fracact,0._wp),1._wp)
-            parcel1%ndrop(i)=fracact*parcel1%npart(i)
+            parcel1%ndrop(i)=chen_lamb_activated_number( &
+                i,parcel1%y(parcel1%ite))
         enddo
 
     case default
