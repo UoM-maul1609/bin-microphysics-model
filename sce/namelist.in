@@ -33,13 +33,15 @@
     !> Number of nonvolatile aerosol composition components.
     n_comps           = 4/
 &cloud_setup
-    !> Number of cloud/hydrometeor bins added by standalone SCE.
+    !> Number of appended cloud/hydrometeor bins. For BMM fixed_grid_mode=1,
+    !> these begin exactly at the upper edge of the n_bins equal-number aerosol grid.
     n_binsc                  =80,
-    !> Standalone-SCE grid/bin-spacing factor.
+    !> Legacy/standalone-SCE grid-spacing factor. Ignored for BMM fixed_grid_mode=1.
     kfac                     =2,
-    !> Minimum cloud-bin diameter for standalone SCE [m].
+    !> Legacy/standalone-SCE minimum cloud diameter [m]. Ignored for BMM fixed_grid_mode=1.
     dminc                    =3e-6,
-    !> Maximum cloud-bin diameter for standalone SCE [m].
+    !> Maximum cloud-grid diameter [m]. For BMM fixed_grid_mode=1 this, together
+    !> with n_binsc, determines the geometric water-mass ratio (Option A).
     dmaxc                    =10e-2/
 &aerosol_spec
     !> Lognormal aerosol number concentration [kg-1]; indexed by internal submode and external mode.

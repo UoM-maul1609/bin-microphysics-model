@@ -36,6 +36,9 @@
         integer(i4b), parameter :: MOMENT_NUMBER    = 2_i4b
         integer(i4b), parameter :: MOMENT_INHERIT   = 3_i4b
 
+        integer(i4b), parameter :: GRID_LEGACY = 0_i4b
+        integer(i4b), parameter :: GRID_HYBRID_EQUAL_NUMBER = 1_i4b
+
         type parcel
             ! variables for bin model
             integer(i4b) :: n_bins1,n_bins2,n_binst, &
@@ -368,16 +371,20 @@
 	!>properties
 	!>@param[in] n_aer2,d_aer2,sig_aer2: aerosol lognormal number, median-diameter and width
 	!>parameters used for initialisation
+    !>@param[in] grid_mode_in: optional fixed-grid selector; 0 reproduces the legacy grid,
+    !>1 uses equal-number aerosol bins followed by n_binsc geometric cloud bins ending at dmaxc
+    !>@param[in] kappa_flag_in: optional BMM Koehler selector used by hybrid grid construction
     subroutine initialise_sce_arrays(n_bins, n_binsc,n_mode, n_comps, n_intern, &
                     ice_flag, &
                     pinit,tinit,rhinit,dt,dmina,dmaxa,dminc,dmaxc,&
                     mass_frac_aer1,density_core1,nu_core1,molw_core1, kappa_core1, &
-                    n_aer2,d_aer2,sig_aer2)
+                    n_aer2,d_aer2,sig_aer2, grid_mode_in, kappa_flag_in)
     use numerics_type
     use numerics, only : find_pos, poly_int, zeroin, fmin,vode_integrate
 
     implicit none
     integer(i4b), intent(in) :: n_bins, n_binsc, n_mode, n_comps, n_intern, ice_flag
+    integer(i4b), intent(in), optional :: grid_mode_in, kappa_flag_in
     real(wp), intent(in) :: pinit, tinit, rhinit,dt, dmina, dmaxa,dminc,dmaxc
     real(wp), dimension(1:n_mode,1:n_comps), intent(in) :: mass_frac_aer1
     real(wp), dimension(1:n_comps), intent(in) :: molw_core1, density_core1, &
@@ -386,10 +393,26 @@
     
     
     real(wp) :: num, ntot, number_per_bin, test, var1, &
-                eps2, z1, z2, htry, hmin, var, dummy, mass, vol, rho
+                eps2, z1, z2, htry, hmin, var, dummy, mass, vol, rho, &
+                m3, transition_mass, max_cloud_mass, cloud_ratio, dry_mass_edge, &
+                water_mass_edge
     real(wp), dimension(1) :: p1, z11
     real(wp) :: p11, p22, rm, cpm
-    integer(i4b) :: i,j,k, AllocateStatus, iloc,i2, mode1,mode2,moden, phase1, phase2
+    integer(i4b) :: i,j,k, AllocateStatus, iloc,i2, mode1,mode2,moden, phase1, phase2, &
+                    grid_mode, grid_kappa_flag, ibin_work
+
+    grid_mode=GRID_LEGACY
+    if (present(grid_mode_in)) grid_mode=grid_mode_in
+    if (grid_mode.ne.GRID_LEGACY .and. &
+        grid_mode.ne.GRID_HYBRID_EQUAL_NUMBER) error stop &
+        'initialise_sce_arrays: unknown fixed-grid mode'
+
+    ! Standalone SCE keeps its historical kappa_flag.  Coupled BMM hybrid
+    ! construction may override it so the fixed haze grid is generated with
+    ! exactly the same Koehler formulation as BMM.
+    grid_kappa_flag=kappa_flag
+    if (grid_mode.eq.GRID_HYBRID_EQUAL_NUMBER .and. present(kappa_flag_in)) &
+        grid_kappa_flag=kappa_flag_in
 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! set variables and allocate arrays in parcel                                  !
@@ -480,6 +503,28 @@
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
     allocate( parcel1%indexc(1:parcel1%n_bin_mode,1:parcel1%n_bin_mode), STAT = AllocateStatus)
     if (AllocateStatus /= 0) STOP "*** Not enough memory ***"	
+
+    parcel1%d=0._wp
+    parcel1%mbinedges=0._wp
+    parcel1%maer=0._wp
+    parcel1%npart=0._wp
+    parcel1%mbin=0._wp
+    parcel1%moments=0._wp
+    parcel1%rhobin=0._wp
+    parcel1%nubin=0._wp
+    parcel1%molwbin=0._wp
+    parcel1%kappabin=0._wp
+    parcel1%rh_eq=0._wp
+    parcel1%rhoat=0._wp
+    parcel1%dw=0._wp
+    parcel1%da_dt=0._wp
+    parcel1%ndrop=0._wp
+    parcel1%ecoll=0._wp
+    parcel1%ecoal=0._wp
+    parcel1%vel=0._wp
+    parcel1%nre=0._wp
+    parcel1%cd=0._wp
+    parcel1%indexc=0_i4b
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -496,7 +541,16 @@
     ! set-up size distribution                                                     !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! set local PSD parameters
-    n_aer1(1:n_intern,1:n_mode)=n_aer2(1:n_intern,1:n_mode)
+    ! find_upper_diameter uses the module copies below.  For the hybrid grid,
+    ! mirror BMM's tiny positive floor while constructing quantile boundaries
+    ! so an externally defined but currently empty mode still receives a valid
+    ! fixed grid.  Actual particle numbers are restored/recomputed from n_aer2
+    ! below, so this floor never creates physical aerosol.
+    if (grid_mode.eq.GRID_HYBRID_EQUAL_NUMBER) then
+        n_aer1(1:n_intern,1:n_mode)=max(n_aer2(1:n_intern,1:n_mode),1.e-6_wp)
+    else
+        n_aer1(1:n_intern,1:n_mode)=n_aer2(1:n_intern,1:n_mode)
+    endif
     d_aer1(1:n_intern,1:n_mode)=d_aer2(1:n_intern,1:n_mode)
     sig_aer1(1:n_intern,1:n_mode)=sig_aer2(1:n_intern,1:n_mode)
     do k=1,n_mode
@@ -505,11 +559,19 @@
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         idum=k ! this is sent through to zbrent to select the correct mode
         ! find total number in mode between dmina and dmaxa:
-        call lognormal_n_between_limits( &
-            n_aer2(1:n_intern,k),d_aer2(1:n_intern,k),sig_aer2(1:n_intern,k), &
-                                        n_intern,dmina,dmaxa, num)
+        if (grid_mode.eq.GRID_HYBRID_EQUAL_NUMBER) then
+            call lognormal_n_between_limits( &
+                max(n_aer2(1:n_intern,k),1.e-6_wp),d_aer2(1:n_intern,k), &
+                sig_aer2(1:n_intern,k),n_intern,dmina,dmaxa,num)
+        else
+            call lognormal_n_between_limits( &
+                n_aer2(1:n_intern,k),d_aer2(1:n_intern,k),sig_aer2(1:n_intern,k), &
+                n_intern,dmina,dmaxa,num)
+        endif
         
-        ! set up variables for parcel model
+        ! set up variables for grid construction.  In hybrid mode the tiny
+        ! pseudo-number above is used only to define quantile edges for an
+        ! empty external mode; actual npart is recomputed from n_aer2 later.
         ntot=num
         number_per_bin=ntot/real(parcel1%n_bins1,wp)
         
@@ -528,6 +590,8 @@
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         
     enddo
+    if (grid_mode.eq.GRID_HYBRID_EQUAL_NUMBER) &
+        n_aer1(1:n_intern,1:n_mode)=n_aer2(1:n_intern,1:n_mode)
     
     ! ** ice **
     ! set ice number to zero and don't set diameter for ice 
@@ -545,19 +609,35 @@
         do j=1,parcel1%n_binst
             i=j+(k-1)*(parcel1%n_binst+1)
             if (j.le.parcel1%n_bins1) then
-                !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                ! from aerosol distribution                                        !
-                !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                parcel1%maer(j+(k-1)*(parcel1%n_binst))= &
-                    pi/6._wp*(0.5_wp*(parcel1%d(i+1)+parcel1%d(i)))**3 * &
-                    parcel1%rho_core(k)
+                if (grid_mode.eq.GRID_HYBRID_EQUAL_NUMBER) then
+                    ! Use the actual third moment between the equal-number dry
+                    ! quantile edges.  This is identical to BMM full-moving
+                    ! initialisation and conserves both number and dry mass.
+                    call lognormal_n_between_limits( &
+                        n_aer2(:,k),d_aer2(:,k),sig_aer2(:,k),n_intern, &
+                        parcel1%d(i),parcel1%d(i+1),num)
+                    parcel1%npart(j+(k-1)*parcel1%n_binst)=num
+                    call lognormal_m3_between_limits_sce( &
+                        n_aer2(:,k),d_aer2(:,k),sig_aer2(:,k),n_intern, &
+                        parcel1%d(i),parcel1%d(i+1),m3)
+                    if (num.gt.tiny(1._wp)) then
+                        parcel1%maer(j+(k-1)*parcel1%n_binst)= &
+                            pi/6._wp*parcel1%rho_core(k)*m3/num
+                    else
+                        parcel1%maer(j+(k-1)*parcel1%n_binst)= &
+                            pi/6._wp*(0.5_wp*(parcel1%d(i+1)+parcel1%d(i)))**3 * &
+                            parcel1%rho_core(k)
+                    endif
+                else
+                    ! Historical SCE/BMM fixed-grid representative dry mass.
+                    parcel1%maer(j+(k-1)*(parcel1%n_binst))= &
+                        pi/6._wp*(0.5_wp*(parcel1%d(i+1)+parcel1%d(i)))**3 * &
+                        parcel1%rho_core(k)
+                endif
             else
-                !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                ! just put some aerosol in cloud distribution                      !
-                !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                ! Empty/initial cloud bins retain a small dry-mass placeholder.
                 parcel1%maer(j+(k-1)*(parcel1%n_binst))= &
-                    pi/6._wp*(1.e-7_wp)**3 * &
-                    parcel1%rho_core(k)            
+                    pi/6._wp*(1.e-7_wp)**3 * parcel1%rho_core(k)
             endif
         enddo
     enddo
@@ -612,68 +692,61 @@
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! put water on bin, using koehler equation                                     !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    select case(kappa_flag)
-        case(0)
-            do i=1,parcel1%n_bin_mode
-                if ((modulo(i,parcel1%n_binst).le.parcel1%n_bins1).and.&
-                    (modulo(i,parcel1%n_binst).gt.0)) then
-                    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                    ! Aerosol water                                                   !
-                    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                    n_sel=i
-                    rh_act=0._wp !min(parcel1%rh,0.999_wp)
-                    mult=-1._wp
-                    ! has to be less than the peak moles of water at activation
-                    test=fmin(1.e-50_wp,1.e1_wp, koehler02,1.e-30_wp)
-                    rh_act=min(parcel1%rh,0.999_wp)
-                    mult=1._wp
-                    d_dummy=zeroin(1.e-30_wp, test, koehler02,1.e-30_wp)*molw_water 
-                    parcel1%mbin(i,n_comps+1)= d_dummy
-                    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                else
-                    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                    ! cloud water                                                     !
-                    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                    ! water mass bin centres
-                    parcel1%mbin(i,n_comps+1)= &
-                        2._wp**(1._wp/kfac)*parcel1%mbin(i-1,n_comps+1)                    
-                    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                endif
+    if (grid_mode.eq.GRID_HYBRID_EQUAL_NUMBER) then
+        ! The hybrid haze grid must match BMM's initial aerosol representation,
+        ! including its log-space search for the Koehler equilibrium water mass.
+        do k=1,parcel1%n_modes
+            do j=1,parcel1%n_bins1
+                i=j+(k-1)*parcel1%n_binst
+                call equilibrium_water_mass_for_dry_mass( &
+                    parcel1%maer(i),i,mass_frac_aer1(k,:), &
+                    grid_kappa_flag,d_dummy)
+                parcel1%mbin(i,n_comps+1)=d_dummy
             enddo
-        case(1)
-            do i=1,parcel1%n_bin_mode
-                ! only call if in aerosol mode (ie.1:n_bins1)
-                if ((modulo(i,parcel1%n_binst).le.parcel1%n_bins1).and.&
-                    (modulo(i,parcel1%n_binst).gt.0)) then
-                    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                    ! Aerosol water                                                   !
-                    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                    n_sel=i
-                    rh_act=0._wp !min(parcel1%rh,0.999_wp)
-                    mult=-1._wp
-                    ! has to be less than the peak moles of water at activation
-                    test=fmin(1.e-50_wp,1.e1_wp, kkoehler02,1.e-30_wp)
-                    rh_act=min(parcel1%rh,0.999_wp)
-                    mult=1._wp
-                    d_dummy=zeroin(1.e-30_wp, test, kkoehler02,1.e-30_wp)*molw_water 
-                    parcel1%mbin(i,n_comps+1)= d_dummy
-                    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                else
-                    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                    ! cloud water                                                     !
-                    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                    ! water mass bin centres
-                    parcel1%mbin(i,n_comps+1)= &
-                        2._wp**(1._wp/kfac)*parcel1%mbin(i-1,n_comps+1)                    
-                    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                endif
-            enddo
-            
-        case default
-            print *,'error kappa flag'
-            stop
-    end select
-    
+        enddo
+    else
+        ! Historical SCE construction retained bit-for-bit in legacy mode.
+        select case(grid_kappa_flag)
+            case(0)
+                do i=1,parcel1%n_bin_mode
+                    if ((modulo(i,parcel1%n_binst).le.parcel1%n_bins1).and.&
+                        (modulo(i,parcel1%n_binst).gt.0)) then
+                        n_sel=i
+                        rh_act=0._wp
+                        mult=-1._wp
+                        test=fmin(1.e-50_wp,1.e1_wp, koehler02,1.e-30_wp)
+                        rh_act=min(parcel1%rh,0.999_wp)
+                        mult=1._wp
+                        d_dummy=zeroin(1.e-30_wp, test, koehler02,1.e-30_wp)*molw_water
+                        parcel1%mbin(i,n_comps+1)=d_dummy
+                    else
+                        parcel1%mbin(i,n_comps+1)= &
+                            2._wp**(1._wp/kfac)*parcel1%mbin(i-1,n_comps+1)
+                    endif
+                enddo
+            case(1)
+                do i=1,parcel1%n_bin_mode
+                    if ((modulo(i,parcel1%n_binst).le.parcel1%n_bins1).and.&
+                        (modulo(i,parcel1%n_binst).gt.0)) then
+                        n_sel=i
+                        rh_act=0._wp
+                        mult=-1._wp
+                        test=fmin(1.e-50_wp,1.e1_wp, kkoehler02,1.e-30_wp)
+                        rh_act=min(parcel1%rh,0.999_wp)
+                        mult=1._wp
+                        d_dummy=zeroin(1.e-30_wp, test, kkoehler02,1.e-30_wp)*molw_water
+                        parcel1%mbin(i,n_comps+1)=d_dummy
+                    else
+                        parcel1%mbin(i,n_comps+1)= &
+                            2._wp**(1._wp/kfac)*parcel1%mbin(i-1,n_comps+1)
+                    endif
+                enddo
+            case default
+                print *,'error kappa flag'
+                stop
+        end select
+    endif
+
     ! ** ice **
     ! same for the ice
     if (parcel1%ice_flag.eq.1) then
@@ -686,17 +759,89 @@
 
 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! Set the water bin-edges                                                      !
+    ! Set the fixed water-mass bin edges                                            !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ! need a second loop or variable for the ice? or just use the same bin edges
     do k=1,parcel1%n_modes
-        parcel1%mbinedges(1,k)=0._wp
-        parcel1%mbinedges(parcel1%n_binst+1,k)=pi/6._wp*rhow*dmaxc**3
-        do j=2,parcel1%n_binst
-            parcel1%mbinedges(j,k)= &
-                10**(0.5_wp*(log10(parcel1%mbin(j,n_comps+1))+&
-                     log10(parcel1%mbin(j-1,n_comps+1))))
-        enddo
+        if (grid_mode.eq.GRID_LEGACY) then
+            ! Historical construction: edges are geometric means of the
+            ! equilibrium/legacy cloud representative masses and the final edge
+            ! is forced to dmaxc.
+            parcel1%mbinedges(1,k)=0._wp
+            parcel1%mbinedges(parcel1%n_binst+1,k)=pi/6._wp*rhow*dmaxc**3
+            do j=2,parcel1%n_binst
+                parcel1%mbinedges(j,k)= &
+                    10**(0.5_wp*(log10(parcel1%mbin(j,n_comps+1))+&
+                         log10(parcel1%mbin(j-1,n_comps+1))))
+            enddo
+        else
+            ! Hybrid default:
+            !   * the first n_bins edges follow the equal-number dry aerosol
+            !     quantiles from dmina to dmaxa, mapped to equilibrium water
+            !     mass using the BMM Koehler formulation;
+            !   * the n_binsc appended cloud bins are geometric in water mass;
+            !   * n_binsc and dmaxc determine the geometric ratio (Option A).
+            parcel1%mbinedges(1,k)=0._wp
+            ibin_work=(k-1)*parcel1%n_binst+1
+
+            do j=2,parcel1%n_bins1+1
+                dry_mass_edge=pi/6._wp*parcel1%rho_core(k)* &
+                    parcel1%d(j+(k-1)*(parcel1%n_binst+1))**3
+                call equilibrium_water_mass_for_dry_mass( &
+                    dry_mass_edge,ibin_work,mass_frac_aer1(k,:), &
+                    grid_kappa_flag,water_mass_edge)
+                parcel1%mbinedges(j,k)=water_mass_edge
+            enddo
+
+            transition_mass=parcel1%mbinedges(parcel1%n_bins1+1,k)
+            max_cloud_mass=pi/6._wp*rhow*dmaxc**3
+            cloud_ratio=1._wp
+            if (n_binsc.lt.1) error stop &
+                'Hybrid fixed grid requires n_binsc >= 1'
+            if (transition_mass.le.0._wp) error stop &
+                'Hybrid fixed grid requires positive transition water mass'
+            if (n_binsc.gt.0) then
+                if (max_cloud_mass.le.transition_mass) error stop &
+                    'Hybrid fixed grid requires dmaxc above aerosol-grid transition'
+                cloud_ratio=(max_cloud_mass/transition_mass)** &
+                    (1._wp/real(n_binsc,wp))
+                do j=1,n_binsc
+                    parcel1%mbinedges(parcel1%n_bins1+1+j,k)= &
+                        transition_mass*cloud_ratio**real(j,wp)
+                enddo
+
+                do j=parcel1%n_bins1+1,parcel1%n_binst
+                    i=j+(k-1)*parcel1%n_binst
+                    parcel1%mbin(i,n_comps+1)=sqrt( &
+                        parcel1%mbinedges(j,k)*parcel1%mbinedges(j+1,k))
+                enddo
+            endif
+
+            ! Strong grid invariants: all edges increase and each initial
+            ! equal-number aerosol representative lies in its own fixed bin.
+            do j=1,parcel1%n_binst
+                if (parcel1%mbinedges(j+1,k).le.parcel1%mbinedges(j,k)) then
+                    print *,'Hybrid fixed-grid non-monotonic edges: mode/bin ',k,j
+                    print *,'edges = ',parcel1%mbinedges(j,k),parcel1%mbinedges(j+1,k)
+                    error stop 'Hybrid fixed-grid edges must be strictly increasing'
+                endif
+            enddo
+            do j=1,parcel1%n_bins1
+                i=j+(k-1)*parcel1%n_binst
+                if (parcel1%mbin(i,n_comps+1).le.parcel1%mbinedges(j,k) .or. &
+                    parcel1%mbin(i,n_comps+1).gt.parcel1%mbinedges(j+1,k)) then
+                    print *,'Hybrid aerosol representative outside its fixed bin: mode/bin ',k,j
+                    print *,'lower, representative, upper = ', &
+                        parcel1%mbinedges(j,k),parcel1%mbin(i,n_comps+1), &
+                        parcel1%mbinedges(j+1,k)
+                    error stop 'Hybrid fixed-grid aerosol representative outside bin'
+                endif
+            enddo
+
+            print *,'Hybrid fixed grid mode ',k,': aerosol bins=',parcel1%n_bins1, &
+                ', cloud bins=',n_binsc
+            print *,'  transition water mass=',transition_mass, &
+                ', dmaxc=',dmaxc,', cloud mass ratio=',cloud_ratio
+        endif
     enddo
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
@@ -1123,6 +1268,102 @@
     end subroutine lognormal_n_between_limits
 	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
+
+
+
+	! ============================================================================
+	! lognormal_m3_between_limits_sce
+	! ============================================================================
+    subroutine lognormal_m3_between_limits_sce(n_aer,d_aer,sig_aer, &
+                                               nint,dmin,dmax,m3)
+        implicit none
+        integer(i4b), intent(in) :: nint
+        real(wp), intent(in) :: dmin,dmax
+        real(wp), dimension(nint), intent(in) :: n_aer,d_aer,sig_aer
+        real(wp), intent(out) :: m3
+        integer(i4b) :: ii
+        real(wp) :: zmin,zmax,sig
+
+        m3=0._wp
+        do ii=1,nint
+            if (n_aer(ii).le.0._wp) cycle
+            sig=sig_aer(ii)
+            zmin=log(dmin/d_aer(ii))/sig
+            zmax=log(dmax/d_aer(ii))/sig
+            m3=m3+n_aer(ii)*d_aer(ii)**3*exp(4.5_wp*sig**2)* &
+                (0.5_wp*erfc(-(zmax-3._wp*sig)/sqrt(2._wp))- &
+                 0.5_wp*erfc(-(zmin-3._wp*sig)/sqrt(2._wp)))
+        enddo
+    end subroutine lognormal_m3_between_limits_sce
+
+
+    function koehler02_lognw_sce(lnnw) result(val)
+        implicit none
+        real(wp), intent(in) :: lnnw
+        real(wp) :: val
+        val=koehler02(exp(lnnw))
+    end function koehler02_lognw_sce
+
+
+    function kkoehler02_lognw_sce(lnnw) result(val)
+        implicit none
+        real(wp), intent(in) :: lnnw
+        real(wp) :: val
+        val=kkoehler02(exp(lnnw))
+    end function kkoehler02_lognw_sce
+
+
+    subroutine equilibrium_water_mass_for_dry_mass(dry_mass,ibin,component_fraction, &
+                                                    kappa_choice,water_mass)
+        use numerics, only : zeroin, fmin
+        implicit none
+        real(wp), intent(in) :: dry_mass
+        integer(i4b), intent(in) :: ibin,kappa_choice
+        real(wp), dimension(:), intent(in) :: component_fraction
+        real(wp), intent(out) :: water_mass
+        real(wp) :: test_local
+        real(wp) :: maer_save,rh_act_save,mult_save
+        real(wp), dimension(size(component_fraction)) :: mbin_save
+        integer(i4b) :: n_sel_save
+
+        if (dry_mass.le.0._wp) error stop &
+            'equilibrium_water_mass_for_dry_mass requires positive dry mass'
+
+        maer_save=parcel1%maer(ibin)
+        mbin_save=parcel1%mbin(ibin,1:size(component_fraction))
+        n_sel_save=n_sel
+        rh_act_save=rh_act
+        mult_save=mult
+
+        parcel1%maer(ibin)=dry_mass
+        parcel1%mbin(ibin,1:size(component_fraction))=dry_mass*component_fraction
+        n_sel=ibin
+        rh_act=0._wp
+        mult=-1._wp
+
+        select case(kappa_choice)
+        case(0)
+            test_local=exp(fmin(log(1.e-30_wp),log(1.e-5_wp), &
+                koehler02_lognw_sce,1.e-10_wp))
+            rh_act=min(parcel1%rh,0.999_wp)
+            mult=1._wp
+            water_mass=zeroin(1.e-30_wp,test_local,koehler02,1.e-30_wp)*molw_water
+        case(1)
+            test_local=exp(fmin(log(1.e-30_wp),log(1.e-5_wp), &
+                kkoehler02_lognw_sce,1.e-10_wp))
+            rh_act=min(parcel1%rh,0.999_wp)
+            mult=1._wp
+            water_mass=zeroin(1.e-30_wp,test_local,kkoehler02,1.e-30_wp)*molw_water
+        case default
+            error stop 'Unknown kappa flag in hybrid fixed-grid construction'
+        end select
+
+        parcel1%maer(ibin)=maer_save
+        parcel1%mbin(ibin,1:size(component_fraction))=mbin_save
+        n_sel=n_sel_save
+        rh_act=rh_act_save
+        mult=mult_save
+    end subroutine equilibrium_water_mass_for_dry_mass
 
 
 	! ============================================================================
