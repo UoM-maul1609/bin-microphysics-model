@@ -4544,12 +4544,14 @@
     real(wp), intent(inout) :: rh
 
     integer(i4b) :: i,j,k,kk,im,inew,it,ib,jl,jh
-    real(wp) :: fracinliq,naer05,naer05_basis,naer_daily,nprimary,nprimary_existing, &
-                ndaily_target,ndaily_existing,avail, &
+    real(wp) :: fracinliq,naer05_warm,naer05_ice,naer05_reference, &
+                naer05_available,naer_daily,nprimary,nprimary_target, &
+                nprimary_existing,ndaily_target,ndaily_existing,avail, &
                 n,nt,nb,mt,mb,mnew,nleft,mttot,mbtot,mleft,mall, &
                 dprimary,dn,frac,dcin,tc, &
                 aer05_total,aer05_demott,aer05_other,aer05_remaining, &
-                n_before,n_after_demott,other_freeze
+                n_before,n_after_demott,other_freeze, &
+                aer05_budget_before,aer05_budget_after,aer05_budget_tol
     logical :: has_inas,has_demott,has_daily,full_moving
     logical, dimension(nbinw) :: activated_mask
     integer(i4b) :: idemott,iaer05
@@ -4569,6 +4571,12 @@
     idemott=ncomps+6+n_inp_classes
     iaer05=idemott+1
     full_moving=(parcel1%bin_scheme_flag.eq.BIN_FULL_MOVING)
+
+    ! Freezing is an internal phase transfer for the prognostic DeMott aerosol
+    ! reservoir.  The global warm+ice n_aer05 budget must therefore be unchanged
+    ! by this routine (apart from roundoff).  Keep an explicit invariant so a
+    ! future change cannot silently reintroduce scheme-dependent aerosol loss.
+    aer05_budget_before=sum(moments(:,iaer05))
 
     ! Evaluate the expensive Koehler/FHH activation test once per warm bin and
     ! reuse it for all heterogeneous immersion-nucleation mechanisms.
@@ -4632,33 +4640,56 @@
     ! so aggregation with other ice types does not erase DeMott provenance.
     ! -------------------------------------------------------------------------
     if(ice_nucleation_mech_in(INUC_DEMOTT)) then
-        naer05=0._wp
+        ! Keep two DeMott aerosol quantities distinct:
+        !
+        ! (a) naer05_reference is the aerosol concentration used by the DeMott
+        !     empirical relationship.  n_aer05 is an intrinsic conserved core
+        !     count, so the reference is the complete in-parcel reservoir carried
+        !     by warm particles plus ice.  Moving a core from liquid to ice must
+        !     not by itself change the empirical aerosol reference.
+        !
+        ! (b) naer05_available is the number of NEW ice crystals that can actually
+        !     be supplied now.  Only activated WARM particles can freeze.  Aerosol
+        !     already inside ice contributes to the reference concentration but is
+        !     never available to nucleate another crystal.
+        !
+        ! The distinction matters after Koop/INAS freezing and after collection,
+        ! where an ice particle may carry one or more >0.5-micron aerosol cores.
+        naer05_warm=sum(max(moments(1:nbinw,iaer05),0._wp))
+        naer05_ice=sum(max(moments(nbinw+1:2*nbinw,iaer05),0._wp))
+        naer05_reference=naer05_warm+naer05_ice
 
-        ! n_aer05 is now a prognostic extensive moment rather than a diagnostic
-        ! reconstructed from the current bin index.  It therefore remains valid
-        ! after collision/coalescence, remapping, entrainment and aerosol release.
+        ! Count the DeMott-capable warm reservoir explicitly.  A liquid particle
+        ! can freeze at most once, even if coalescence has given it several
+        ! >0.5-micron aerosol cores, so each bin contributes min(Ndrop,Naer05).
+        ! INAS has precedence for internally mixed populations and any INAS ice
+        ! already selected this timestep is removed from the available drop count.
+        naer05_available=0._wp
         do i=1,nbinw
-            if(npart(i).le.qsmall2) cycle
-            if(mwat(i).le.tiny(1._wp)) cycle
+            if(npart(i).le.qsmall2 .or. mwat(i).le.tiny(1._wp)) cycle
             if(.not.activated_mask(i)) cycle
+
             call get_inp_control(mbin2(i,:),has_inas,has_demott,has_daily)
             if((has_inas .and. ice_nucleation_mech_in(INUC_INAS)) .or. .not.has_demott) cycle
-            naer05=naer05+max(moments(i,iaer05),0._wp)
+
+            naer05_available=naer05_available + &
+                min(max(npart(i)-dn_inas(i),0._wp), &
+                    max(moments(i,iaer05),0._wp))
         enddo
 
-        ! Existing DeMott primary ice remains part of the cumulative DeMott
-        ! target.  Adding it back to the aerosol basis prevents the target from
-        ! spuriously falling solely because earlier DeMott freezing moved an
-        ! eligible aerosol core out of the liquid-drop population.
+        ! n_demott is the number concentration of currently represented
+        ! DeMott-origin primary crystals/monomers.  It is subtracted from the
+        ! cumulative empirical target, while the result is then capped by the
+        ! warm-particle reservoir that can physically freeze at this timestep.
         nprimary_existing=sum(max(moments(nbinw+1:2*nbinw,idemott),0._wp))
-        naer05_basis=naer05+nprimary_existing
-        nprimary=min(naer05_basis,demott_2010(t,naer05_basis))
-        nprimary=max(nprimary-nprimary_existing,0._wp)
+        nprimary_target=min(naer05_reference, &
+                            demott_2010(t,naer05_reference))
+        nprimary=max(nprimary_target-nprimary_existing,0._wp)
+        nprimary=min(nprimary,naer05_available)
 
         ! Deplete eligible droplets from the large end, retaining the existing
-        ! BMM ordering.  A drop can freeze at most once, while n_aer05 may exceed
-        ! drop number after coalescence because one drop can carry several
-        ! >0.5-micron aerosol cores.
+        ! BMM ordering.  This loop can only consume the warm n_aer05 reservoir;
+        ! n_aer05 residing in ice is never considered here.
         do i=nbinw,1,-1
             if(nprimary.le.qsmall2) exit
             if(npart(i).le.qsmall2 .or. mwat(i).le.tiny(1._wp)) cycle
@@ -4970,6 +5001,15 @@
     ! at the updated temperature.
     if(.not.chamber_force_temperature) then
         call adjust_t_rh(sum(mwat(:)*dn01(:)),t,rh,p)
+    endif
+
+    aer05_budget_after=sum(moments(:,iaer05))
+    aer05_budget_tol=1.e-10_wp*max(abs(aer05_budget_before),1._wp)
+    if (abs(aer05_budget_after-aer05_budget_before).gt.aer05_budget_tol) then
+        print *,'n_aer05 budget changed during non-collisional freezing'
+        print *,'before, after, difference = ',aer05_budget_before, &
+            aer05_budget_after,aer05_budget_after-aer05_budget_before
+        error stop 'noncollisional_iceformation n_aer05 conservation failure'
     endif
 
     end subroutine noncollisional_iceformation
