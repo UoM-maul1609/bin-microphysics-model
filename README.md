@@ -109,7 +109,7 @@ A key design feature is that particle number, aerosol component masses and ice-p
 
 The initial aerosol is described with `n_mode` externally mixed modes. Each mode can contain `n_intern` lognormal submodes, specified with:
 
-- `n_aer1`: number concentration [m\(^{-3}\)];
+- `n_aer1`: number concentration [kg\(^{-1}\)];
 - `d_aer1`: number-median dry diameter [m];
 - `sig_aer1`: \(\ln(\sigma_g)\);
 - `mass_frac_aer1`: dry component mass fractions.

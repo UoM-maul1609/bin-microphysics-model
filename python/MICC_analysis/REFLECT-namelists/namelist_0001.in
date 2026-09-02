@@ -156,7 +156,7 @@
     d_aer1(1:3,1:1)        = 73e-9   , 106e-9, 240e-9,
     !> Natural-log geometric width ln(sigma_g); required positive for populated submodes.
     sig_aer1(1:3,1:1)      = 0.12   , 0.451, 0.398,
-    !> Lognormal aerosol number concentration [m-3]; indexed by internal submode and external mode.
+    !> Lognormal aerosol number concentration [kg-1]; indexed by internal submode and external mode.
     n_aer1(1:3,2:2)        = 0e6, 0.e6, 0.001e6,
     !> Lognormal number-median dry diameter [m]; required positive for populated submodes.
     d_aer1(1:3,2:2)        = 100e-9   , 1e-9, 1.e-9,
