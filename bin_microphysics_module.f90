@@ -5243,19 +5243,25 @@
 	! full_moving_water_bracket
 	! ============================================================================
 	!>@brief
-	!>Finds the two current full-moving water-mass pivots that bracket a source
-	!>water mass within the same external aerosol mode.  The pivots need not be
-	!>ordered in array index after collection; lower and upper are diagnosed by
-	!>mass.  At an end of the represented range both indices collapse to the
-	!>nearest endpoint.
-	subroutine full_moving_water_bracket(isrc,mwater,ilo,ihi,wlo,whi)
+	!>Finds the two OCCUPIED current full-moving water-mass pivots that bracket a
+	!>source water mass within the same external aerosol mode.  Empty numerical
+	!>categories are deliberately ignored: in a full-moving representation their
+	!>stored pivot is only a placeholder until a population occupies the category.
+	!>The pivots need not be ordered in array index after collection; lower and
+	!>upper are diagnosed by mass.  outside_range is true if the requested source
+	!>mass lies outside the occupied range (or the mode has no occupied category).
+	!>The endpoint returned in that case is retained only as a fallback if the
+	!>caller cannot allocate a spare empty full-moving category.
+	subroutine full_moving_water_bracket(isrc,mwater,ilo,ihi,wlo,whi,outside_range)
 		implicit none
 		integer(i4b), intent(in) :: isrc
 		real(wp), intent(in) :: mwater
 		integer(i4b), intent(out) :: ilo,ihi
 		real(wp), intent(out) :: wlo,whi
+		logical, intent(out) :: outside_range
 		integer(i4b) :: imode,j,jlo,jhi,ilower,iupper
 		real(wp) :: m,mlower,mupper,denom
+		logical :: found_lower,found_upper
 
 		imode=(isrc-1)/parcel1%n_bins1+1
 		jlo=(imode-1)*parcel1%n_bins1+1
@@ -5264,31 +5270,44 @@
 		mupper= huge(1._wp)
 		ilower=jlo
 		iupper=jlo
+		found_lower=.false.
+		found_upper=.false.
 
 		do j=jlo,jhi
+			! Only populated categories define the current moving PSD.  In particular,
+			! the initially empty 61--140 categories must not act as fixed pivots here.
+			if (parcel1%npart(j).le.tiny(1._wp)) cycle
 			m=max(parcel1%y(j),0._wp)
 			if (m.le.mwater .and. m.gt.mlower) then
 				mlower=m
 				ilower=j
+				found_lower=.true.
 			endif
 			if (m.ge.mwater .and. m.lt.mupper) then
 				mupper=m
 				iupper=j
+				found_upper=.true.
 			endif
 		enddo
 
-		! Outside the represented pivot range: use the nearest endpoint.  The
-		! receiving pivot is subsequently moved by exact number/water averaging,
-		! so number and water remain conserved even for an endpoint source.
-		if (mlower.eq.-huge(1._wp)) then
-			ilo=iupper
-			ihi=iupper
-			wlo=1._wp
-			whi=0._wp
-			return
-		elseif (mupper.eq.huge(1._wp)) then
-			ilo=ilower
-			ihi=ilower
+		outside_range=.false.
+
+		! Outside the OCCUPIED represented range.  Return the nearest occupied
+		! endpoint as a conservative fallback; merge_full_moving_warm_source first
+		! tries to replace this fallback with a newly occupied empty category.
+		if (.not.found_lower .or. .not.found_upper) then
+			outside_range=.true.
+			if (.not.found_lower .and. found_upper) then
+				ilo=iupper
+				ihi=iupper
+			elseif (found_lower .and. .not.found_upper) then
+				ilo=ilower
+				ihi=ilower
+			else
+				! No occupied category at all in this external mode.
+				ilo=jlo
+				ihi=jlo
+			endif
 			wlo=1._wp
 			whi=0._wp
 			return
@@ -5315,6 +5334,46 @@
 
 
 	! ============================================================================
+	! find_empty_full_moving_bin
+	! ============================================================================
+	!>@brief
+	!>Returns an unoccupied/unreserved full-moving category in the same external
+	!>aerosol mode as isrc.  The category whose placeholder/reference water mass
+	!>is closest (in log mass) to mwater is preferred, although the receiving
+	!>pivot will subsequently move exactly to the inserted population mean.
+	!>nadd is included so that two source populations handled in the same merge
+	!>call cannot independently reserve the same initially empty category.
+	subroutine find_empty_full_moving_bin(isrc,mwater,nadd,jempty)
+		implicit none
+		integer(i4b), intent(in) :: isrc
+		real(wp), intent(in) :: mwater
+		real(wp), dimension(:), intent(in) :: nadd
+		integer(i4b), intent(out) :: jempty
+		integer(i4b) :: imode,j,jlo,jhi
+		real(wp) :: score,best_score,mref,mtarget
+
+		imode=(isrc-1)/parcel1%n_bins1+1
+		jlo=(imode-1)*parcel1%n_bins1+1
+		jhi=imode*parcel1%n_bins1
+		jempty=0
+		best_score=huge(1._wp)
+		mtarget=max(mwater,tiny(1._wp))
+
+		do j=jlo,jhi
+			if (parcel1%npart(j).gt.tiny(1._wp)) cycle
+			if (nadd(j).gt.tiny(1._wp)) cycle
+
+			mref=max(parcel1%y(j),tiny(1._wp))
+			score=abs(log(mref)-log(mtarget))
+			if (score.lt.best_score) then
+				best_score=score
+				jempty=j
+			endif
+		enddo
+	end subroutine find_empty_full_moving_bin
+
+
+	! ============================================================================
 	! merge_full_moving_warm_source
 	! ============================================================================
 	!>@brief
@@ -5332,8 +5391,9 @@
 		real(wp), dimension(:,:), intent(in) :: moments_src
 		real(wp), intent(in), optional :: source_scale
 		integer(i4b), intent(in), optional :: insertion_mode
-		integer(i4b) :: i,j,n,nmom,mode,ilo,ihi
+		integer(i4b) :: i,j,n,nmom,mode,ilo,ihi,jempty,n_no_empty
 		real(wp) :: scale,nin,nold,nnew,water_total,wlo,whi
+		logical :: outside_range
 		real(wp), allocatable :: nadd(:),wateradd(:),momadd(:,:)
 
 		if (parcel1%bin_scheme_flag.ne.BIN_FULL_MOVING) error stop &
@@ -5359,6 +5419,7 @@
 		nadd=0._wp
 		wateradd=0._wp
 		momadd=0._wp
+		n_no_empty=0
 
 		do i=1,n
 			nin=scale*npart_src(i)
@@ -5373,7 +5434,25 @@
 				whi=0._wp
 			else
 				call full_moving_water_bracket(i,max(mwater_src(i),0._wp), &
-					ilo,ihi,wlo,whi)
+					ilo,ihi,wlo,whi,outside_range)
+
+				if (outside_range) then
+					call find_empty_full_moving_bin(i,max(mwater_src(i),0._wp), &
+						nadd,jempty)
+					if (jempty.gt.0) then
+						! Preserve the split population explicitly.  Since this category
+						! is empty, the exact number/water merge below moves its pivot
+						! to mwater_src without averaging it with a cloud-drop cohort.
+						ilo=jempty
+						ihi=jempty
+						wlo=1._wp
+						whi=0._wp
+					else
+						! No spare category is available.  Keep the conservative
+						! nearest-endpoint fallback returned by the bracket routine.
+						n_no_empty=n_no_empty+1
+					endif
+				endif
 			endif
 
 			if (wlo.gt.0._wp) then
@@ -5401,6 +5480,11 @@
 			enddo
 			parcel1%mbin(i,parcel1%n_comps+1)=parcel1%y(i)
 		enddo
+
+		if (n_no_empty.gt.0) then
+			print *,'WARNING: full-moving mode-1 release had no empty category for ', &
+				n_no_empty,' source populations; used endpoint fallback'
+		endif
 
 		deallocate(nadd,wateradd,momadd)
 	end subroutine merge_full_moving_warm_source
