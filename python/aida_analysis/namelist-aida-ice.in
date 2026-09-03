@@ -103,6 +103,13 @@
     chamber_bl_temp_mode = 0,
     !> Used only for chamber_bl_temp_mode=0: T_BL - T_gas [K].
     chamber_bl_temp_offset = 0.0,
+    !> Wall-vapour closure: 0=legacy saturation cap; 1=finite prognostic reservoir.
+    chamber_bl_wall_water_mode = 0,
+    !> Fractional equilibration during one BL wall encounter [0..1].
+    chamber_wall_water_efficiency = 1.0,
+    !> Initial physical wall-water reservoirs [kg].  Zero gives a dry/unfrosted wall.
+    chamber_wall_liquid_water_init = 0.0,
+    chamber_wall_ice_water_init = 0.0,
 
     !> Drone-fan blade loss: 0=off, 1=saturating sigmoid in current particle diameter.
     chamber_fan_loss = 0,

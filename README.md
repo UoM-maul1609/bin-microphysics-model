@@ -638,3 +638,7 @@ geometric cloud extension.
 
 The new grid is used only for moving-centre and Chen-Lamb. Full-moving runs
 retain their existing SCE behaviour.
+
+## Chamber wall-water reservoir (2026-09-03)
+
+The chamber BL now has an optional finite prognostic wall-water reservoir (`chamber_bl_wall_water_mode=1`).  The wall starts dry by default, can accumulate condensate/frost as the chamber approaches saturation, and can later evaporate/sublimate only water actually stored there.  Reservoirs are physical masses in kg.  See `CHAMBER_WALL_WATER_RESERVOIR.md` for controls, diagnostics and the iSKYLAB-driver interface.
