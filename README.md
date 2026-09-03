@@ -1,143 +1,198 @@
 # Bin Microphysics Model (BMM)
 
-BMM is a sectional cloud microphysics model for process studies of aerosol activation, warm-cloud growth, mixed-phase and ice microphysics, particle collisions, secondary ice production, sedimentation/fallout and optical properties. The model can be run as an atmospheric parcel/bubble/plume calculation or driven by prescribed chamber time series, with a standalone stochastic collection equation (SCE) model also provided.
+BMM is a detailed sectional/bin cloud microphysics model for studying aerosol activation, warm-cloud evolution, ice formation, mixed-phase microphysics, collisions, secondary ice production, sedimentation/fallout, particle optics, entrainment and cloud-chamber processes.
 
-The code is written primarily in Fortran and writes NetCDF output. Python scripts in `python/` provide plotting, parameterisation tests and experiment-specific analysis workflows.
+The model is written primarily in Fortran and writes NetCDF output. Python tools under `python/` provide plotting and experiment-specific workflows.
 
-> **Development status**
+BMM is intended as a **process model and numerical laboratory** rather than a bulk microphysics parameterisation. A central design goal is to retain aerosol composition and particle history while hydrometeors grow, evaporate, freeze, sublimate, collide and are remapped between numerical bins.
+
+> **Research-code status**
 >
-> BMM is an actively developed research model. The root `namelist.in` is the standard configuration; alternative general-purpose configurations are in `configs/`, while experiment-specific namelists are kept alongside their Python analysis workflows.
+> BMM is actively developed. The model contains several alternative numerical and physical treatments specifically so they can be compared. Results should therefore be reported with the relevant namelist settings and BMM revision.
+
+---
 
 ## Contents
 
-- [Model overview](#model-overview)
-- [Scientific capabilities](#scientific-capabilities)
-- [Model architecture](#model-architecture)
-- [Aerosol, activation and liquid water](#aerosol-activation-and-liquid-water)
-- [Ice microphysics](#ice-microphysics)
+- [Overview](#overview)
+- [Main scientific capabilities](#main-scientific-capabilities)
+- [Particle and aerosol representation](#particle-and-aerosol-representation)
+- [Liquid water, hygroscopic growth and activation](#liquid-water-hygroscopic-growth-and-activation)
+- [Ice nucleation](#ice-nucleation)
+- [Ice growth and habit](#ice-growth-and-habit)
 - [Collisions and secondary ice](#collisions-and-secondary-ice)
 - [Bin representations](#bin-representations)
-- [Parcel, plume and chamber configurations](#parcel-plume-and-chamber-configurations)
-- [Sedimentation, precipitation and optics](#sedimentation-precipitation-and-optics)
-- [Building the model](#building-the-model)
-- [Running the model](#running-the-model)
-- [Configuration files](#configuration-files)
+- [Aerosol release during evaporation and sublimation](#aerosol-release-during-evaporation-and-sublimation)
+- [Entrainment and cloud dynamics](#entrainment-and-cloud-dynamics)
+- [Cloud-chamber model](#cloud-chamber-model)
+- [AIDAd/iSKYLAB interpretation of the chamber treatment](#aidadiskylab-interpretation-of-the-chamber-treatment)
+- [Particle loss to surfaces and fallout](#particle-loss-to-surfaces-and-fallout)
+- [Optical properties](#optical-properties)
+- [Building BMM](#building-bmm)
+- [Running BMM](#running-bmm)
+- [Namelist structure](#namelist-structure)
 - [NetCDF output](#netcdf-output)
 - [Python analysis](#python-analysis)
-- [Showcase figures](#showcase-figures)
 - [Repository layout](#repository-layout)
-- [Known limitations and development notes](#known-limitations-and-development-notes)
+- [Development and numerical checking](#development-and-numerical-checking)
 - [Selected references](#selected-references)
 
 ---
 
-## Model overview
+# Overview
 
-BMM follows aerosol-containing particles through changes in water content and phase while retaining aerosol composition. Aerosol can therefore remain associated with liquid or frozen hydrometeors through condensation, evaporation, freezing, melting, deposition, sublimation and collisions.
+BMM follows populations of aerosol-containing particles through changes in water content and phase.
 
-The main model supports:
+Aerosol material is not discarded when a cloud droplet forms or an ice particle nucleates. Instead, nonvolatile component masses remain attached to the particle and are transferred through:
 
-- multiple externally mixed aerosol modes;
-- multiple lognormal submodes within each external mode;
-- multiple nonvolatile composition components within a particle;
-- molecular/Raoult or kappa-Koehler hygroscopic growth;
-- FHH adsorption growth for adsorbing components;
-- explicit activation from the current Koehler/FHH critical point;
-- liquid condensation and evaporation;
-- ice nucleation, deposition/sublimation and habit evolution;
-- stochastic collection between liquid and/or ice particles;
-- secondary ice production and collisional breakup options;
-- several sectional/bin representations;
-- entraining bubble or plume/jet dynamics, prescribed updrafts, or chamber forcing;
-- optional residence-time fallout;
-- geometric or anomalous-diffraction-theory optical properties.
+- hygroscopic growth;
+- cloud activation;
+- condensation and evaporation;
+- freezing and melting;
+- vapour deposition and sublimation;
+- collision/coalescence;
+- aggregation;
+- secondary ice production;
+- numerical remapping;
+- entrainment;
+- complete hydrometeor evaporation or sublimation.
 
-The code is intended primarily as a detailed process model and numerical test bed rather than a bulk microphysics scheme.
+This makes it possible to ask questions that are difficult to address with a bulk scheme, for example:
 
-## Scientific capabilities
+- Which dry aerosol sizes activated?
+- Which aerosol populations subsequently froze?
+- How does collision/coalescence alter aerosol provenance?
+- What happens to residual aerosol after complete droplet evaporation?
+- How sensitive is ice production to the numerical bin treatment?
+- How do homogeneous and inhomogeneous mixing alter the particle-size distribution for the same bulk liquid-water loss?
+- How rapidly must chamber air mix to reproduce laboratory cloud evolution?
+- How important are loss processes to chamber walls, fan-driven circulation and the chamber floor?
 
-| Area | Implemented treatments |
+The main executable can be used for atmospheric parcel/bubble/plume calculations or for prescribed chamber experiments.
+
+---
+
+# Main scientific capabilities
+
+| Process | BMM capability |
 |---|---|
-| Aerosol population | External modes, internal lognormal submodes, component mass fractions |
-| Hygroscopic growth | Molecular/Raoult Koehler or kappa-Koehler |
-| Adsorption | FHH adsorption for components with non-zero `afhh_core1`/`bfhh_core1` |
-| Activation | Critical point of the current Koehler/FHH equilibrium curve |
-| Warm microphysics | Condensation and evaporation with coupled parcel thermodynamics |
-| Ice nucleation | Koop homogeneous; discrete INAS immersion; DeMott; Daily/DCMEX |
-| INAS materials | Niemand desert dust; Murray kaolinite; Atkinson K-feldspar |
-| Ice growth | Vapour deposition/sublimation, capacitance, density/aspect-ratio moments |
+| Aerosol | Multiple externally mixed modes, lognormal internal submodes and multiple composition components |
+| Hygroscopic growth | Molecular/Raoult Köhler and κ-Köhler |
+| Adsorption | FHH adsorption treatment |
+| Cloud activation | Critical point of the current Köhler/FHH equilibrium curve |
+| Warm microphysics | Condensation and evaporation with coupled thermodynamics |
+| Ice nucleation | Koop homogeneous freezing, INAS/IASD, DeMott and Daily/DCMEX options |
+| INP memory | Prognostic cumulative freezing-threshold moments |
+| DeMott aerosol basis | Prognostic number of aerosol cores with dry diameter > 0.5 µm |
+| Ice growth | Vapour deposition/sublimation with evolving habit and density |
 | Collisions | Stochastic collection equation (SCE) |
-| Secondary ice | Hallett-Mossop, model mode-1/mode-2 options, collisional breakup |
-| Breakup | Vardiman or Phillips-style breakup options |
-| Bin numerics | Fully moving, moving-centre, Chen-Lamb mass-conserving remapping |
-| Dynamics | Prescribed updraft, stopped/oscillatory updraft, entraining bubble or plume/jet |
-| Chamber mode | Prescribed pressure, temperature and total-water time series |
-| Sedimentation | Optional residence-time fallout plus precipitation-flux diagnostics |
-| Optics | Geometric `Qext=2` approximation or anomalous diffraction theory (ADT) |
-| Output | NetCDF time series and sectional particle fields |
+| Secondary ice | Hallett-Mossop, mode-1/mode-2 treatments and collisional breakup |
+| Bin numerics | Fully moving, moving-centre and Chen-Lamb conservative remapping |
+| Entrainment | Adiabatic, lateral/vertical entrainment, homogeneous and inhomogeneous mixing |
+| Chamber mode | Prescribed pressure/temperature/water forcing and optional wall-BL processing |
+| Chamber evaporation | Homogeneous shrinkage or inhomogeneous complete-particle evaporation |
+| Chamber wall water | Legacy closure plus finite-reservoir and finite-rate mass-transfer alternatives |
+| Surface losses | Fan-associated particle loss, non-gravitational wall deposition and fallout |
+| Optics | Geometric approximation or anomalous diffraction theory |
+| Output | NetCDF bulk and sectional diagnostics |
 
-## Model architecture
+---
 
-```mermaid
-flowchart LR
-    NML[Namelist configuration] --> INIT[Initialise sounding/chamber, aerosol and bins]
-    AER[Aerosol modes + composition] --> INIT
-    ENV[Sounding or chamber forcing] --> INIT
+# Particle and aerosol representation
 
-    INIT --> DYN[Parcel / bubble / plume dynamics]
-    DYN --> ACT[Koehler / kappa-Koehler + FHH activation]
-    ACT --> DIFF[Condensation / evaporation]
-    ACT --> ICE[Ice nucleation]
-    ICE --> DEP[Deposition / sublimation and habit growth]
+## External modes and internal submodes
 
-    DIFF --> REMAP[Selected bin treatment]
-    DEP --> REMAP
-    REMAP --> SCE[SCE collisions]
-    SCE --> SIP[Secondary ice / breakup]
-    SIP --> FALL[Fallout / precipitation diagnostics]
-    FALL --> OPT[Optics]
-    OPT --> NC[NetCDF output]
+The aerosol initial condition is specified as `n_mode` externally mixed modes. Each external mode can contain `n_intern` lognormal submodes.
 
-    NC --> PY[Python analysis and plotting]
+Typical aerosol inputs include:
+
+```fortran
+n_aer1
+d_aer1
+sig_aer1
+mass_frac_aer1
 ```
 
-A key design feature is that particle number, aerosol component masses and ice-property moments are carried together through remapping and collection. Some moments are extensive, some are number-weighted properties, and INAS threshold moments use a special inheritance rule during physical collisions.
+where:
 
-## Aerosol, activation and liquid water
+- `n_aer1` is aerosol number mixing ratio;
+- `d_aer1` is number-median dry diameter;
+- `sig_aer1` is `ln(sigma_g)`;
+- `mass_frac_aer1` defines the nonvolatile composition.
 
-### Aerosol representation
+Component properties include:
 
-The initial aerosol is described with `n_mode` externally mixed modes. Each mode can contain `n_intern` lognormal submodes, specified with:
+```fortran
+molw_core1
+density_core1
+nu_core1
+kappa_core1
+afhh_core1
+bfhh_core1
+inp_category
+```
 
-- `n_aer1`: number concentration [kg\(^{-1}\)];
-- `d_aer1`: number-median dry diameter [m];
-- `sig_aer1`: \(\ln(\sigma_g)\);
-- `mass_frac_aer1`: dry component mass fractions.
+A particle can therefore contain several nonvolatile aerosol components while remaining part of one dynamically evolving hydrometeor population.
 
-Component properties are defined by `molw_core1`, `density_core1`, `nu_core1`, `kappa_core1`, and optional FHH/INP properties.
+## Extensive and inherited moments
 
-### Koehler treatments
+In addition to particle number and water/ice mass, BMM carries several particle moments.
 
-`kappa_flag` selects the activity treatment:
+Some are ordinary extensive quantities that add during collisions, while others use specialised inheritance rules. Examples include:
 
-- `0`: molecular/Raoult Koehler treatment using component molecular properties and effective dissociation numbers;
-- `1`: kappa-Koehler treatment using component hygroscopicity `kappa_core1`.
+- nonvolatile aerosol component masses;
+- ice habit/aggregation properties;
+- cumulative INAS threshold populations;
+- number of DeMott-origin primary ice monomers;
+- number of DeMott-eligible aerosol cores with dry diameter greater than 0.5 µm.
 
-FHH adsorption is applied to either formulation when a component has `afhh_core1 > 0` and `bfhh_core1 > 0`.
+This moment-based architecture is what allows aerosol and ice-nucleation history to survive growth, remapping and collisions.
 
-### FHH adsorption
+---
 
-Adsorbing components can take up water below conventional cloud activation. The FHH contribution is combined using the model's mixed-particle surface-area treatment. A component with `afhh_core1 = 0` makes no adsorption contribution.
+# Liquid water, hygroscopic growth and activation
 
-The model distinguishes adsorption-grown haze from activated cloud droplets using the critical point of the combined Koehler/FHH equilibrium curve.
+## Köhler formulations
 
-### Activation
+`kappa_flag` selects the hygroscopic activity treatment:
 
-A particle is diagnosed as activated when its current liquid-water mass exceeds the critical water mass at the maximum of its current Koehler/FHH curve. The same activation criterion is used by the cloud-droplet diagnostic and by heterogeneous immersion-freezing schemes.
+```text
+0 = molecular/Raoult Köhler
+1 = κ-Köhler
+```
 
-This means that the mere presence of adsorbed water does **not** make a particle eligible for immersion freezing.
+The molecular treatment uses component molecular weight and effective dissociation number.
 
-## Ice microphysics
+The κ-Köhler treatment uses component `kappa_core1`.
+
+Both formulations include the Kelvin term and can be combined with FHH adsorption where configured.
+
+## FHH adsorption
+
+Components with non-zero:
+
+```fortran
+afhh_core1
+bfhh_core1
+```
+
+can take up water through the Frenkel-Halsey-Hill adsorption treatment.
+
+This is useful for aerosol such as mineral dust where adsorption may be important before conventional Köhler activation.
+
+BMM distinguishes adsorption-grown haze from activated droplets.
+
+## Activation
+
+Activation is diagnosed from the maximum of the current equilibrium growth curve.
+
+A wet aerosol particle is therefore not considered a cloud droplet merely because it contains water. It becomes activated after passing the critical point of the appropriate Köhler/FHH equilibrium curve.
+
+This activation state is also used by heterogeneous immersion-freezing treatments.
+
+---
+
+# Ice nucleation
 
 Ice microphysics is enabled with:
 
@@ -145,40 +200,66 @@ Ice microphysics is enabled with:
 ice_flag = 1
 ```
 
-### Ice nucleation mechanisms
+The four primary ice mechanisms are selected with:
 
-`ice_nucleation_mech(1:4)` controls four mechanisms:
+```fortran
+ice_nucleation_mech(1:4)
+```
 
-1. **Koop** homogeneous freezing;
-2. **INAS** discrete ice-active-site immersion freezing;
-3. **DeMott** aerosol-number-based heterogeneous freezing;
-4. **Daily/DCMEX** temperature-dependent primary-ice parameterisation.
+in the order:
 
-For a single internally mixed particle population, enabled heterogeneous treatments use the precedence:
+```text
+1 = Koop homogeneous freezing
+2 = INAS / discrete active-site spectrum
+3 = DeMott
+4 = Daily/DCMEX
+```
+
+For one mixed aerosol population, heterogeneous schemes use the precedence:
 
 ```text
 INAS > DeMott > Daily
 ```
 
-so the same population is not independently nucleated by multiple empirical heterogeneous schemes.
+so a population is not independently counted by several empirical heterogeneous schemes.
 
-INAS, DeMott and Daily are presently restricted to particles that are already activated. Koop is not subject to this activation gate.
+Koop homogeneous freezing is treated separately.
 
-### Discrete INAS representation
+---
 
-Rather than evaluating an `ns(T)` probability repeatedly each timestep, fresh aerosol populations are mapped to a small number of cumulative intrinsic freezing-threshold moments, `Nin`.
+## Discrete INAS / IASD treatment
 
-A typical eight-threshold configuration is:
+BMM can represent a continuous temperature-dependent ice-active-site spectrum with a set of prognostic cumulative threshold classes.
+
+The number of classes is controlled by:
+
+```fortran
+n_inp_classes
+```
+
+and their temperatures by:
+
+```fortran
+inp_temp
+```
+
+For example:
 
 ```fortran
 n_inp_classes = 8
-inp_temp = -5.15, -8.70, -12.25, -15.80, &
-           -19.35, -22.90, -26.45, -30.00
+inp_temp(1:8) = -5.0, -8.0, -11.0, -14.0, -17.0, -20.0, -23.0, -26.0
 ```
 
-The thresholds are common to all components. The **number assigned to each threshold** depends on the selected component INAS parameterisation and its surface area.
+There is no requirement that the model use only the historical 8- or 16-class grids. The number of classes is configurable.
 
-Supported component categories include:
+The threshold temperatures are common, but the fraction of aerosol assigned to each cumulative class depends on:
+
+- aerosol component;
+- component surface area;
+- the configured `inp_category`;
+- the corresponding `n_s(T)` or IASD formulation.
+
+Supported categories in the current source include:
 
 ```text
 none
@@ -189,154 +270,737 @@ demott
 daily25
 ```
 
-The INAS categories currently correspond to:
+The active-site spectrum is created for fresh aerosol and then transported prognostically.
 
-- `niemand12`: natural desert dust surface-site-density parameterisation;
-- `kaolinite_murray11`: kaolinite immersion-freezing treatment;
-- `kfeldspar_atkinson13`: K-feldspar treatment.
+It is **not recalculated from the current mixed composition after every collision**.
 
-The `Nin` spectrum is prognostic after creation. It is transported through phase changes and numerical remapping rather than recalculated from the current composition after every collision.
+### INAS inheritance through collisions
 
-### INAS inheritance during collisions
-
-For a cumulative INAS class with active fractions \(F_1\) and \(F_2\) in the two parent populations, a collision product is active by that threshold if either parent carried such an active site:
+For a cumulative threshold with active fractions `F1` and `F2` in two colliding parent populations, the collision product uses:
 
 \[
-F_{\mathrm{new}} = 1-(1-F_1)(1-F_2).
+F_{\rm new}=1-(1-F_1)(1-F_2).
 \]
 
-This is represented by the special `MOMENT_INHERIT` moment type in the SCE code.
+Thus a collision product inherits an active site if either parent carried one.
 
-### DeMott provenance
+This is handled through a specialised inherited-moment type rather than simple mass averaging.
 
-An extensive `n_demott` moment tracks the number of currently frozen primary DeMott monomers through aggregation. This avoids attempting to reconstruct DeMott provenance solely from the present mixed aerosol composition.
+---
 
-DeMott eligibility still uses the current aerosol population and requires:
+## DeMott treatment and the >0.5 µm aerosol moment
 
-- a DeMott-eligible composition;
-- no enabled higher-priority INAS treatment for that population;
-- dry particle diameter greater than 0.5 µm;
-- activation as a liquid particle.
+The DeMott parameterisation depends on the concentration of eligible aerosol with dry diameter greater than 0.5 µm.
 
-### Ice habit and growth
+BMM carries this quantity explicitly as a **prognostic extensive particle moment**.
 
-Ice particles carry additional prognostic moments for shape and aggregation state, including quantities used to reconstruct:
+For every hydrometeor population, the model tracks the number of DeMott-eligible dry aerosol cores with:
 
-- aspect ratio (`phi`);
-- monomer number (`nmon`);
-- effective ice volume/density;
+\[
+D_{\rm dry}>0.5~\mu{\rm m}.
+\]
+
+This is preferable to reconstructing the number from the current hydrometeor-bin centre because the aerosol cores can subsequently experience:
+
+- activation;
+- condensation;
+- coalescence;
+- freezing;
+- remapping;
+- evaporation;
+- sublimation;
+- entrainment.
+
+The >0.5 µm core count follows those processes.
+
+BMM also carries a separate extensive `n_demott` provenance moment for currently frozen DeMott-origin primary monomers.
+
+This allows the cumulative DeMott target to account for ice already nucleated without losing provenance after aggregation.
+
+---
+
+# Ice growth and habit
+
+Ice particles carry additional state describing habit and aggregation.
+
+The model contains prognostic moments used to reconstruct quantities such as:
+
+- aspect ratio;
+- monomer number;
+- effective ice volume;
+- effective density;
 - rime mass;
-- unrimed/depositional mass information.
+- depositional/unrimed mass.
 
-Depositional growth uses capacitance, ventilation and kinetic/thermal corrections. The code contains Chen-Lamb-based habit/growth machinery and updates terminal velocities as particle mass and shape evolve.
+Vapour growth includes:
 
-## Collisions and secondary ice
+- capacitance;
+- thermal and vapour-transfer corrections;
+- ventilation;
+- evolving particle shape;
+- updated fall speed.
+
+The ice-growth machinery includes Chen-Lamb-based habit development.
+
+Complete ice sublimation can return the associated nonvolatile aerosol and INP residual to the warm/aerosol population.
+
+---
+
+# Collisions and secondary ice
 
 `sce_flag` controls stochastic collection:
 
-- `0`: no SCE collection;
-- `1`: SCE collection;
-- `2`: SCE collection plus configured secondary-ice processes.
+```text
+0 = no SCE collection
+1 = SCE collection
+2 = SCE collection with configured secondary-ice processing
+```
 
-The SCE operates on an ordered sectional grid and carries aerosol composition and microphysical moments into collision products.
+The collection calculation transports particle number, composition and prognostic moments into the collision product.
 
 Secondary-ice options include:
 
-- `hm_flag`: Hallett-Mossop rime splintering;
-- `break_flag=1`: Vardiman breakup treatment;
-- `break_flag=2`: Phillips-style collisional breakup;
-- `mode1_flag`: mode-1 fragmentation/freezing treatment;
-- `mode2_flag`: mode-2 secondary-ice treatment.
+```fortran
+hm_flag
+break_flag
+mode1_flag
+mode2_flag
+```
 
-## Bin representations
+with:
 
-`bin_scheme_flag` selects the numerical treatment of particle mass during diffusional growth:
+```text
+hm_flag       Hallett-Mossop rime splintering
+break_flag=1 Vardiman breakup
+break_flag=2 Phillips-style collisional breakup
+mode1_flag    mode-1 secondary-ice/freezing treatment
+mode2_flag    mode-2 secondary-ice treatment
+```
+
+Because BMM retains aerosol and ice-property moments through the collision calculation, secondary products can preserve considerably more particle history than is possible in a bulk scheme.
+
+---
+
+# Bin representations
+
+BMM currently supports three principal warm-particle bin treatments through:
+
+```fortran
+bin_scheme_flag
+```
 
 | Value | Scheme | Description |
 |---:|---|---|
-| `0` | Fully moving | Representative particle masses move continuously with condensational/depositional growth |
-| `1` | Moving centre | Uses a fixed sectional grid with moving-centre-style redistribution |
-| `2` | Chen-Lamb | Mass-conserving remapping to the fixed sectional grid |
+| `0` | Fully moving | Representative particle water masses move continuously |
+| `1` | Moving centre | Fixed sectional water grid with moving-centre redistribution |
+| `2` | Chen-Lamb | Conservative remapping onto a fixed sectional grid |
 
-When SCE is enabled, a common ordered sectional grid is required before collection. The model therefore projects a fully moving state onto the SCE grid before evaluating collisions.
+The alternatives allow numerical sensitivity to sectional representation to be studied directly.
 
-The standalone SCE grid uses `kfac` to set its cloud-range mass resolution: successive bin masses differ by \(2^{1/kfac}\), so `kfac` is the number of bins per mass doubling.
+---
 
-## Parcel, plume and chamber configurations
+## Fully moving scheme
 
-### Atmospheric parcel and updraft forcing
+With:
 
-`updraft_type` currently supports:
-
-- `1`: prescribed `winit`;
-- `2`: `winit` until `t_thresh`, then zero;
-- `3`: `winit` until `t_thresh`, followed by cosine oscillation using `winit2` and `amplitude2`;
-- `4`: prognostic buoyant/entraining motion.
-
-### Bubble versus plume/jet
-
-`bubble_flag` determines the parcel geometry used by the entrainment/dynamics calculations:
-
-```text
-.true.  -> bubble
-.false. -> plume / jet
+```fortran
+bin_scheme_flag = 0
 ```
 
-`radinit` is interpreted as the corresponding initial bubble or plume/jet radius.
+particle populations retain moving water-mass coordinates during diffusional growth.
 
-### Adiabatic and entraining calculations
+This has the advantage that condensational growth does not itself require repeated projection to fixed water-mass bins.
 
-`adiabatic_prof=.true.` disables entrainment and uses an adiabatic parcel-style environment. When false, the model can use lateral or vertical entrainment and supports homogeneous/inhomogeneous mixing options.
+When additional receiving categories are needed for SCE or population splitting, the model allocates extra full-moving categories.
 
-`use_prof_for_tprh=.true.` currently initialises **temperature and pressure** from the sounding. Sounding RH is still read and retained, but the initial parcel RH is deliberately set by `rhinit`.
+The full-moving treatment also has explicit handling for aerosol returned by complete hydrometeor evaporation/sublimation.
 
-### Chamber forcing
+---
 
-With `chamber_override=.true.`, the model uses prescribed chamber time series for:
+## Hybrid fixed grid for moving-centre and Chen-Lamb
+
+For `bin_scheme_flag=1` and `2`, the default:
+
+```fortran
+fixed_grid_mode = 1
+```
+
+constructs a hybrid grid.
+
+The first `n_bins` bins are aerosol-adapted:
+
+1. the dry aerosol PSD between `dmina` and `dmaxa` is divided into equal-number intervals;
+2. representative aerosol mass uses the correct lognormal third moment;
+3. dry boundaries are mapped to equilibrium water-mass boundaries at the initial thermodynamic state.
+
+The model then appends `n_binsc` geometric cloud bins extending to `dmaxc`.
+
+For example:
+
+```text
+n_bins  = 60
+n_binsc = 80
+```
+
+gives:
+
+```text
+60 aerosol-adapted bins + 80 cloud/collision bins
+```
+
+per external mode.
+
+The cloud-bin ratio is determined from `n_binsc` and `dmaxc`, so the final boundary reaches the requested maximum cloud-drop size.
+
+The historical fixed-grid construction remains available with:
+
+```fortran
+fixed_grid_mode = 0
+```
+
+for reproducibility.
+
+---
+
+# Aerosol release during evaporation and sublimation
+
+BMM can return nonvolatile aerosol when a liquid or ice hydrometeor disappears completely.
+
+This is controlled by:
+
+```fortran
+release_aerosol
+```
+
+and is used in inhomogeneous entrainment and chamber-processing pathways.
+
+The returned aerosol carries:
+
+- particle number;
+- nonvolatile component masses;
+- relevant INP moments;
+- DeMott >0.5 µm aerosol-core provenance.
+
+This is important in repeated activation/evaporation cycles because evaporation does not imply destruction of the aerosol particle.
+
+---
+
+## Full-moving residual insertion
+
+For `bin_scheme_flag=0`:
+
+```fortran
+full_moving_release_mode
+```
+
+selects how released aerosol is returned.
+
+### Mode 0: same numerical population
+
+```text
+full_moving_release_mode = 0
+```
+
+returns the residual to the same numerical population from which the hydrometeor evaporated or sublimated.
+
+This is the default and is useful when a simple number-conserving response is desired.
+
+### Mode 1: water-coordinate splitting
+
+```text
+full_moving_release_mode = 1
+```
+
+places the released residual according to its water-mass coordinate.
+
+If the source lies between occupied moving pivots, number and extensive moments are partitioned between the neighbouring populations.
+
+If a new outside-range population is required, for example a dry residual below all currently wet pivots, BMM keeps that population distinct where possible.
+
+Multiple residual sources at the same water coordinate can share one pending receiving population.
+
+If all categories are occupied, a nearby existing pair can be conservatively compacted to free a category rather than immediately averaging a newly dry population into a wet endpoint.
+
+The aim is to retain the physically important distinction between:
+
+```text
+wet survivor
+```
+
+and:
+
+```text
+dry aerosol residual
+```
+
+while conserving the carried extensive quantities.
+
+---
+
+# Entrainment and cloud dynamics
+
+BMM can be run as an adiabatic parcel or with entrainment.
+
+`updraft_type` supports several velocity histories, including:
+
+```text
+1 = prescribed constant w
+2 = prescribed w until t_thresh, then zero
+3 = prescribed/oscillatory history
+4 = prognostic/model-specific buoyant motion
+```
+
+`bubble_flag` selects the geometry used by the entraining dynamics:
+
+```text
+.true.  = bubble
+.false. = plume / jet
+```
+
+Entrainment controls include:
+
+```fortran
+adiabatic_prof
+entrain_period
+vert_ent
+ent_rate
+thresh_to_start_hom_mix
+entrain_aerosol
+```
+
+The model can represent both homogeneous and inhomogeneous mixing.
+
+In inhomogeneous mixing, complete evaporation/sublimation can explicitly return aerosol residuals rather than deleting the particles.
+
+Environmental aerosol can also be entrained.
+
+For the fully moving scheme, incoming aerosol is inserted according to its hydrated water state rather than assuming the same source-array index remains the correct receiving population.
+
+---
+
+# Cloud-chamber model
+
+BMM includes a zero-dimensional chamber mode for laboratory expansion-cloud experiments.
+
+The chamber can be driven by measured/prescribed time series of:
 
 - pressure;
-- temperature;
-- total water.
+- gas temperature;
+- total water;
+- wall temperature.
 
-`chamber_inhom` partitions prescribed chamber water loss between homogeneous vapour/water adjustment and an inhomogeneous particle-number-loss treatment.
+The chamber machinery is intentionally modular. It separates:
 
-This mode supports experiment-specific workflows under `python/aida_analysis/` and `python/MICC_analysis/`.
+1. imposed chamber thermodynamic forcing;
+2. unresolved wall/boundary-layer processing;
+3. homogeneous versus inhomogeneous particle evaporation;
+4. wall vapour exchange;
+5. fan-associated particle loss;
+6. non-gravitational wall deposition;
+7. gravitational fallout.
 
-## Sedimentation, precipitation and optics
+This separation is useful because laboratory chamber measurements constrain some of these processes better than others.
 
-### Fallout
+---
 
-With `fallout_flag=.true.`, BMM treats the parcel as a well-mixed volume of vertical depth `residence_depth`. A residence-time sink based on terminal fall velocity is applied to liquid and ice populations.
+## Chamber forcing
 
-The model also writes precipitation and cumulative fallout diagnostics.
+The chamber can independently force:
 
-### Optical properties
+```fortran
+chamber_force_pressure
+chamber_force_temperature
+chamber_force_qtot
+```
 
-With `use_adt_optics=.true.`, extinction and absorption are calculated using anomalous diffraction theory at `optics_wavelength` with refractive-index lookup routines in `opt/`.
+from arrays in the chamber specification.
 
-With ADT disabled, the original geometric-optics approximation uses `Qext = 2` and zero absorption.
+Pressure and temperature forcing do not require total-water forcing.
 
-## Building the model
+This is important when wall and particle loss processes are treated explicitly: imposing measured total water while also calculating water loss internally can otherwise double count the chamber water sink.
 
-### Requirements
+---
 
-The main executable requires:
+## Boundary-layer / recirculation operator
 
-- a Fortran compiler (the supplied Makefiles use `gfortran` by default);
-- NetCDF C and NetCDF-Fortran libraries/modules;
-- standard Unix build tools (`make`, `ar`, `ranlib`).
+The modern chamber interface uses:
 
-Python analysis scripts commonly require:
+```fortran
+chamber_bl_mix
+```
 
-- Python 3;
-- NumPy;
-- Matplotlib;
-- `netCDF4` for reading BMM output;
-- additional packages for some experiment-specific workflows.
+as a simple on/off switch.
 
-### NetCDF paths
+When enabled, the fraction of chamber air processed over an interval follows:
 
-The top-level `Makefile` uses:
+\[
+f_{\rm mix}=1-\exp(-\Delta t/\tau_{\rm BL}),
+\]
+
+where:
+
+```fortran
+chamber_bl_tau
+```
+
+is the effective wall-BL/recirculation timescale.
+
+The nonlinear chamber operator is internally subcycled so that very short `tau` values do not produce one unrealistically large BL event per outer model timestep.
+
+This timescale is best interpreted as an **effective exchange/recirculation time**, not necessarily the residence time of an individual droplet next to a wall.
+
+---
+
+## Effective processed-air temperature
+
+Before latent phase change, the chamber BL operator constructs:
+
+\[
+T_{\rm sens}
+=
+T_{\rm gas}
++
+\alpha_T(T_{\rm wall}-T_{\rm gas})
++
+\Delta T_{\rm offset}.
+\]
+
+The corresponding controls are:
+
+```fortran
+chamber_bl_alpha_t
+chamber_bl_temp_offset
+```
+
+Useful limits are:
+
+```text
+alpha_T = 0, offset = 0  -> processed air follows bulk gas temperature
+alpha_T = 1, offset = 0  -> processed air follows measured wall temperature
+```
+
+A small offset can be used to represent unresolved thermodynamic heterogeneity.
+
+---
+
+## Homogeneous and inhomogeneous chamber evaporation
+
+The wall/BL thermodynamic calculation first determines the amount of liquid water that must evaporate.
+
+Only **after that** does:
+
+```fortran
+chamber_bl_evap_mode
+```
+
+determine how the same bulk target appears in the PSD.
+
+### Mode 1: homogeneous
+
+```text
+chamber_bl_evap_mode = 1
+```
+
+retains particle number and decreases liquid mass/size.
+
+### Mode 2: extreme inhomogeneous
+
+```text
+chamber_bl_evap_mode = 2
+```
+
+completely evaporates selected wet particles to aerosol residuals while surviving particles retain their size.
+
+Every warm population containing liquid can participate; activation status does not gate the chamber evaporation operator.
+
+The homogeneous and inhomogeneous options are required to produce the same bulk liquid-water loss for a given thermodynamic event. They differ only in the resulting particle-size distribution.
+
+---
+
+## Common evaporation size exponent
+
+Both chamber evaporation modes use:
+
+```fortran
+chamber_bl_evap_size_exp = p
+```
+
+For homogeneous evaporation:
+
+```text
+p = 0  equal fractional liquid-mass shrinkage
+p = 2  common finite D^2-like decrement
+```
+
+For inhomogeneous evaporation, selection is weighted approximately as:
+
+\[
+w_i\propto m_{w,i}^{-p/3}.
+\]
+
+Thus:
+
+```text
+p = 0  uniform number-fraction removal
+p = 2  inverse-D^2 lifetime weighting
+```
+
+and larger values increasingly favour complete evaporation of smaller wet particles.
+
+This provides a compact way to represent unresolved mixing structure while leaving the bulk liquid-water target unchanged.
+
+---
+
+## Wall-water closures
+
+The wall-vapour treatment is selected with:
+
+```fortran
+chamber_bl_wall_water_mode
+```
+
+### Mode 0: legacy saturation-cap closure
+
+```text
+chamber_bl_wall_water_mode = 0
+```
+
+is the historical chamber closure.
+
+It uses the effective processed-air temperature and an instantaneous saturation adjustment. If the processed air becomes supersaturated, vapour is removed according to the legacy saturation-cap treatment; the resulting drying can drive cloud-particle evaporation on remixing.
+
+This mode does **not** use a prognostic finite wall-water reservoir.
+
+It is retained both for reproducibility and because it remains scientifically useful in comparisons with chamber observations.
+
+### Mode 1: finite reservoir with fractional relaxation
+
+```text
+chamber_bl_wall_water_mode = 1
+```
+
+introduces prognostic liquid/frost reservoirs on the wall.
+
+The exchange toward wall equilibrium is controlled by a fractional relaxation and is coupled to the chamber BL mixing fraction.
+
+Water can be returned from the wall only if it is present in the stored reservoir.
+
+### Mode 2: finite reservoir with physical mass-transfer velocity
+
+```text
+chamber_bl_wall_water_mode = 2
+```
+
+uses the same finite reservoir but computes an explicit vapour flux from the wall-air vapour-pressure disequilibrium:
+
+\[
+J_v
+=
+k_m
+\frac{e_{\rm eq}(T_{\rm wall})-e_{\rm air}}
+{R_vT_{\rm gas}}.
+\]
+
+The transfer velocity is:
+
+```fortran
+chamber_wall_vapour_transfer_velocity
+```
+
+and the flux is integrated over the chamber surface area.
+
+Unlike mode 1, the bulk wall-water transfer strength in mode 2 is not set by `chamber_bl_tau`.
+
+The particle evaporation and wall-vapour calculation are coupled so vapour released by cloud evaporation can contribute to the wall deposition flux during the same BL substep.
+
+---
+
+# AIDAd/iSKYLAB interpretation of the chamber treatment
+
+Comparisons with AIDAd/iSKYLAB chamber experiments currently indicate an important result:
+
+> **The AIDAd experiments appear to be reproduced better by the legacy wall-water closure (`chamber_bl_wall_water_mode=0`) than by the newer finite wall-water-reservoir treatments.**
+
+This should not be interpreted simply as evidence that the chamber has no wall-water reservoir. The more useful interpretation is that the laboratory cloud is revealing unresolved **spatial structure and mixing** that a zero-dimensional chamber model cannot represent explicitly.
+
+In the AIDAd cases explored so far, successful simulations commonly require:
+
+- relatively rapid effective chamber mixing/recirculation;
+- a small effective thermal perturbation associated with wall-influenced air;
+- inhomogeneous evaporation behaviour that changes particle number/PSD structure;
+- important loss of water and/or particles to chamber surfaces.
+
+The sign of the fitted effective temperature perturbation is also physically suggestive:
+
+- in warm experiments, where the walls can be colder than the chamber gas, the successful perturbation tends to be negative;
+- in colder experiments, where the walls can be warmer than the gas, the successful perturbation can be positive.
+
+The fitted perturbation does not necessarily equal the full measured wall-gas temperature difference. It is better viewed as the temperature signature of **partially mixed wall-conditioned air** in a strongly stirred chamber.
+
+The resulting physical picture is therefore:
+
+```text
+bulk chamber air
+      |
+      v
+wall-influenced thermodynamic heterogeneity
+      |
+      v
+rapid fan-driven recirculation / mixing
+      |
+      +----> homogeneous or inhomogeneous cloud evaporation
+      |
+      +----> water/particle loss to chamber surfaces
+```
+
+The chamber comparisons therefore tell us more than simply how much liquid water is lost.
+
+They provide information about:
+
+1. **cloud structure**  
+   The difference between homogeneous and inhomogeneous evaporation constrains whether the observed cloud is behaving like one uniformly mixed population or a mixture of differently processed air.
+
+2. **mixing timescale**  
+   The effective `chamber_bl_tau` constrains how rapidly wall-conditioned air is redistributed through the chamber.
+
+3. **surface losses**  
+   The inability of a closed-water calculation to reproduce observed LWC shows that losses to the chamber surfaces are important.
+
+4. **particle-number evolution**  
+   Fan, wall and fallout losses are separate from reversible droplet evaporation and aerosol release, allowing observed number loss to be distinguished from simple phase cycling.
+
+The finite-reservoir modes remain valuable because they provide a more explicit water budget and are useful for mechanistic sensitivity tests. However, they should not automatically be assumed to be superior simply because they contain more explicit wall physics.
+
+For AIDAd/iSKYLAB, the present evidence suggests that the legacy closure is acting as an effective parameterisation of unresolved wall-conditioned heterogeneity and surface exchange.
+
+This is an empirical conclusion from current chamber comparisons and should be reassessed as additional experiments and diagnostics are added.
+
+---
+
+# Particle loss to surfaces and fallout
+
+The chamber implementation includes three distinct particle-loss pathways.
+
+Keeping these separate is important because they represent different mechanisms and have different size dependence.
+
+---
+
+## Fan-associated particle loss
+
+The optional fan/circulation loss uses a saturating size-dependent first-order rate:
+
+\[
+k_{\rm fan}(D)
+=
+\frac{k_{\max}}
+{1+(D_{50}/D)^n}.
+\]
+
+Controls include:
+
+```fortran
+chamber_fan_loss
+chamber_fan_loss_kmax
+chamber_fan_loss_d50_ref
+chamber_fan_loss_exp
+chamber_fan_rpm
+chamber_fan_rpm_ref
+```
+
+The characteristic diameter is adjusted with fan RPM.
+
+This term should be interpreted as an **effective fan/circulation-associated particle sink**. It can represent losses associated with fan blades and the circulation pattern without requiring every loss event to be literal blade impaction.
+
+The same survival fraction is applied to number and associated extensive moments.
+
+---
+
+## Non-gravitational wall deposition
+
+An independent chamber wall-loss calculation represents non-gravitational deposition to chamber surfaces.
+
+Controls include:
+
+```fortran
+chamber_wall_loss
+chamber_wall_ustar
+chamber_diameter
+chamber_height
+```
+
+The current implementation uses a smooth-wall deposition formulation based on the Lai-Nazaroff treatment.
+
+This is independent of wall vapour transfer.
+
+---
+
+## Fallout / gravitational sedimentation
+
+With:
+
+```fortran
+fallout_flag = .true.
+```
+
+BMM applies a residence-time sink based on particle terminal velocity.
+
+For a chamber, the chamber geometry provides the relevant well-mixed vertical scale.
+
+For atmospheric parcel calculations, `residence_depth` supplies the characteristic depth.
+
+The model writes cumulative mass/number fallout and precipitation-flux diagnostics.
+
+---
+
+# Optical properties
+
+BMM can calculate extinction/absorption using:
+
+```fortran
+use_adt_optics = .true.
+```
+
+for anomalous diffraction theory (ADT).
+
+The optical wavelength is set with:
+
+```fortran
+optics_wavelength
+```
+
+Refractive-index support is in:
+
+```text
+opt/
+```
+
+With ADT disabled, the simpler geometric approximation uses an extinction efficiency close to:
+
+```text
+Qext = 2
+```
+
+with zero absorption in the basic treatment.
+
+---
+
+# Building BMM
+
+## Requirements
+
+The main model requires:
+
+- a Fortran compiler;
+- NetCDF C;
+- NetCDF-Fortran;
+- `make`;
+- standard Unix build tools.
+
+The supplied Makefiles use `gfortran` by default.
+
+## NetCDF paths
+
+The top-level Makefile uses:
 
 ```make
 NETCDF_FOR
@@ -344,164 +1008,241 @@ NETCDF_C
 NETCDF_LIB
 ```
 
-Set the paths for your installation, for example via environment variables or directly in the Makefile. `NETCDF_FOR` must provide the Fortran module/include files; `NETCDF_C` and `NETCDF_FOR` provide the library search paths.
-
-For a standard NetCDF-Fortran installation:
+Set these for your system, for example:
 
 ```bash
-export NETCDF_FOR=/path/to/netcdf-fortran-prefix
-export NETCDF_C=/path/to/netcdf-c-prefix
+export NETCDF_FOR=/path/to/netcdf-fortran
+export NETCDF_C=/path/to/netcdf-c
 ```
 
-The supplied default linker flag is:
+The normal Fortran library link is:
 
 ```make
 NETCDF_LIB=-lnetcdff
 ```
 
-If your installation requires additional NetCDF C linkage, adjust the linker flags for your system.
+Adjust the local linker flags if your installation also requires explicit NetCDF C linkage.
 
-### Compile
+## Compile
 
 ```bash
 make -j4
 ```
 
-The normal build produces:
+The main executable is:
 
 ```text
 main.exe
 ```
 
-A development build with bounds checking and floating-point traps is available with:
+For development/runtime checking:
 
 ```bash
 make debug
 ```
 
-Clean all generated Fortran build products with:
+Clean the build with:
 
 ```bash
 make cleanall
 ```
 
-### Doxygen
+or the relevant clean target in the current Makefile.
 
-Source-level Doxygen documentation can be generated with:
+---
 
-```bash
-doxygen fortran.dxg
-```
+# Running BMM
 
-and opened from the generated HTML output directory.
-
-## Running the model
-
-Run the main model with a namelist path:
+Run with a namelist path:
 
 ```bash
 ./main.exe namelist.in
 ```
 
-or, for an alternative configuration:
-
-```bash
-./main.exe configs/namelist_inp_example.in
-```
-
-The NetCDF output path is controlled by `outputfile` in `run_vars`.
-
-The standalone SCE model under `sce/` has its own driver and namelist.
-
-## Configuration files
-
-The root configuration is:
-
-```text
-namelist.in
-```
-
-General alternatives are in:
+Alternative examples are under:
 
 ```text
 configs/
 ```
 
-including examples for FHH adsorption, explicit INAS and Daily/DCMEX ice nucleation.
+for example:
 
-Experiment-specific configurations are deliberately kept with the workflows that use them, for example:
-
-```text
-python/aida_analysis/
-python/MICC_analysis/
-python/cloud_seeding/
+```bash
+./main.exe configs/namelist_inp_example.in
 ```
 
-Every active namelist variable is documented immediately above its assignment with `!>` comments describing its purpose, units, options and relevant interactions.
+The NetCDF output filename is specified by:
 
-### Main namelist groups
+```fortran
+outputfile
+```
+
+in the namelist.
+
+The standalone SCE model under `sce/` has its own driver and configuration.
+
+---
+
+# Namelist structure
+
+The core atmospheric/parcel namelist contains groups such as:
+
+```text
+&run_vars
+&aerosol_setup
+&sounding_spec
+&aerosol_spec
+```
+
+Chamber configurations additionally use chamber-specific groups containing:
+
+- chamber process switches;
+- chamber geometry;
+- pressure/temperature/water forcing;
+- wall temperature;
+- wall-BL parameters;
+- surface-loss parameters.
+
+The main groups have the following roles.
 
 | Group | Purpose |
 |---|---|
-| `run_vars` | Integration, dynamics, phase/microphysics switches, entrainment, optics and fallout |
-| `aerosol_setup` | Aerosol/component/bin dimensions |
-| `sounding_spec` | Atmospheric environmental profile |
-| `aerosol_spec` | Aerosol PSD, composition, hygroscopicity, FHH and INP categories |
-| `chamber_spec` | Time-dependent chamber pressure, temperature and total water |
-| `cloud_setup` | Standalone/fixed SCE cloud-range grid |
-| `cloud_spec` | Initial standalone-SCE cloud/ice populations |
+| `run_vars` | runtime, timestep, dynamics, ice, bin scheme, SCE, entrainment, fallout and optics |
+| `aerosol_setup` | number of modes, bins, components and INP classes |
+| `sounding_spec` | environmental sounding/profile |
+| `aerosol_spec` | aerosol number, size, composition, hygroscopicity, FHH and INP category |
+| chamber options | chamber forcing, BL/wall model, geometry and surface-loss settings |
+| chamber specification | time-dependent chamber forcing arrays |
+| `cloud_setup` / `cloud_spec` | standalone/fixed SCE cloud-grid configuration |
 
-## NetCDF output
+The root `namelist.in` is a general model configuration.
 
-The precise set of variables depends on enabled physics. Key outputs include:
+Additional examples are in:
 
-### Parcel/environment
+```text
+configs/
+```
 
-- `time`: model time;
-- `z`: parcel height;
-- `p`: pressure;
-- `t`: temperature;
-- `rh`: liquid-water relative humidity;
-- `w`: vertical velocity;
-- `rad_par`: bubble/plume radius for entraining runs.
+Experiment-specific configurations are kept with the Python workflows that generate/use them.
 
-### Liquid
+---
 
-- `ql`: liquid-water mixing ratio;
-- `ndrop`: activated cloud-droplet number;
-- `deff`: effective droplet diameter;
-- `mwat`: water mass per liquid bin;
-- `nwat`: liquid particle number by bin;
-- `maer`: aerosol component masses carried by liquid particles.
+# NetCDF output
 
-### Ice
+The exact fields depend on enabled physics.
 
-When `ice_flag=1`:
+## Parcel/environment
 
-- `qi`: ice-water mixing ratio;
-- `nice`: ice number concentration;
-- `mice`: ice mass by bin;
-- `nicem`: ice number by bin;
-- `phi`: ice aspect-ratio information;
-- `nmon`: monomer number/aggregation state;
-- `rhoi`: effective ice density;
-- `maeri`: aerosol component masses carried by ice particles.
+Typical fields include:
 
-### Optical/fallout diagnostics
+```text
+time
+z
+p
+t
+rh
+w
+rad_par
+```
 
-- `beta_ext`: extinction coefficient;
-- `precip`: precipitation-flux diagnostic;
-- `qfall_liq`, `qfall_ice`: cumulative fallout mass;
-- `nfall_liq`, `nfall_ice`: cumulative fallout number;
-- `fallrate_liq`, `fallrate_ice`: timestep fallout-rate diagnostics.
+## Warm particles
 
-The grid edges are also written as `mbinedges` for reconstructing sectional distributions.
+Typical warm-phase diagnostics include:
 
-## Python analysis
+```text
+ql
+ndrop
+deff
+nwat
+mwat
+dwet
+maer
+```
 
-The `python/` directory contains both general examples and experiment-specific research workflows.
+The sectional fields allow the full wet aerosol/cloud distribution to be reconstructed.
 
-Useful starting points include:
+## Ice
+
+With ice enabled, output can include:
+
+```text
+qi
+nice
+nicem
+mice
+dmaxice
+phi
+nmon
+rhoi
+maeri
+```
+
+together with additional ice-state moments.
+
+## Grid information
+
+Fixed sectional edges are written as:
+
+```text
+mbinedges
+```
+
+where relevant.
+
+The output also identifies the bin scheme so analysis tools can apply the correct interpretation.
+
+## Fallout and surface-loss diagnostics
+
+Depending on enabled processes, BMM can write quantities such as:
+
+```text
+qfall_liq
+qfall_ice
+nfall_liq
+nfall_ice
+
+qfan_liq
+qfan_ice
+nfan_liq
+nfan_ice
+
+qwall_liq
+qwall_ice
+nwall_liq
+nwall_ice
+```
+
+## Chamber wall/BL diagnostics
+
+Current chamber diagnostics include quantities such as:
+
+```text
+qchamber_bl
+qchamber_bl_evap
+
+qchamber_wall_liq_evap
+qchamber_wall_liq_cond
+qchamber_wall_ice_subl
+qchamber_wall_ice_dep
+
+chamber_wall_liquid_water
+chamber_wall_ice_water
+
+chamber_wall_rh
+chamber_wall_vapour_flux
+```
+
+`qchamber_bl_evap` is a liquid-to-vapour phase-transfer diagnostic and should not automatically be interpreted as net chamber water loss.
+
+The wall-reservoir variables are physical chamber water masses.
+
+---
+
+# Python analysis
+
+The `python/` directory contains general plotting examples and experiment-specific workflows.
+
+Useful general examples include:
 
 ```text
 python/example_plot_bmm.py
@@ -511,134 +1252,125 @@ python/example_PSD_bmm.py
 python/example_PSD_bmm2.py
 ```
 
-These demonstrate reading the NetCDF output and plotting parcel state, liquid/ice mixing ratios, number concentrations and sectional particle distributions.
-
-Additional directories contain AIDA, MICC/REFLECT, DCMEX, marine-cloud-brightening, cloud-seeding and other analysis workflows. Some of these scripts expect experiment-specific data that are not distributed with the core model.
-
-## Showcase figures
-
-Model-output figures will be added under:
+Research workflows include directories/scripts for:
 
 ```text
-docs/figures/
+AIDA / AIDAd / iSKYLAB
+MICC / REFLECT
+DCMEX
+marine cloud brightening
+cloud seeding
+cirrus
 ```
 
-These showcase panels will be documented in [`docs/figures/README.md`](docs/figures/README.md).
+Some workflows require campaign data that are not distributed with BMM.
 
-A strong README gallery would eventually include, for example:
+The AIDAd/iSKYLAB analysis tools can generate experiment-specific chamber namelists, run BMM and compare:
 
-1. **Parcel evolution:** temperature, RH, liquid/ice water and vertical velocity;
-2. **Sectional evolution:** liquid and ice size distributions versus time/temperature;
-3. **Ice habit:** aspect ratio, effective density and monomer number as crystals grow;
-4. **Primary ice:** comparison of K-feldspar, desert dust, kaolinite, DeMott and Daily/DCMEX cases;
-5. **Secondary ice:** an example showing primary ice followed by Hallett-Mossop or breakup multiplication;
-6. **Optics:** extinction response to changes in droplet/ice populations.
-
-When figures are available, they can be embedded directly, for example:
-
-```markdown
-![Evolution of liquid and ice size distributions](docs/figures/size_distribution_evolution.png)
-```
-
-## Repository layout
-
-```text
-.
-├── bin_microphysics_module.f90   # Main BMM physics, numerics and NetCDF I/O
-├── main.f90                      # Main executable driver
-├── namelist.in                   # Standard configuration
-├── configs/                      # General alternative/example configurations
-├── sce/                          # Standalone SCE and collection/SIP implementation
-├── osnf/                         # Numerical support library
-├── opt/                          # Refractive indices and ADT optics
-├── python/                       # Plotting and experiment-specific analysis
-├── docs/figures/                 # Optional README/showcase figures
-└── Makefile
-```
-
-## Known limitations and development notes
-
-The following are intentional current-state notes rather than hidden behaviour:
-
-- `microphysics_flag` is a legacy/reserved input and currently does not bypass the BMM driver.
-- `sv_flag` and the semivolatile-organic arrays are retained in the interface but are not presently active in the BMM microphysics.
-- Daily/DCMEX primary-ice provenance is inferred approximately after mixed-mechanism aggregation; unlike DeMott, there is currently no dedicated `n_daily` provenance moment.
-- The explicit INAS representation discretises continuous active-site spectra into a configurable number of common temperature thresholds.
-- INAS component surface area for a fresh internally mixed population is represented using the model's component geometric-area closure rather than an explicitly resolved exposed mineral surface.
-- Heterogeneous immersion schemes are currently gated by cloud activation; adsorbed haze water alone does not activate them.
-- Several historical Python workflows use hard-coded paths or expect external campaign data and may need local configuration before use.
-
-## Selected references
-
-The model combines and tests ideas from a broad cloud-microphysics literature. Particularly relevant references for currently implemented options include:
-
-- Chen, J.-P. and Lamb, D. (1994), *The Theoretical Basis for the Parameterization of Ice Crystal Habits: Growth by Vapor Deposition*, Journal of the Atmospheric Sciences, 51, 1206–1222. https://doi.org/10.1175/1520-0469(1994)051%3C1206:TTBFTP%3E2.0.CO;2
-- Koop, T., Luo, B., Tsias, A. and Peter, T. (2000), *Water activity as the determinant for homogeneous ice nucleation in aqueous solutions*, Nature, 406, 611–614. https://doi.org/10.1038/35020537
-- DeMott, P. J. et al. (2010), *Predicting global atmospheric ice nuclei distributions and their impacts on climate*, PNAS, 107, 11217–11222. https://doi.org/10.1073/pnas.0910818107
-- Murray, B. J. et al. (2011), *Heterogeneous freezing of water droplets containing kaolinite particles*, Atmospheric Chemistry and Physics, 11, 4191–4207. https://doi.org/10.5194/acp-11-4191-2011
-- Niemand, M. et al. (2012), *A Particle-Surface-Area-Based Parameterization of Immersion Freezing on Desert Dust Particles*, Journal of the Atmospheric Sciences, 69, 3077–3092. https://doi.org/10.1175/JAS-D-11-0249.1
-- Atkinson, J. D. et al. (2013), *The importance of feldspar for ice nucleation by mineral dust in mixed-phase clouds*, Nature, 498, 355–358. https://doi.org/10.1038/nature12278
-- Finney, D. L. et al. (2025), *Microphysical fingerprints in anvil cloud albedo*, Atmospheric Chemistry and Physics, 25, 10907–10929. https://doi.org/10.5194/acp-25-10907-2025 — includes discussion of the DCMEX/Daily INP formulation used by the current model option.
-
-For secondary-ice and breakup options, see the source-code documentation adjacent to the relevant SCE/SIP routines; those implementations retain their literature-specific comments and parameterisation names.
+- LWC;
+- droplet number;
+- ice number;
+- effective diameter;
+- relative dispersion;
+- complete size distributions;
+- wall/fan/fallout diagnostics.
 
 ---
 
-## Contributing and development
+# Repository layout
 
-This is a research codebase. Changes to numerical conservation, aerosol-component bookkeeping, INP inheritance, ice moments or SCE product mapping should be tested with runtime checking before being accepted.
+```text
+.
+├── bin_microphysics_module.f90   main microphysics, chamber physics and NetCDF I/O
+├── main.f90                      main executable driver
+├── namelist.in                   general model configuration
+├── configs/                      alternative/example namelists
+├── sce/                          stochastic collection / SIP code
+├── osnf/                         numerical support routines
+├── opt/                          refractive indices and ADT optics
+├── python/                       plotting and research workflows
+├── batch_runs.sh                 historical/example batch launcher
+└── Makefile
+```
 
-A useful development build is:
+---
+
+# Development and numerical checking
+
+BMM contains several alternative numerical representations of the same physical processes. Conservation and cross-scheme comparison are therefore important development tests.
+
+Changes affecting any of the following should be checked particularly carefully:
+
+- particle number;
+- liquid/ice water mass;
+- aerosol component mass;
+- INP threshold moments;
+- DeMott provenance;
+- >0.5 µm aerosol-core number;
+- collision-product mapping;
+- complete aerosol release;
+- homogeneous versus inhomogeneous bulk-LWC consistency.
+
+Use:
 
 ```bash
 make debug
 ```
 
-For changes to namelist interfaces, update the comments in **all** active example/experiment configurations or preserve a backwards-compatible default in the reader.
+when developing changes that affect indexing, remapping or conservation.
 
+For production/sensitivity calculations, retain:
 
-## Fixed grid for moving-centre and Chen-Lamb
+- the exact BMM revision;
+- the namelist used;
+- any external chamber/sounding data;
+- the NetCDF output;
+- analysis configuration.
 
-`bin_scheme_flag=1` (moving-centre) and `bin_scheme_flag=2` (Chen-Lamb) use a
-fixed water-mass grid. The BMM namelist variable
+---
 
-```text
-fixed_grid_mode = 1
-```
+# Notes on interpretation
 
-selects the default hybrid construction:
+BMM is deliberately detailed enough that several model variables have a more specific meaning than similarly named bulk quantities.
 
-1. The first `n_bins` bins are generated from the aerosol PSD between `dmina`
-   and `dmaxa` with equal aerosol number in each dry-size interval. Their
-   representative dry aerosol masses use the exact third lognormal moment, as
-   in the full-moving BMM initialisation.
-2. Those aerosol quantile boundaries are mapped to equilibrium water-mass
-   boundaries at the initial BMM `T`, `P`, `RH` using the selected
-   `kappa_flag`.
-3. The next `n_binsc` bins begin at the upper water-mass edge corresponding to
-   `dmaxa` and are geometric in water mass. Their ratio is determined by
-   `n_binsc` and `dmaxc`, so the final edge is exactly the water mass of a
-   `dmaxc` drop. This is the default "Option A" grid.
-4. The appended cloud bins are initially empty unless `&cloud_spec` supplies
-   an initial cloud distribution.
+A few important examples are:
 
-For example, `n_bins=60` and `n_binsc=80` gives 60 aerosol-adapted bins plus
-80 geometric cloud/collision bins per external mode.
+- `ndrop` is the BMM activated-liquid diagnostic, not necessarily identical to number above an instrument diameter threshold;
+- `nwat` contains the complete warm population, including aerosol/haze as well as activated droplets;
+- `qchamber_bl_evap` is phase transfer from liquid to vapour, not necessarily permanent chamber water loss;
+- inhomogeneous evaporation can remove cloud droplets while returning aerosol residuals, so droplet loss is not the same thing as aerosol-number loss;
+- fan/wall/fallout terms are permanent particle sinks, whereas complete evaporation is generally a phase/state transition.
 
-Set
+These distinctions are especially important when comparing BMM with chamber instruments.
 
-```text
-fixed_grid_mode = 0
-```
+---
 
-to reproduce the historical fixed-grid construction. In legacy mode the old
-`kfac` spacing and initial projection are retained. `dminc` and `kfac` are
-legacy-grid controls; for `fixed_grid_mode=1`, `n_binsc` and `dmaxc` define the
-geometric cloud extension.
+# Selected references
 
-The new grid is used only for moving-centre and Chen-Lamb. Full-moving runs
-retain their existing SCE behaviour.
+BMM incorporates or tests treatments from a broad cloud-microphysics literature. Particularly relevant references include:
 
-## Chamber wall-water reservoir (2026-09-03)
+- Chen, J.-P. and Lamb, D. (1994), *The Theoretical Basis for the Parameterization of Ice Crystal Habits: Growth by Vapor Deposition*, Journal of the Atmospheric Sciences, 51, 1206–1222.
+- Koop, T., Luo, B., Tsias, A. and Peter, T. (2000), *Water activity as the determinant for homogeneous ice nucleation in aqueous solutions*, Nature, 406, 611–614.
+- DeMott, P. J. et al. (2010), *Predicting global atmospheric ice nuclei distributions and their impacts on climate*, PNAS, 107, 11217–11222.
+- Murray, B. J. et al. (2011), *Heterogeneous freezing of water droplets containing kaolinite particles*, Atmospheric Chemistry and Physics, 11, 4191–4207.
+- Niemand, M. et al. (2012), *A Particle-Surface-Area-Based Parameterization of Immersion Freezing on Desert Dust Particles*, Journal of the Atmospheric Sciences, 69, 3077–3092.
+- Atkinson, J. D. et al. (2013), *The importance of feldspar for ice nucleation by mineral dust in mixed-phase clouds*, Nature, 498, 355–358.
 
-The chamber BL now has an optional finite prognostic wall-water reservoir (`chamber_bl_wall_water_mode=1`).  The wall starts dry by default, can accumulate condensate/frost as the chamber approaches saturation, and can later evaporate/sublimate only water actually stored there.  Reservoirs are physical masses in kg.  See `CHAMBER_WALL_WATER_RESERVOIR.md` for controls, diagnostics and the iSKYLAB-driver interface.
+Further references for secondary-ice and breakup treatments are documented next to the corresponding source routines.
+
+---
+
+# Citation and use
+
+BMM is a research code. If it is used for scientific work, cite the relevant model/application papers and document the configuration used.
+
+For reproducibility, the generated or archived namelist should accompany any reported simulation because the model supports multiple choices for:
+
+- aerosol thermodynamics;
+- ice nucleation;
+- bin numerics;
+- collection/SIP;
+- entrainment;
+- chamber mixing;
+- wall-water exchange;
+- particle losses.

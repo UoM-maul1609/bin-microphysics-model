@@ -253,13 +253,14 @@
 
         integer(i4b) :: microphysics_flag=0, kappa_flag,updraft_type, vent_flag, &
                         sce_flag=0,ice_flag=0, bin_scheme_flag=1, entrain_period=0, &
-                        full_moving_release_mode=FULL_MOVING_RELEASE_SAME_INDEX
+                        full_moving_release_mode=FULL_MOVING_RELEASE_SAME_INDEX, &
+                        inas_wetting_mode=0_i4b
         logical :: use_prof_for_tprh, hm_flag, mode1_flag, mode2_flag, &
         	bubble_flag, release_aerosol, entrain_aerosol
         integer(i4b) :: break_flag
         logical, dimension(N_INUC_MECH) :: ice_nucleation_mech = &
             [.true.,.false.,.true.,.false.]
-        real(wp) :: dz,dt, runtime, t_thresh
+        real(wp) :: dz,dt, runtime, t_thresh, inas_xthresh=0.01_wp
         ! sounding spec
         real(wp) :: psurf, tsurf
         integer(i4b), parameter :: nlevels_r=1000
@@ -476,7 +477,7 @@
                     zinit,tpert,use_prof_for_tprh,winit,winit2,amplitude2, &
                     tinit,pinit,rhinit, radinit, bubble_flag, &
                     microphysics_flag, ice_flag, bin_scheme_flag, sce_flag, fixed_grid_mode, &
-                    ice_nucleation_mech, &
+                    ice_nucleation_mech, inas_wetting_mode, inas_xthresh, &
                     hm_flag, break_flag, mode1_flag, mode2_flag, &
                     use_adt_optics, optics_wavelength, vent_flag, &
                     kappa_flag, updraft_type,t_thresh, adiabatic_prof, &
@@ -507,6 +508,13 @@
         fixed_grid_mode=FIXED_GRID_HYBRID
         rewind(8)
         read(8,nml=run_vars)
+
+        if (inas_wetting_mode.ne.0_i4b .and. inas_wetting_mode.ne.1_i4b) then
+            error stop 'inas_wetting_mode must be 0 (activated) or 1 (X >= Xthresh)'
+        endif
+        if (inas_xthresh.lt.0._wp) then
+            error stop 'inas_xthresh must be non-negative'
+        endif
 
         ! Reset optional chamber controls on every namelist read so omission of
         ! &chamber_options is guaranteed to mean no chamber-specific forcing or
@@ -807,7 +815,7 @@
             ! ns = exp(-0.517 Tc + 8.934), valid here over -12 to -36 C.
             if (tc.gt.-12._wp) return
             teval=max(tc,-36._wp)
-            ns_site=exp(-0.517_wp*teval+8.934_wp)
+            ns_site=exp(-0.517_wp*teval+8.934_wp)*5._wp
 
         case(INP_ATD03)
             ! Arizona Test Dust (ATD03), AIDAd dust category.
@@ -982,6 +990,54 @@
         mcrit=particle_activation_water_mass(ibin,t_current)
         activated=mwat_current.gt.mcrit
     end function particle_is_activated
+
+
+    ! ============================================================================
+    ! particle_is_inas_eligible
+    ! ============================================================================
+    !>Return true if a warm particle satisfies the configured liquid-water
+    !>eligibility criterion for explicit IASD/INAS immersion freezing.
+    !>
+    !>inas_wetting_mode = 0 (default): require Koehler/FHH activation.  This
+    !>preserves the historical BMM behaviour.
+    !>
+    !>inas_wetting_mode = 1: require
+    !>
+    !>    X = Vwater/Vdry = (mwater/rho_water) / sum_j(maerosol,j/rho_j)
+    !>
+    !>to satisfy X >= inas_xthresh.  inas_xthresh is a dimensionless tuning
+    !>parameter (default 0.01), not a universal physical wetting threshold.
+    logical function particle_is_inas_eligible(ibin,mwat_current,t_current, &
+                                                mcomp,rhocomp) result(eligible)
+        implicit none
+        integer(i4b), intent(in) :: ibin
+        real(wp), intent(in) :: mwat_current,t_current
+        real(wp), dimension(:), intent(in) :: mcomp,rhocomp
+        integer(i4b) :: j
+        real(wp) :: vdry,xwater
+
+        eligible=.false.
+        if (mwat_current.le.tiny(1._wp)) return
+
+        select case(inas_wetting_mode)
+        case(0)
+            eligible=particle_is_activated(ibin,mwat_current,t_current)
+
+        case(1)
+            vdry=0._wp
+            do j=1,min(size(mcomp),size(rhocomp))
+                if (mcomp(j).le.0._wp .or. rhocomp(j).le.0._wp) cycle
+                vdry=vdry+mcomp(j)/rhocomp(j)
+            enddo
+            if (vdry.le.tiny(1._wp)) return
+
+            xwater=(mwat_current/rhow)/vdry
+            eligible=xwater.ge.inas_xthresh
+
+        case default
+            error stop 'Unknown inas_wetting_mode in particle_is_inas_eligible'
+        end select
+    end function particle_is_inas_eligible
 
 
 
@@ -4627,7 +4683,7 @@
                 aer05_total,aer05_demott,aer05_other,aer05_remaining, &
                 n_before,n_after_demott,other_freeze
     logical :: has_inas,has_demott,has_daily,full_moving
-    logical, dimension(nbinw) :: activated_mask
+    logical, dimension(nbinw) :: activated_mask,inas_eligible_mask
     integer(i4b) :: idemott,iaer05
 
     ! Non-collisional freezing is only relevant below the melting point.
@@ -4646,22 +4702,40 @@
     iaer05=idemott+1
     full_moving=(parcel1%bin_scheme_flag.eq.BIN_FULL_MOVING)
 
-    ! Evaluate the expensive Koehler/FHH activation test once per warm bin and
-    ! reuse it for all heterogeneous immersion-nucleation mechanisms.
+    ! Evaluate heterogeneous-immersion eligibility once per warm bin.
+    ! DeMott and Daily/DCMEX retain the historical Koehler/FHH activation
+    ! criterion.  Explicit IASD/INAS either uses that same criterion (mode 0)
+    ! or the relative liquid-water volume X=Vwater/Vdry (mode 1).
     activated_mask=.false.
+    inas_eligible_mask=.false.
     if (ice_nucleation_mech_in(INUC_INAS) .or. &
         ice_nucleation_mech_in(INUC_DEMOTT) .or. &
         ice_nucleation_mech_in(INUC_DAILY)) then
         do i=1,nbinw
             if (npart(i).le.qsmall2 .or. mwat(i).le.tiny(1._wp)) cycle
-            activated_mask(i)=particle_is_activated(i,mwat(i),t)
+
+            if (ice_nucleation_mech_in(INUC_DEMOTT) .or. &
+                ice_nucleation_mech_in(INUC_DAILY) .or. &
+                (ice_nucleation_mech_in(INUC_INAS) .and. inas_wetting_mode.eq.0_i4b)) then
+                activated_mask(i)=particle_is_activated(i,mwat(i),t)
+            endif
+
+            if (ice_nucleation_mech_in(INUC_INAS)) then
+                if (inas_wetting_mode.eq.0_i4b) then
+                    inas_eligible_mask(i)=activated_mask(i)
+                else
+                    inas_eligible_mask(i)=particle_is_inas_eligible( &
+                        i,mwat(i),t,mbin2(i,:),rhobin(i,:))
+                endif
+            endif
         enddo
     endif
 
     ! -------------------------------------------------------------------------
-    ! (1) Immersion freezing by the prognostic discrete INAS spectrum.
-    ! Only activated liquid particles (current water mass above the
-    ! Koehler/FHH critical water mass) are eligible.
+    ! (1) Immersion freezing by the prognostic discrete IASD/INAS spectrum.
+    ! Eligibility is controlled by inas_wetting_mode:
+    !   0 = require Koehler/FHH activation (historical/default);
+    !   1 = require X=Vwater/Vdry >= inas_xthresh.
     !
     ! The IN moments are cumulative and ordered from warm to cold threshold.
     ! When a threshold is crossed, the remaining cumulative value at that
@@ -4674,7 +4748,7 @@
         do i=1,nbinw
             if(npart(i).le.qsmall2) cycle
             if(mwat(i).le.tiny(1._wp)) cycle
-            if(.not.activated_mask(i)) cycle
+            if(.not.inas_eligible_mask(i)) cycle
 
             call get_inp_control(mbin2(i,:),has_inas,has_demott,has_daily)
             if(.not.has_inas) cycle

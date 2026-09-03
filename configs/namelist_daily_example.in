@@ -39,6 +39,13 @@
     !> Ice-nucleation switches: (1) Koop, (2) INAS thresholds, (3) DeMott, (4) Daily/DCMEX.
     !> For one mixed population, enabled heterogeneous precedence is INAS > DeMott > Daily.
 	ice_nucleation_mech = .true., .true., .false., .true.,
+	!> IASD/INAS liquid-water eligibility.
+	!> 0 = require Koehler/FHH activation (historical/default).
+	!> 1 = allow IASD/INAS when X=Vwater/Vdry >= inas_xthresh.
+	!> inas_xthresh is a dimensionless tuning parameter.
+	inas_wetting_mode = 1,
+	inas_xthresh = 0.01,
+
     !> Bin-remapping scheme: 0=full moving, 1=moving-centre, 2=Chen-Lamb mass-conserving remap.
 	bin_scheme_flag=2,
     !> Collision/SCE switch: 0=off, 1=SCE collection, 2=SCE plus secondary-ice processes.
