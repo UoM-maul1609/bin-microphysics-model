@@ -1,3 +1,8 @@
+! MICC BMM namelist template
+! Updated from the working iSKYLAB/AIDA chamber interface.
+! Experiment-specific P/T/qtot forcing is inserted by dataAnalysis_MICC.py.
+! MICC wall temperature is currently unavailable, hence chamber_bl_alpha_t=0 by default.
+
  &run_vars
     !> NetCDF output file written by the model.
 	outputfile = '/tmp/output1.nc',
@@ -31,7 +36,7 @@
     !> Ice microphysics switch: 0=liquid only; 1=enable ice bins/processes.
 	ice_flag=1,
     !> Bin-remapping scheme: 0=full moving, 1=moving-centre, 2=Chen-Lamb mass-conserving remap.
-	bin_scheme_flag=0,
+	bin_scheme_flag=2,
     !> Collision/SCE switch: 0=off, 1=SCE collection, 2=SCE plus secondary-ice processes.
 	sce_flag = 0,
     !> Ventilation treatment selector used in diffusional growth calculations.
@@ -69,6 +74,11 @@
  	ent_rate=1.e-3,
     !> Number of sounding levels supplied in sounding_spec.
  	n_levels_s = 151,
+    !> Enable residence-time hydrometeor fallout/sedimentation sink when .true.
+	fallout_flag = .true.,
+    !> Characteristic residence/fallout depth [m]. For MICC this is normally
+    !> set to the chamber height by the Python driver.
+	residence_depth = 10.0,
     !> Thermal accommodation coefficient for liquid diffusional growth.
  	alpha_therm=1.0,
     !> Water-vapour condensation accommodation coefficient for liquid growth.
@@ -97,30 +107,39 @@
     !> Leave false when qtot is uncertain or is used only as a diagnostic.
     chamber_force_qtot = .false.,
 
-    !> Boundary-layer interaction: 0=off, 1=homogeneous, 2=uniform extreme inhomogeneous.
-    !> 3=D2-law-weighted extreme inhomogeneous: smaller activated droplets have a
-    !> larger complete-evaporation fraction, proportional to m_w^(-2/3), capped at 1.
-    chamber_bl_mix = 0,
+    !> Chamber boundary-layer treatment:
+    !> 0=off; 1=on.  Evaporation morphology is selected separately below.
+    !> MICC currently has no measured wall temperature, so the default alpha_T=0
+    !> ignores wall-gas contrast and chamber_bl_temp_offset supplies any assumed
+    !> unresolved BL sensible-temperature offset.
+    chamber_bl_mix = 1,
     !> E-folding timescale for bulk-air recirculation through the wall BL [s].
-    chamber_bl_tau = 60.0,
-    !> BL temperature: 0=fixed offset from evolving gas T; 1=wall_temp_chamber(t).
-    chamber_bl_temp_mode = 0,
-    !> Used only for chamber_bl_temp_mode=0: T_BL - T_gas [K].
+    chamber_bl_tau = 80.0,
+    !> Effective sensible BL state before latent phase change:
+    !> T_sens=T_gas+chamber_bl_alpha_t*(T_wall-T_gas)+chamber_bl_temp_offset.
+    !> Keep 0.0 while MICC wall temperature is unavailable.
+    chamber_bl_alpha_t = 0.0,
+    !> Distribution of diagnosed liquid evaporation when BL processing is on:
+    !> 1=homogeneous common-D2 shrinkage.
+    !> 2=extreme-inhomogeneous complete evaporation.  Size weighting is controlled
+    !> separately by the BMM evaporation-size exponent (default/configured as 2).
+    chamber_bl_evap_mode = 2,
+    !> Optional unresolved sensible BL temperature offset [K].
     chamber_bl_temp_offset = 0.0,
     !> Wall-vapour closure: 0=legacy saturation cap; 1=finite prognostic reservoir.
     chamber_bl_wall_water_mode = 0,
     !> Fractional equilibration during one BL wall encounter [0..1].
     chamber_wall_water_efficiency = 1.0,
-    !> Initial physical wall-water reservoirs [kg].  Zero gives a dry/unfrosted wall.
+    !> Initial physical wall-water reservoirs [kg]. Zero gives a dry/unfrosted wall.
     chamber_wall_liquid_water_init = 0.0,
     chamber_wall_ice_water_init = 0.0,
 
     !> Drone-fan blade loss: 0=off, 1=saturating sigmoid in current particle diameter.
     chamber_fan_loss = 0,
     !> Asymptotic large-particle first-order fan loss rate [s-1].
-    chamber_fan_loss_kmax = 0.0,
+    chamber_fan_loss_kmax = 3.0e-3,
     !> Diameter giving half kmax at chamber_fan_rpm_ref [m].
-    chamber_fan_loss_d50_ref = 4.0e-6,
+    chamber_fan_loss_d50_ref = 6.0e-6,
     !> Sigmoid sharpness: k/kmax = 1/[1+(D50/D)^exp].
     chamber_fan_loss_exp = 6.0,
     !> Fan speed for this run and reference speed defining d50_ref [rpm].
@@ -129,13 +148,13 @@
 
     !> Non-gravitational deposition to smooth side walls and ceiling using
     !> Lai & Nazaroff (2000). The floor remains in the generic fallout scheme.
-    chamber_wall_loss = 0,
+    chamber_wall_loss = 1,
     !> Wall friction velocity controlling turbulent deposition [m s-1].
     chamber_wall_ustar = 0.02,
-    !> Cylindrical chamber geometry [m]. If specified in a chamber run,
-    !> chamber_height is also used as the fallout depth V/A_floor.
-    chamber_diameter = 0.0,
-    chamber_height = 0.0
+    !> MICC cylindrical chamber geometry [m]. chamber_height is also the floor
+    !> fallout depth V/A_floor in the chamber treatment.
+    chamber_diameter = 1.0,
+    chamber_height = 10.0
 /
 &aerosol_setup
     !> Number of externally mixed aerosol modes.
