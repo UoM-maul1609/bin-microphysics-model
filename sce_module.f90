@@ -3526,6 +3526,7 @@
     if(massi <= massd) then
         nfrag_drops=0._wp
         nfrag_ice=0._wp
+        frac_i=0._wp
         return
     endif
     
@@ -3534,6 +3535,7 @@
     if(diamd<=150.e-6_wp) then
         nfrag_drops=0._wp
         nfrag_ice=0._wp
+        frac_i=0._wp
         return
     endif
     
