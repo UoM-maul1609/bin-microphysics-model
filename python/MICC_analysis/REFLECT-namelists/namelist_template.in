@@ -1,7 +1,7 @@
 ! MICC BMM namelist template
 ! Updated from the working iSKYLAB/AIDA chamber interface.
 ! Experiment-specific P/T/qtot forcing is inserted by dataAnalysis_MICC.py.
-! MICC wall temperature is currently unavailable, hence chamber_bl_alpha_t=0 by default.
+! MICC wall temperature is prescribed as the initial chamber gas temperature for the full experiment; alpha_T=1 by default.
 
  &run_vars
     !> NetCDF output file written by the model.
@@ -36,9 +36,9 @@
     !> Ice microphysics switch: 0=liquid only; 1=enable ice bins/processes.
 	ice_flag=1,
     !> Bin-remapping scheme: 0=full moving, 1=moving-centre, 2=Chen-Lamb mass-conserving remap.
-	bin_scheme_flag=2,
+	bin_scheme_flag=0,
     !> Collision/SCE switch: 0=off, 1=SCE collection, 2=SCE plus secondary-ice processes.
-	sce_flag = 0,
+	sce_flag = 1,
     !> Ventilation treatment selector used in diffusional growth calculations.
 	vent_flag=1,
     !> Water-activity/growth formulation: 0=Raoult/Koehler using molecular properties; 1=kappa-Koehler.
@@ -109,21 +109,26 @@
 
     !> Chamber boundary-layer treatment:
     !> 0=off; 1=on.  Evaporation morphology is selected separately below.
-    !> MICC currently has no measured wall temperature, so the default alpha_T=0
-    !> ignores wall-gas contrast and chamber_bl_temp_offset supplies any assumed
-    !> unresolved BL sensible-temperature offset.
+    !> MICC currently has no measured wall-temperature time series. The Python
+    !> driver writes wall_temp_chamber as the experiment-start gas temperature
+    !> held constant for the full run.
     chamber_bl_mix = 1,
     !> E-folding timescale for bulk-air recirculation through the wall BL [s].
     chamber_bl_tau = 80.0,
     !> Effective sensible BL state before latent phase change:
     !> T_sens=T_gas+chamber_bl_alpha_t*(T_wall-T_gas)+chamber_bl_temp_offset.
-    !> Keep 0.0 while MICC wall temperature is unavailable.
-    chamber_bl_alpha_t = 0.0,
+    !> 1.0 gives the full prescribed wall-gas contrast.
+    chamber_bl_alpha_t = 1.0,
     !> Distribution of diagnosed liquid evaporation when BL processing is on:
     !> 1=homogeneous common-D2 shrinkage.
     !> 2=extreme-inhomogeneous complete evaporation.  Size weighting is controlled
     !> separately by the BMM evaporation-size exponent (default/configured as 2).
     chamber_bl_evap_mode = 2,
+    !> Common evaporation size exponent p.
+    !> For homogeneous evaporation, p controls the size/mass shrinkage law;
+    !> for extreme-inhomogeneous evaporation, p controls the size weighting
+    !> of complete-particle removal. p=2 is D2-based; p=0 is uniform.
+    chamber_bl_evap_size_exp = 2.0,
     !> Optional unresolved sensible BL temperature offset [K].
     chamber_bl_temp_offset = 0.0,
     !> Wall-vapour closure: 0=legacy saturation cap; 1=finite prognostic reservoir.
