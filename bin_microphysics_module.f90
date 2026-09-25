@@ -220,7 +220,7 @@
 		real(wp) :: residence_depth=100._wp        
         real(wp) :: zinit,tpert,winit,winit2, amplitude2, tau2, &
                     tinit,pinit,rhinit,radinit,z_ctop=-1._wp, alpha_therm, alpha_cond, &
-                    alpha_therm_ice, alpha_dep, thresh_to_start_hom_mix
+                    alpha_therm_ice, alpha_dep, thresh_to_start_hom_mix=0._wp
 
         ! Chamber forcing/options.  The measured time series remain in
         ! &chamber_spec; these switches say how they are used.
@@ -1753,6 +1753,19 @@
 
 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    if(ice_flag .ne. 1) then
+        ! Warm-only runs still pass the ice state to routines such as
+        ! mass_balance.  Passing an unallocated array there is not valid
+        ! Fortran (it stops runtime-checked builds), so give the ice number
+        ! and state vectors a valid, zero-filled shape.
+        parcel1%neqice=parcel1%n_bin_modew+4
+        allocate( parcel1%npartice(1:parcel1%n_bin_modew), STAT = AllocateStatus)
+        if (AllocateStatus /= 0) STOP "*** Not enough memory ***"
+        allocate( parcel1%yice(parcel1%neqice), STAT = AllocateStatus)
+        if (AllocateStatus /= 0) STOP "*** Not enough memory ***"
+        parcel1%npartice=0._wp
+        parcel1%yice=0._wp
+    endif
     if(ice_flag .eq. 1) then
         ! allocation:
         allocate( parcel1%dice(1:parcel1%n_bin_mode1), STAT = AllocateStatus)
@@ -4056,6 +4069,10 @@
           ! nucleation rate
           logj = -906.7_wp + 8502._wp * deltaaw - 26924._wp * deltaaw**2 + 29180._wp * &
                 deltaaw**3
+          ! Cap log10(J) so 10**logj cannot overflow to +Inf (which gives NaN
+          ! when multiplied by the zero water volume of an empty bin).  A rate
+          ! of 1e300 m^-3 s^-1 already freezes any drop within a timestep.
+          logj = min(logj, 300._wp)
 
           koopnucrate = (10._wp**logj) * 1.e6_wp;	! nucleation rate in m^-3 s^-1 
     end function koopnucrate
@@ -5301,6 +5318,7 @@
         real(wp), dimension(n_bin_modew,n_comps+1), intent(inout) :: mbin
         
         integer(i4b) :: i,j,thismode, thisbin,newplace
+        logical :: placed
         real(wp) :: mlower_mc,mupper_mc,tolmass_mc
         real(wp), dimension(n_bin_modew,n_moments) :: momtemp
         real(wp), dimension(n_bin_modew) :: nparttemp, totmass
@@ -5322,10 +5340,16 @@
                     totmass(i)=totmass(i)+npart(i)*masses(i)
                 else
                     ! if the current mass is not in the correct bin
-                    ! find the bin it should be in
+                    ! find the bin it should be in.  Bin 1 is closed at its
+                    ! lower edge (normally zero) so that particles whose
+                    ! water has completely evaporated (mass=0) are retained
+                    ! in bin 1 rather than silently dropped.
+                    placed=.false.
                     do j=1,n_binst
-                        if ((masses(i).gt.mbinedges(j,thismode)).and. &
+                        if (((masses(i).gt.mbinedges(j,thismode)).or. &
+                             ((j.eq.1).and.(masses(i).ge.mbinedges(1,thismode)))).and. &
                             (masses(i).le.mbinedges(j+1,thismode))) then
+                            placed=.true.
                         
                             newplace=(thismode-1)*n_binst+j
 !                             print *,newplace, j, i,thisbin,thismode,masses(i), mbinedges(j,thismode), &
@@ -5334,8 +5358,17 @@
                             momtemp(newplace,:)=momtemp(newplace,:)+moments(i,:)
                             nparttemp(newplace)=nparttemp(newplace)+npart(i)
                             totmass(newplace)=totmass(newplace)+masses(i)*npart(i)   
+                            exit
                         endif
                     enddo
+                    if (.not.placed) then
+                        print *,'Moving-centre mass outside the fixed grid'
+                        print *,'mode/bin/index = ',thismode,thisbin,i
+                        print *,'mass, grid lower/upper = ',masses(i), &
+                            mbinedges(1,thismode),mbinedges(n_binst+1,thismode)
+                        print *,'npart = ',npart(i)
+                        error stop 'moving-centre mass outside fixed grid'
+                    endif
                 endif                
             endif
         enddo
@@ -8582,7 +8615,7 @@
         rh0=parcel1%y(parcel1%irh)
         call inhomogeneous_liquid_reservoir(ql0)
         qi0=0._wp
-        if (parcel1%ice_flag.eq.1) qi0=sum(parcel1%npartice*parcel1%yice)
+        if (parcel1%ice_flag.eq.1) qi0=sum(parcel1%npartice*parcel1%yice(1:n))
 
         ! First diagnose pure air mixing/dilution with no instantaneous phase
         ! loss.  This mixed RH decides which condensate reservoirs are allowed
@@ -12108,7 +12141,7 @@
 			parcel1%n_comps+3))		
 		if(denom > tiny(1._wp)) then
 			rhoi_mean = &
-				(sum(parcel1%yice*parcel1%npartice) - &
+				(sum(parcel1%yice(1:parcel1%n_bin_modew)*parcel1%npartice) - &
 				 sum(parcel1%moments( &
 					 parcel1%n_bin_modew+1:parcel1%n_bin_mode, &
 					 parcel1%n_comps+4))) / denom

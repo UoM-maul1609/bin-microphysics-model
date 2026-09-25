@@ -126,9 +126,11 @@
     !> 1.0 gives full measured wall-gas contrast; 0.0 ignores that contrast.
     chamber_bl_alpha_t = 1.0,
     !> When BL processing is on, distribute diagnosed liquid evaporation as
-    !> 1=homogeneous common-D2 shrinkage, 2=uniform extreme inhomogeneous complete
-    !> evaporation, or 3=D2-weighted extreme inhomogeneous complete evaporation.
-    chamber_bl_evap_mode = 3,
+    !> 1=homogeneous shrinkage or 2=extreme inhomogeneous complete evaporation.
+    !> chamber_bl_evap_size_exp sets the size weighting (0=uniform, 2=D2-weighted);
+    !> mode 2 with exponent 2 reproduces the former mode 3.
+    chamber_bl_evap_mode = 2,
+    chamber_bl_evap_size_exp = 2.0,
     !> Optional unresolved sensible BL temperature offset [K]; added after
     !> the alpha_T-scaled measured wall-gas contrast.
     chamber_bl_temp_offset = 0.0,

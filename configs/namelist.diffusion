@@ -41,7 +41,7 @@
     !> Use an adiabatic environmental profile when .true.; false permits entrainment treatments.
  	adiabatic_prof=.true.,
     !> Entrain vertically when .true.; use lateral entrainment when .false.
-    vert_ent=.true.,
+    vert_ent=.false.,
 	!> Prescribed cloud-top height [m].
 	!> The parcel simulation stops when its height reaches or exceeds z_ctop.
 	!> Set <= 0 to disable the cloud-top stopping criterion.
@@ -76,9 +76,11 @@
     chamber_bl_mix = 0,
     !> E-folding timescale for bulk-air recirculation through the wall BL [s].
     chamber_bl_tau = 60.0,
-    !> BL temperature: 0=fixed offset from evolving gas T; 1=wall_temp_chamber(t).
-    chamber_bl_temp_mode = 0,
-    !> Used only for chamber_bl_temp_mode=0: T_BL - T_gas [K].
+    !> Effective sensible BL temperature:
+    !> T_sens=T_gas+chamber_bl_alpha_t*(T_wall-T_gas)+chamber_bl_temp_offset.
+    !> 0.0 reproduces the former chamber_bl_temp_mode=0 (offset from gas T).
+    chamber_bl_alpha_t = 0.0,
+    !> Additional BL temperature offset T_BL - T_gas [K].
     chamber_bl_temp_offset = 0.0,
     !> Wall-vapour closure: 0=legacy saturation cap; 1=finite wet/icy surface exchange.
     chamber_bl_wall_water_mode = 0,
