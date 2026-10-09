@@ -15,8 +15,10 @@ RAYLEIGH=5
 TAYLOR_CONE=6
 TOPAZ=7
 POWERCLOUD=8
+RAYLEIGH_HP=9
+RAYLEIGH_LP=10
 
-spray_method=POWERCLOUD
+spray_method=RAYLEIGH_LP
 
 # N_aer1=np.array([7246000,3132000,49800])*1e6
 # #N_aer1=np.array([7246000,3132000,0])*1e6
@@ -68,6 +70,15 @@ elif spray_method==POWERCLOUD:
 	N_aer1		=np.array([11.59948504,124.6248093,51.36088692])*1e6
 	logSig		=np.log(np.array([1.163293663,1.63031549,1.693508788]))
 	Dm			=np.array([15.76237815,24.49137812,139.9466964])*1e-9
+elif spray_method==RAYLEIGH_HP:
+	N_aer1		=np.array([3206.36962,160.1677446,1020.777125])*1e6
+	logSig		=np.log(np.array([1.17299728,1.10113963,1.424321342]))
+	Dm			=np.array([0.208970705,0.771359803,1.616214073])*1e-6
+elif spray_method==RAYLEIGH_LP:
+	N_aer1		=np.array([689.024198,161.2644032,603.8559885])*1e6
+	#N_aer1		=np.array([689.024198,0.0,0.0])*1e6
+	logSig		=np.log(np.array([1.158494687,1.068149843,1.43501519]))
+	Dm			=np.array([0.220037226,0.804730978,1.520745248])*1e-6
 
 N_aer1=N_aer1/np.sum(N_aer1)
 
