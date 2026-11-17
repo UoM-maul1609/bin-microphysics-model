@@ -68,6 +68,9 @@
         integer(i4b), parameter :: INP_DAILY25       = 5_i4b
         integer(i4b), parameter :: INP_SDSA01        = 6_i4b
         integer(i4b), parameter :: INP_ATD03         = 7_i4b
+        ! Generic settable ns(T) fit; coefficients in the optional namelist group
+        ! &settable_ns (ns_fit_*).
+        integer(i4b), parameter :: INP_SETTABLE      = 8_i4b
         						
         ! l_inhom describes the mixing MODE used by the warm ODE on the
         ! current timestep.  l_inhom_event is true only when a discrete
@@ -236,6 +239,7 @@
                     chamber_bl_inhom_size_exp=-1._wp, &
                     chamber_wall_liquid_fraction=0._wp, &
                     chamber_wall_ice_fraction=0._wp, &
+                    chamber_wall_liquid_tmin=273.15_wp, &
                     chamber_wall_water_efficiency=1._wp, &
                     chamber_wall_vapour_transfer_velocity=1.e-3_wp, &
                     chamber_wall_liquid_water_init=0._wp, &
@@ -261,6 +265,15 @@
         logical, dimension(N_INUC_MECH) :: ice_nucleation_mech = &
             [.true.,.false.,.true.,.false.]
         real(wp) :: dz,dt, runtime, t_thresh, inas_xthresh=0.01_wp
+        ! Generic settable ns(T) fit (category 'settable', 16 Nov 2026), set in the
+        ! optional namelist group &settable_ns.  Tc in deg C, ns in m-2 of geometric
+        ! surface:  ns = 0 for Tc > ns_fit_twarm;
+        !           ln ns = ns_fit_b*Tc + ns_fit_a for ns_fit_tc <= Tc <= ns_fit_twarm;
+        !           colder than ns_fit_tc, ns rises with slope ns_fit_cold [K-1]
+        !           (0 holds it constant), evaluated no colder than -38 C.
+        ! Defaults reproduce the Niemand et al. (2012) desert-dust fit.
+        real(wp) :: ns_fit_b=-0.517_wp, ns_fit_a=8.934_wp, ns_fit_tc=-36._wp, &
+                    ns_fit_cold=0._wp, ns_fit_twarm=-12._wp
         ! sounding spec
         real(wp) :: psurf, tsurf
         integer(i4b), parameter :: nlevels_r=1000
@@ -456,6 +469,9 @@
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         ! namelists                                                            !
         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        ! Optional group (settable ns fits); absent from older namelists, in which
+        ! case the defaults declared with the variables are used.
+        namelist /settable_ns/ ns_fit_b, ns_fit_a, ns_fit_tc, ns_fit_cold, ns_fit_twarm
         namelist /sounding_spec/ psurf, tsurf,  &
                     q_read, theta_read, rh_read, z_read
         namelist /chamber_spec/ time_chamber, press_chamber, temp_chamber, wall_temp_chamber, &
@@ -467,6 +483,7 @@
                     chamber_bl_evap_size_exp, chamber_bl_inhom_size_exp, &
                     chamber_bl_wall_water_mode, chamber_wall_liquid_fraction, &
                     chamber_wall_ice_fraction, chamber_wall_water_efficiency, &
+                    chamber_wall_liquid_tmin, &
                     chamber_wall_vapour_transfer_velocity, &
                     chamber_wall_liquid_water_init, chamber_wall_ice_water_init, &
                     chamber_fan_loss, chamber_fan_loss_kmax, chamber_fan_loss_d50_ref, &
@@ -508,6 +525,12 @@
         fixed_grid_mode=FIXED_GRID_HYBRID
         rewind(8)
         read(8,nml=run_vars)
+        ! Optional &settable_ns group: a missing group (end of file) keeps the
+        ! defaults; a malformed group is an error.
+        rewind(8)
+        read(8,nml=settable_ns,iostat=ios)
+        if (ios.gt.0) error stop 'Error reading optional namelist group settable_ns'
+        rewind(8)
 
         if (inas_wetting_mode.ne.0_i4b .and. inas_wetting_mode.ne.1_i4b) then
             error stop 'inas_wetting_mode must be 0 (activated) or 1 (X >= Xthresh)'
@@ -533,6 +556,7 @@
         chamber_bl_wall_water_mode=0_i4b
         chamber_wall_liquid_fraction=0._wp
         chamber_wall_ice_fraction=0._wp
+        chamber_wall_liquid_tmin=ttr
         chamber_wall_water_efficiency=1._wp
         chamber_wall_vapour_transfer_velocity=1.e-3_wp
         chamber_wall_liquid_water_init=0._wp
@@ -584,8 +608,8 @@
             chamber_bl_evap_size_exp=chamber_bl_inhom_size_exp
         if (chamber_bl_evap_size_exp.lt.0._wp) error stop &
             'chamber_bl_evap_size_exp must be >= 0'
-        if (chamber_bl_wall_water_mode.lt.0 .or. chamber_bl_wall_water_mode.gt.2) error stop &
-            'chamber_bl_wall_water_mode must be 0 (legacy), 1 (reservoir relaxation), or 2 (physical mass transfer)'
+        if (chamber_bl_wall_water_mode.lt.0 .or. chamber_bl_wall_water_mode.gt.3) error stop &
+            'chamber_bl_wall_water_mode must be 0 (legacy cap), 1 (reservoir), 2 (mass transfer) or 3 (2+cap)'
         if (chamber_wall_liquid_fraction.lt.0._wp .or. chamber_wall_liquid_fraction.gt.1._wp) &
             error stop 'chamber_wall_liquid_fraction must be between 0 and 1'
         if (chamber_wall_ice_fraction.lt.0._wp .or. chamber_wall_ice_fraction.gt.1._wp) &
@@ -709,6 +733,8 @@
                 inp_kind(k)=INP_SDSA01
             case('atd03','atd','arizona_test_dust','arizona-test-dust')
                 inp_kind(k)=INP_ATD03
+            case('settable')
+                inp_kind(k)=INP_SETTABLE
             case default
                 print *,'Unknown inp_category(',k,'): ',trim(inp_category(k))
                 error stop 'Unknown inp_category'
@@ -726,7 +752,8 @@
                          inp_kind.eq.INP_KAOLINITE_M11 .or. &
                          inp_kind.eq.INP_KFELDSPAR_A13 .or. &
                          inp_kind.eq.INP_SDSA01 .or. &
-                         inp_kind.eq.INP_ATD03)) then
+                         inp_kind.eq.INP_ATD03 .or. &
+                         inp_kind.eq.INP_SETTABLE)) then
                 print *,'Warning: INAS enabled but no component has an INAS category'
             endif
         endif
@@ -760,7 +787,8 @@
                            kind.eq.INP_KAOLINITE_M11 .or. &
                            kind.eq.INP_KFELDSPAR_A13 .or. &
                            kind.eq.INP_SDSA01 .or. &
-                           kind.eq.INP_ATD03
+                           kind.eq.INP_ATD03 .or. &
+                           kind.eq.INP_SETTABLE
     end function is_explicit_inas
 
 
@@ -815,17 +843,28 @@
             ! ns = exp(-0.517 Tc + 8.934), valid here over -12 to -36 C.
             if (tc.gt.-12._wp) return
             teval=max(tc,-36._wp)
-            ns_site=exp(-0.517_wp*teval+8.934_wp)*5._wp
+            ns_site=exp(-0.517_wp*teval+8.934_wp)*1._wp
 
         case(INP_ATD03)
             ! Arizona Test Dust (ATD03), AIDAd dust category.
             ! Niemand et al. (2012) ATD-specific geometric-area INAS fit, as
             ! reported by Hiranuma et al. (2015):
             ! ns = exp(-0.380 Tc + 13.918) m-2, -17.7 >= Tc >= -26.7 C.
-            ! Hold the cold-end value fixed rather than extrapolating.
+            ! iSKYLAB mixed-phase paper (14 Nov 2026): extrapolated beyond the
+            ! fit's cold end to -31 C, because the AIDAd expansions reach -30 C
+            ! and holding n_s constant stops all new freezing below -26.7 C.
             if (tc.gt.-17.7_wp) return
-            teval=max(tc,-26.7_wp)
+            teval=max(tc,-31._wp)
             ns_site=exp(-0.380_wp*teval+13.918_wp)
+
+        case(INP_SETTABLE)
+            ! Generic settable fit; coefficients from &settable_ns (see the
+            ! declarations of ns_fit_*).
+            if (tc.gt.ns_fit_twarm) return
+            teval=max(tc,ns_fit_tc)
+            ns_site=exp(ns_fit_b*teval+ns_fit_a)
+            if (tc.lt.ns_fit_tc) &
+                ns_site=ns_site*exp(-ns_fit_cold*(max(tc,-38._wp)-ns_fit_tc))
 
         case default
             ns_site=0._wp
@@ -9734,10 +9773,10 @@
 
         wall_before=parcel1%chamber_wall_liquid_water+parcel1%chamber_wall_ice_water
 
-        ! Treat newly stored wall water as the stable bulk phase at the measured
-        ! wall temperature.  This is a chamber-surface reservoir, not airborne
+        ! Treat newly stored wall water as liquid above chamber_wall_liquid_tmin
+        ! (default ttr, i.e. the stable bulk phase) and as ice below it.  This is a chamber-surface reservoir, not airborne
         ! hydrometeor microphysics, so no supercooled wall-liquid state is kept.
-        if (twall.ge.ttr) then
+        if (twall.ge.chamber_wall_liquid_tmin) then
             parcel1%chamber_wall_liquid_water=parcel1%chamber_wall_liquid_water+ &
                 parcel1%chamber_wall_ice_water
             parcel1%chamber_wall_ice_water=0._wp
@@ -9760,7 +9799,7 @@
         ! source and is capped by water actually stored on the active wall phase.
         if (dq_desired.le.0._wp) then
             dq_actual=max(dq_desired,-max(qv,0._wp))
-        elseif (twall.ge.ttr) then
+        elseif (twall.ge.chamber_wall_liquid_tmin) then
             available_q=parcel1%chamber_wall_liquid_water/mdry
             dq_actual=min(dq_desired,max(available_q,0._wp))
         else
@@ -9770,7 +9809,7 @@
 
         dqv_liq=0._wp
         dqv_ice=0._wp
-        if (twall.ge.ttr) then
+        if (twall.ge.chamber_wall_liquid_tmin) then
             dqv_liq=dq_actual
             parcel1%chamber_wall_liquid_water=max( &
                 parcel1%chamber_wall_liquid_water-dq_actual*mdry,0._wp)
@@ -9846,7 +9885,7 @@
         ! Keep the stored wall phase consistent with the prescribed wall
         ! temperature.  Latent heat associated with wall freezing/melting is
         ! assigned to the measured wall boundary condition.
-        if (twall.ge.ttr) then
+        if (twall.ge.chamber_wall_liquid_tmin) then
             parcel1%chamber_wall_liquid_water=parcel1%chamber_wall_liquid_water+ &
                 parcel1%chamber_wall_ice_water
             parcel1%chamber_wall_ice_water=0._wp
@@ -9874,7 +9913,7 @@
         if (dq_desired.le.0._wp) then
             ! Deposition/condensation is limited only by airborne vapour.
             dq_actual=max(dq_desired,-max(qv,0._wp))
-        elseif (twall.ge.ttr) then
+        elseif (twall.ge.chamber_wall_liquid_tmin) then
             available_q=parcel1%chamber_wall_liquid_water/mdry
             dq_actual=min(dq_desired,max(available_q,0._wp))
         else
@@ -9884,7 +9923,7 @@
 
         dqv_liq=0._wp
         dqv_ice=0._wp
-        if (twall.ge.ttr) then
+        if (twall.ge.chamber_wall_liquid_tmin) then
             dqv_liq=dq_actual
             parcel1%chamber_wall_liquid_water=max( &
                 parcel1%chamber_wall_liquid_water-dq_actual*mdry,0._wp)
@@ -9965,7 +10004,7 @@
         ! The wall phase follows the prescribed measured wall temperature.
         ! Phase conversion of stored wall water is assigned to the wall thermal
         ! reservoir and therefore does not alter the chamber-air water budget.
-        if (twall.ge.ttr) then
+        if (twall.ge.chamber_wall_liquid_tmin) then
             parcel1%chamber_wall_liquid_water= &
                 parcel1%chamber_wall_liquid_water+parcel1%chamber_wall_ice_water
             parcel1%chamber_wall_ice_water=0._wp
@@ -10016,7 +10055,7 @@
             if (dq_desired.gt.0._wp) then
                 ! Wall source: bounded both by wall equilibrium and by the
                 ! finite prognostic liquid/frost reservoir.
-                if (twall.ge.ttr) then
+                if (twall.ge.chamber_wall_liquid_tmin) then
                     available_q=parcel1%chamber_wall_liquid_water/mdry
                 else
                     available_q=parcel1%chamber_wall_ice_water/mdry
@@ -10071,7 +10110,7 @@
         ! Commit the converged wall transfer exactly once.
         dqv_liq=0._wp
         dqv_ice=0._wp
-        if (twall.ge.ttr) then
+        if (twall.ge.chamber_wall_liquid_tmin) then
             dqv_liq=dq_wall
             parcel1%chamber_wall_liquid_water=max( &
                 parcel1%chamber_wall_liquid_water-dq_wall*mdry,0._wp)
@@ -10475,6 +10514,13 @@
     !>      Particles in the fmix fraction that visits the BL experience the
     !>      corresponding local humidity change dq_wall/fmix, bounded so it
     !>      cannot overshoot equilibrium with the measured wall temperature.
+    !>  3 = combined closure: the mode-2 chamber-mean finite-rate flux
+    !>      Jv=km*(e_eq(Twall)-e)/(Rv*Tgas) acts on the whole chamber at all
+    !>      times (the slow loss to the walls before and during cloud), AND the
+    !>      mode-0 instantaneous saturation cap acts on the fmix fraction that
+    !>      visits the wall-conditioned BL (the fast loss once cloud exists).
+    !>      Vapour removed by the cap is added to the wall reservoir.  Liquid
+    !>      then evaporates to restore the pre-step bulk RH, as in mode 0.
     !>Modes 1 and 2 both use measured Twall, allow dry-wall deposition, cap
     !>wall vapour sources by stored water, and impose no artificial restoration
     !>of the pre-BL relative humidity.
@@ -10578,7 +10624,8 @@
             dq_evap_cold,dq_actual,qsw_target,qv_target,cpm,rhw_new,ql_after,qi_before, &
             qv_after_liq,tice_new,qvice_new,rhw_ice,rhi_ice,liq_event_capacity, &
             dq_wall_liq_local,dq_wall_ice_local,dq_wall_liq,dq_wall_ice,qv_wall_local, &
-            qbudget_check,ql_expected,ql_rep_tol,t_resid_bl,rh_resid_bl
+            qbudget_check,ql_expected,ql_rep_tol,t_resid_bl,rh_resid_bl, &
+            qv_after_flux,dq_cap,mdry_cap
         real(wp), allocatable :: fracliq(:),mresid(:)
         logical :: liquid_exhausted
 
@@ -10664,7 +10711,7 @@
 
             ! Diagnose RH with respect to the wall and the actual signed
             ! area-mean wall flux for direct comparison with mode 2.
-            svp_new=merge(svp_liq(t_wall),svp_ice(t_wall),t_wall.ge.ttr)
+            svp_new=merge(svp_liq(t_wall),svp_ice(t_wall),t_wall.ge.chamber_wall_liquid_tmin)
             parcel1%chamber_wall_rh= &
                 (p*max(qv0,0._wp)/max(eps1+max(qv0,0._wp),tiny(1._wp)))/ &
                 max(svp_new,tiny(1._wp))
@@ -10684,6 +10731,40 @@
             dq_wall=dq_wall_liq+dq_wall_ice
             qv_air=max(qv0+dq_wall,0._wp)
             dq_evap_target=fmix*max(dq_evap_local,0._wp)
+
+        case(3)
+            ! Combined closure.  (i) Slow chamber-mean finite-rate transfer to
+            ! the measured wall (also acts before cloud forms).
+            call diagnose_chamber_wall_mass_transfer(t_wall,t0,qv0,p,dt_bl, &
+                dq_wall_liq,dq_wall_ice,qv_after_flux)
+            ! (ii) Legacy instantaneous cap on the BL fraction, applied to the
+            ! humidity left after the slow transfer.
+            call diagnose_coupled_chamber_bl_state(t_sens,qv_after_flux,ql_warm,p, &
+                t_bl,qv_bl,dq_wall_local,dq_evap_local)
+            dq_cap=-fmix*max(dq_wall_local,0._wp)
+            dq_cap=max(dq_cap,-qv_after_flux)
+            ! Store the capped vapour on the wall reservoir (phase by Twall).
+            mdry_cap=chamber_dry_air_mass(p,t0,qv0)
+            if (t_wall.ge.chamber_wall_liquid_tmin) then
+                parcel1%chamber_wall_liquid_water=parcel1%chamber_wall_liquid_water- &
+                    dq_cap*mdry_cap
+                dq_wall_liq=dq_wall_liq+dq_cap
+            else
+                parcel1%chamber_wall_ice_water=parcel1%chamber_wall_ice_water- &
+                    dq_cap*mdry_cap
+                dq_wall_ice=dq_wall_ice+dq_cap
+            endif
+            dq_wall=dq_wall_liq+dq_wall_ice
+            qv_air=max(qv0+dq_wall,0._wp)
+            dq_evap_target=fmix*max(dq_evap_local,0._wp)
+            if (dq_wall.lt.0._wp) then
+                ! As in mode 0: liquid evaporates to restore the pre-step bulk
+                ! RH; with no liquid (before cloud) RH simply falls.
+                qsw_target=eps1*svp_liq(t0)/max(p-svp_liq(t0),tiny(1._wp))
+                qv_target=min(max(rh0,0._wp),1._wp)*qsw_target
+                dq_evap_cold=max(qv_target-qv_air,0._wp)
+                dq_evap_target=dq_evap_target+dq_evap_cold
+            endif
 
         case default
             error stop 'Invalid chamber_bl_wall_water_mode'
@@ -10820,7 +10901,8 @@
         ! If gas temperature is prognostic, include the latent cooling associated
         ! with the cold-wall remixing evaporation.  Direct local evaporation was
         ! already included in t_bl by the coupled BL solve.
-        if (.not.chamber_force_temperature .and. chamber_bl_wall_water_mode.eq.0 .and. &
+        if (.not.chamber_force_temperature .and. &
+            (chamber_bl_wall_water_mode.eq.0 .or. chamber_bl_wall_water_mode.eq.3) .and. &
             dq_wall.lt.0._wp) then
             cpm=max(cp+qv0*cpv+ql_total*cpw+qi0*cpi,0.5_wp*cp)
             tnew=tnew-lv*min(dq_evap_cold,dq_actual)/cpm
